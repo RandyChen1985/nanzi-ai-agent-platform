@@ -1196,7 +1196,7 @@ onBeforeUnmount(() => {
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <span class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full" 
-                            :class="{'bg-green-100 text-green-800': t.method === 'GET', 'bg-blue-100 text-blue-800': t.method === 'POST', 'bg-yellow-100 text-yellow-800': t.method === 'PUT', 'bg-red-100 text-red-800': t.method === 'DELETE'}"
+                            :class="{'bg-green-100 text-green-800': t.method === 'GET', 'bg-primary/10 text-blue-800': t.method === 'POST', 'bg-yellow-100 text-yellow-800': t.method === 'PUT', 'bg-red-100 text-red-800': t.method === 'DELETE'}"
                         >
                             {{ t.method }}
                         </span>
@@ -1205,7 +1205,7 @@ onBeforeUnmount(() => {
                         <button
                             v-if="t.group_name"
                             type="button"
-                            class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-medium rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                            class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-medium rounded-full bg-primary/5 text-primary-dark hover:bg-primary/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                             :title="`只看「${t.group_name}」的工具`"
                             :aria-label="`只看「${t.group_name}」的工具`"
                             @click="filterByGroup(t.group_name)"
@@ -1253,7 +1253,7 @@ onBeforeUnmount(() => {
                                 @click="openModal(t)" 
                                 title="编辑"
                                 aria-label="编辑工具"
-                                class="p-1.5 text-primary hover:bg-blue-50 rounded-md transition-colors"
+                                class="p-1.5 text-primary hover:bg-primary/5 rounded-md transition-colors"
                             >
                                 <PencilSquareIcon class="h-4 w-4" />
                             </button>
@@ -1377,7 +1377,7 @@ onBeforeUnmount(() => {
                        </div>
                        <div v-if="urlPlaceholders.length" class="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
                            <span>地址中的占位符：</span>
-                           <code v-for="name in urlPlaceholders" :key="name" class="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-blue-700">{{ '{' + name + '}' }}</code>
+                           <code v-for="name in urlPlaceholders" :key="name" class="rounded bg-primary/5 px-1.5 py-0.5 font-mono text-primary-dark">{{ '{' + name + '}' }}</code>
                        </div>
                     </div>
                   
@@ -1425,7 +1425,7 @@ onBeforeUnmount(() => {
                     >
                         <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-gray-700">
                             <span>高级请求配置：Headers 与请求签名</span>
-                            <span v-if="headerCount" class="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">{{ headerCount }} 个 Header</span>
+                            <span v-if="headerCount" class="ml-2 rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark">{{ headerCount }} 个 Header</span>
                             <span v-if="toolForm.signing_enabled" class="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">签名已开启</span>
                             <span class="ml-1 text-xs font-normal text-gray-400">需要鉴权或验签时展开</span>
                         </summary>

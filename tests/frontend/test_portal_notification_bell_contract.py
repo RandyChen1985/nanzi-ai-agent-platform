@@ -122,7 +122,7 @@ def test_ordinary_notification_opens_markdown_detail_while_saved_report_jumps():
     assert "notification-detail-body" in bell
     assert '<CanvasMarkdownRenderer' in bell
     assert ":content=\"detailContent\"" in bell
-    assert "⭐ 固化报表" in bell
+    assert "⭐ 固化报表" in bell, "固化报表类通知要带星标，和普通站内消息区分"
     assert "openNotification" in bell
     assert "detailItem.value = item" in bell
     assert "if (!isSavedReportNotification(item)) {\n    closeNotifications();\n  }" in bell

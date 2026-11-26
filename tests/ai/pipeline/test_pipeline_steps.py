@@ -993,22 +993,30 @@ async def test_finalize_awaiting_user_keeps_model_text_when_present():
 
 
 @pytest.mark.asyncio
-async def test_finalize_awaiting_permission_still_defers_audit():
-    """授权/外部执行仍是同轮可恢复暂停态，由恢复轮收尾，本轮不写审计。"""
+@pytest.mark.parametrize(
+    "suspended_status",
+    ["awaiting_permission", "awaiting_external_execution"],
+)
+async def test_finalize_suspended_resumable_statuses_persist_audit_immediately(
+    suspended_status: str,
+):
+    """挂起轮必须当场落库，避免用户放弃审批/外部执行后本轮历史凭空消失。"""
     context = PipelineContext(
         messages=[{"role": "user", "content": "需要授权"}],
         user_info={"user_id": 123},
     )
-    context.execution_status = "awaiting_permission"
+    context.execution_status = suspended_status
     context.user_query = "需要授权"
 
     with patch(
         "app.services.ai.agent_service.AuditManager.log_transaction",
         new_callable=AsyncMock,
+        return_value=True,
     ) as audit:
         _ = [chunk async for chunk in FinalizeStep().run(context)]
 
-    audit.assert_not_awaited()
+    audit.assert_awaited_once()
+    assert audit.await_args.args[5] == suspended_status
 
 
 @pytest.mark.asyncio

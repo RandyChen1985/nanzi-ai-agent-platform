@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_task_flow_guide_banner_contract():
     banner = _source("frontend/src/components/task/TaskFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     view = _source("frontend/src/views/TaskCenter.vue")
 
     # 1. 验证 5 步流程定义与核心业务规则
@@ -24,7 +25,7 @@ def test_task_flow_guide_banner_contract():
     assert "/dashboard/agent-management" in banner
     assert "新建任务" in banner
     assert "执行记录" in banner
-    assert "不再提示" in banner
+    assert "不再提示" in strip
 
     # 3. 验证主视图中的组件引入与持久化机制
     assert "TaskFlowGuideBanner" in view

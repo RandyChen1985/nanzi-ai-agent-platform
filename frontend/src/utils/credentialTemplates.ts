@@ -67,7 +67,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'imap', group: '邮件', icon: '📥', name: '邮箱 IMAP 收信',
+    id: 'imap', group: '邮件', icon: 'IM', name: '邮箱 IMAP 收信',
     desc: '读取收件箱：邮件转工单、附件落库',
     fields: [
       { key: 'host', label: 'IMAP 服务器', type: 'text', required: true, example: 'imap.exmail.qq.com' },
@@ -82,7 +82,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 文件传输 ─────────────────────────────────────── */
   {
-    id: 'sftp', group: '文件传输', icon: '📁', name: 'SFTP 文件传输',
+    id: 'sftp', group: '文件传输', icon: 'SF', name: 'SFTP 文件传输',
     desc: '对接银行/客户的对账文件交换目录',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'sftp.partner-bank.cn' },
@@ -97,7 +97,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'ftp', group: '文件传输', icon: '🗂', name: 'FTP（含 FTPS）',
+    id: 'ftp', group: '文件传输', icon: 'FT', name: 'FTP（含 FTPS）',
     desc: '老系统常见的文件投递通道',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'ftp.legacy-erp.local' },
@@ -112,7 +112,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 数据库 ───────────────────────────────────────── */
   {
-    id: 'mysql', group: '数据库', icon: '🐬', name: 'MySQL / MariaDB',
+    id: 'mysql', group: '数据库', icon: 'MY', name: 'MySQL / MariaDB',
     desc: '业务库只读账号，供数据类工具查询',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: '10.20.8.31' },
@@ -125,7 +125,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'postgres', group: '数据库', icon: '🐘', name: 'PostgreSQL',
+    id: 'postgres', group: '数据库', icon: 'PG', name: 'PostgreSQL',
     desc: '数仓 / 元数据库连接',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'pg-prod.nanzi.ai' },
@@ -138,7 +138,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'redis', group: '数据库', icon: '🧱', name: 'Redis',
+    id: 'redis', group: '数据库', icon: 'RD', name: 'Redis',
     desc: '缓存 / 队列 / 限流计数',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'redis-prod.nanzi.ai' },
@@ -150,7 +150,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'mongodb', group: '数据库', icon: '🍃', name: 'MongoDB',
+    id: 'mongodb', group: '数据库', icon: 'MG', name: 'MongoDB',
     desc: '文档库，读写业务集合',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'mongo-1.nanzi.ai' },
@@ -163,7 +163,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'es', group: '数据库', icon: '🔍', name: 'Elasticsearch / OpenSearch',
+    id: 'es', group: '数据库', icon: 'ES', name: 'Elasticsearch / OpenSearch',
     desc: '日志检索、全文搜索索引',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'es-search.nanzi.ai' },
@@ -188,7 +188,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'aliyun-oss', group: '云与存储', icon: '🗄', name: '阿里云 OSS',
+    id: 'aliyun-oss', group: '云与存储', icon: 'OSS', name: '阿里云 OSS',
     desc: '对象存储、图片与附件落盘',
     fields: [
       { key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true, example: 'LTAI5tQ8xN3vK2mP7rTf' },
@@ -199,7 +199,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'cos', group: '云与存储', icon: '🧊', name: '腾讯云 COS',
+    id: 'cos', group: '云与存储', icon: 'COS', name: '腾讯云 COS',
     desc: '对象存储与 CDN 回源',
     fields: [
       { key: 'secret_id', label: 'SecretId', type: 'text', required: true, example: 'AKIDz8krbsJ5yKBZQpn74WFkmLPx3gnP' },
@@ -209,7 +209,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'minio', group: '云与存储', icon: '📦', name: 'MinIO / S3 兼容',
+    id: 'minio', group: '云与存储', icon: 'MN', name: 'MinIO / S3 兼容',
     desc: '私有化部署的对象存储',
     fields: [
       { key: 'endpoint', label: 'Endpoint', type: 'url', required: true, example: 'https://minio.nanzi.ai:9000', hint: '含协议头，别只填域名' },
@@ -223,7 +223,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 消息通知 ─────────────────────────────────────── */
   {
-    id: 'wecom', group: '消息通知', icon: '💬', name: '企业微信群机器人',
+    id: 'wecom', group: '消息通知', icon: 'WX', name: '企业微信群机器人',
     desc: '任务失败、审批待办推到群里',
     fields: [
       { key: 'webhook_url', label: 'Webhook 地址', type: 'password', required: true, secret: true, full: true,
@@ -234,7 +234,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'dingtalk', group: '消息通知', icon: '🔔', name: '钉钉群机器人',
+    id: 'dingtalk', group: '消息通知', icon: 'DD', name: '钉钉群机器人',
     desc: '支持加签的群消息推送',
     fields: [
       { key: 'webhook_url', label: 'Webhook 地址', type: 'password', required: true, secret: true, full: true,
@@ -244,7 +244,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'feishu', group: '消息通知', icon: '🕊', name: '飞书群机器人',
+    id: 'feishu', group: '消息通知', icon: 'FS', name: '飞书群机器人',
     desc: '卡片消息、值班提醒',
     fields: [
       { key: 'webhook_url', label: 'Webhook 地址', type: 'password', required: true, secret: true, full: true,
@@ -253,7 +253,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'slack', group: '消息通知', icon: '🟣', name: 'Slack Bot',
+    id: 'slack', group: '消息通知', icon: 'SL', name: 'Slack Bot',
     desc: '海外团队频道通知',
     fields: [
       { key: 'bot_token', label: 'Bot Token', type: 'password', required: true, secret: true, example: 'xoxb-3901-4821-aBcDeFgHiJkLmNoP' },
@@ -263,7 +263,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 通用鉴权 ─────────────────────────────────────── */
   {
-    id: 'bearer', group: '通用鉴权', icon: '🔑', name: 'Bearer Token',
+    id: 'bearer', group: '通用鉴权', icon: 'BT', name: 'Bearer Token',
     desc: '最常见的第三方 API 令牌',
     fields: [
       { key: 'token', label: 'Token', type: 'password', required: true, secret: true, full: true, example: 'ghp_9f2cKd7LmQw4Xz8Vb3Nt6Ry1Ha5Je0Pu2S7g' },
@@ -272,7 +272,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'api-key', group: '通用鉴权', icon: '🏷', name: 'API Key（自定义头）',
+    id: 'api-key', group: '通用鉴权', icon: 'K', name: 'API Key（自定义头）',
     desc: 'Jira / Confluence / 内部网关这类 X-API-Key',
     fields: [
       { key: 'key_name', label: 'Header / 参数名', type: 'text', required: true, example: 'X-API-Key' },
@@ -282,7 +282,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'basic', group: '通用鉴权', icon: '👤', name: 'Basic Auth',
+    id: 'basic', group: '通用鉴权', icon: 'BA', name: 'Basic Auth',
     desc: 'HTTP 基础认证，老系统对接',
     fields: [
       { key: 'username', label: '用户名', type: 'text', required: true, example: 'svc_nanzi' },
@@ -291,7 +291,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'oauth2', group: '通用鉴权', icon: '🔄', name: 'OAuth2 客户端',
+    id: 'oauth2', group: '通用鉴权', icon: 'OA', name: 'OAuth2 客户端',
     desc: 'client_credentials 换 token，适合服务间调用',
     fields: [
       { key: 'client_id', label: 'Client ID', type: 'text', required: true, example: 'nanzi-agent-prod' },
@@ -305,7 +305,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 密钥与证书 ───────────────────────────────────── */
   {
-    id: 'ssh-key', group: '密钥与证书', icon: '🔐', name: 'SSH 私钥登录',
+    id: 'ssh-key', group: '密钥与证书', icon: 'SS', name: 'SSH 私钥登录',
     desc: '跳板机执行、远程运维脚本',
     fields: [
       { key: 'username', label: '登录用户', type: 'text', required: true, example: 'ops' },
@@ -317,7 +317,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'tls-cert', group: '密钥与证书', icon: '📜', name: 'TLS 客户端证书（mTLS）',
+    id: 'tls-cert', group: '密钥与证书', icon: 'TL', name: 'TLS 客户端证书（mTLS）',
     desc: '双向认证的私有网关调用',
     fields: [
       { key: 'client_cert', label: '客户端证书', type: 'textarea', full: true, required: true, example: '-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIEbG9jYWwwDQYJKoZIhvcNAQELBQAw\n-----END CERTIFICATE-----' },
@@ -326,7 +326,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'gcp-sa', group: '密钥与证书', icon: '🎫', name: 'Google 服务账号 JSON',
+    id: 'gcp-sa', group: '密钥与证书', icon: 'GC', name: 'Google 服务账号 JSON',
     desc: 'GCP / Vertex AI / BigQuery 调用',
     fields: [
       { key: 'project_id', label: 'Project ID', type: 'text', required: true, example: 'nanzi-agent-prod' },
@@ -340,7 +340,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 基础设施 ─────────────────────────────────────── */
   {
-    id: 'kafka', group: '基础设施', icon: '🚇', name: 'Kafka（SASL）',
+    id: 'kafka', group: '基础设施', icon: 'KF', name: 'Kafka（SASL）',
     desc: '事件流生产 / 消费',
     fields: [
       { key: 'bootstrap_servers', label: 'Bootstrap Servers', type: 'text', required: true, full: true, example: 'kafka-1.nanzi.ai:9092,kafka-2.nanzi.ai:9092' },
@@ -352,7 +352,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'rabbitmq', group: '基础设施', icon: '🐇', name: 'RabbitMQ',
+    id: 'rabbitmq', group: '基础设施', icon: 'RM', name: 'RabbitMQ',
     desc: '任务分发、延迟队列',
     fields: [
       { key: 'host', label: '主机', type: 'text', required: true, example: 'mq.nanzi.ai' },
@@ -364,7 +364,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
     ]
   },
   {
-    id: 'proxy', group: '基础设施', icon: '🌐', name: '出站代理',
+    id: 'proxy', group: '基础设施', icon: 'PX', name: '出站代理',
     desc: '访问外网时的代理认证',
     fields: [
       { key: 'url', label: '代理地址', type: 'url', required: true, example: 'http://proxy.nanzi.ai:3128', hint: '含协议头与端口' },
@@ -376,7 +376,7 @@ export const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
 
   /* ── 开发与 AI ────────────────────────────────────── */
   {
-    id: 'openai', group: '开发与 AI', icon: '🤖', name: 'OpenAI 兼容 API',
+    id: 'openai', group: '开发与 AI', icon: 'AI', name: 'OpenAI 兼容 API',
     desc: 'DeepSeek / 通义 / vLLM 等兼容端点',
     fields: [
       { key: 'api_key', label: 'API Key', type: 'password', required: true, secret: true, full: true, example: 'sk-nanzi-9f2c7d4b1e8a6350c2d9' },

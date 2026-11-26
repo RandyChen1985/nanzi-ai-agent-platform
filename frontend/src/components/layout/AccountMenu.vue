@@ -259,7 +259,7 @@
                   v-if="updateData.body"
                   type="button"
                   class="font-medium underline underline-offset-2"
-                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
                   @click="notesOpen = true"
                 >查看更新内容</button>
                 <!-- 正文没缓存下来（上游没填发行说明 / 老缓存）时退回新标签打开仓库 -->
@@ -269,7 +269,7 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="font-medium underline underline-offset-2"
-                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
                 >查看更新内容 ↗</a>
                 <button type="button" class="update-link" @click="onDeferUpdate">稍后</button>
                 <button type="button" class="update-link" :disabled="ignoringUpdate" @click="onIgnoreUpdate">忽略此版本</button>
@@ -282,15 +282,15 @@
             <div
               v-else-if="updateUncomparable && updateData"
               class="mt-1.5 rounded-md border px-2 py-1.5"
-              :class="lightTheme ? 'border-sky-300/70 bg-sky-50' : 'border-sky-400/25 bg-sky-400/10'"
+              :class="lightTheme ? 'border-sky-300/70 bg-sky-50' : 'border-primary/25 bg-primary/10'"
             >
-              <p class="font-medium" :class="lightTheme ? 'text-sky-700' : 'text-sky-300'">
+              <p class="font-medium" :class="lightTheme ? 'text-primary-dark' : 'text-sky-300'">
                 上游最新 {{ updateData.latest }}<span v-if="publishedDate"> · {{ publishedDate }} 发布</span>
               </p>
-              <p class="mt-0.5" :class="lightTheme ? 'text-sky-800/80' : 'text-sky-100/70'">
+              <p class="mt-0.5" :class="lightTheme ? 'text-primary-dark/80' : 'text-sky-100/70'">
                 当前是开发版，判断不了是否落后，请自行确认
               </p>
-              <p v-if="updateData.has_migrations" class="mt-0.5" :class="lightTheme ? 'text-sky-700/90' : 'text-sky-200/70'">
+              <p v-if="updateData.has_migrations" class="mt-0.5" :class="lightTheme ? 'text-primary-dark/90' : 'text-sky-200/70'">
                 该版本含数据库迁移，同步代码后请先执行迁移脚本
               </p>
               <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -298,7 +298,7 @@
                   v-if="updateData.body"
                   type="button"
                   class="font-medium underline underline-offset-2"
-                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
                   @click="notesOpen = true"
                 >查看更新内容</button>
                 <a
@@ -307,7 +307,7 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="font-medium underline underline-offset-2"
-                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
                 >查看更新内容 ↗</a>
               </div>
             </div>
@@ -340,7 +340,7 @@
                 v-if="changelogOpensNotes"
                 type="button"
                 class="font-medium underline underline-offset-2"
-                :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
                 @click="notesOpen = true"
               >更新日志：{{ changelogLabel }}</button>
               <a
@@ -349,7 +349,7 @@
                 target="_blank"
                 rel="noopener noreferrer"
                 class="font-medium underline underline-offset-2"
-                :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                :class="lightTheme ? 'text-primary' : 'text-primary-bright'"
               >更新日志：{{ changelogLabel }} ↗</a>
             </p>
           </div>

@@ -10,6 +10,7 @@ import { computed, ref } from "vue"
 import axios from "@/utils/axios"
 import { persistUserInfo } from "@/utils/userSession"
 import { useAppTheme } from "./useAppTheme"
+import { getLoginThemeMutationVersion, syncLoginThemeFromPrefs } from "./useLoginTheme"
 
 export type UiMode = "user" | "pro"
 
@@ -199,6 +200,7 @@ let loadedForUserId = ""
 let inflight: Promise<void> | null = null
 
 async function loadFromServer(): Promise<void> {
+  const loginThemeVersion = getLoginThemeMutationVersion()
   try {
     const res = await axios.get("/api/portal/portal-prefs")
     const payload = res?.data?.data || {}
@@ -206,6 +208,9 @@ async function loadFromServer(): Promise<void> {
     if (server === "user" || server === "pro") {
       uiMode.value = server
       persistCachedMode(server)
+    }
+    if (payload.login_theme !== undefined) {
+      syncLoginThemeFromPrefs(payload.login_theme, loginThemeVersion)
     }
 
     // 黑名单：服务端已夹逼过 ui_mode，这里同步状态并回写登录快照，

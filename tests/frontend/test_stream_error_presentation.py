@@ -77,7 +77,7 @@ return { first, second, content: message.content, detail: message.errorDetail };
     assert result == {
         "first": True,
         "second": False,
-        "content": "已有正文\n\n> ❌ **处理未完成**: 处理没有完成，请稍后重试。",
+        "content": "已有正文\n\n> ✕ **处理未完成**: 处理没有完成，请稍后重试。",
         "detail": {
             "message": "处理没有完成，请稍后重试。",
             "rawError": "upstream 503",
@@ -110,6 +110,6 @@ return { content: message.content, detail: message.errorDetail };
     )
 
     assert result == {
-        "content": "\n\n> ❌ **处理未完成**: 旧版本错误",
+        "content": "\n\n> ✕ **处理未完成**: 旧版本错误",
         "detail": {"message": "旧版本错误", "aiStatus": "disabled"},
     }

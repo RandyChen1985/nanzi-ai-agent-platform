@@ -49,6 +49,7 @@ import {
   ServerStackIcon,
   SparklesIcon,
   XMarkIcon,
+  DocumentIcon,
 } from "@heroicons/vue/24/outline";
 
 type ApprovalMode = "ask" | "allow" | "deny";
@@ -61,7 +62,7 @@ const APPROVAL_MODE_OPTIONS: {
   {
     value: "ask",
     label: "请求批准",
-    description: "写操作与需授权的工具调用前，均需你确认后才会执行",
+    description: "写操作与需授权的工具调用，均需你确认后才会执行",
   },
   {
     value: "allow",
@@ -272,11 +273,11 @@ const sandboxPolicyIcon = computed(() => {
 const sandboxPolicyBadgeClass = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
   const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
-  if (policy === "e2b") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800/60 dark:bg-violet-950/30 dark:text-violet-300";
-  if (policy === "ssh") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-300";
+  if (policy === "e2b") return "border-primary/20 bg-primary/5 text-primary-dark dark:border-primary-dark/60 dark:bg-primary-dark/30 dark:text-primary-hover";
+  if (policy === "ssh") return "border-sky-200 bg-sky-50 text-primary-dark dark:border-primary-dark/60 dark:bg-primary-dark/30 dark:text-sky-300";
   if (policy === "k8s") return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300";
   if (policy === "docker" || (policy === "local" && runtimeEnv === "docker")) {
-    return "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/60 dark:bg-indigo-950/30 dark:text-indigo-300";
+    return "border-primary/20 bg-primary/5 text-primary-dark dark:border-primary-dark/60 dark:bg-primary-dark/30 dark:text-primary-hover";
   }
   return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300";
 });
@@ -345,13 +346,13 @@ const sessionContextBreakdownItems = computed(() => {
     {
       label: "工具 schema",
       value: Number(breakdown.tools_tokens || 0),
-      color: "bg-violet-400",
+      color: "bg-primary",
       key: "tools",
     },
     {
       label: "对话消息",
       value: Number(breakdown.conversation_tokens || 0),
-      color: "bg-blue-400",
+      color: "bg-primary",
       key: "conversation",
     },
   ];
@@ -1205,7 +1206,6 @@ const isFollowingModelEffort = computed(
   () => props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined,
 );
 
-
 const showModelDropdown = ref(false);
 const modelDropdownRef = ref<HTMLElement | null>(null);
 const modelDropdownTriggerRef = ref<HTMLButtonElement | null>(null);
@@ -1334,7 +1334,7 @@ const activeApprovalLabel = computed(() => {
 const approvalTriggerToneClass = computed(() => {
   switch (activeApprovalMode.value) {
     case "allow":
-      return "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/45 dark:text-blue-300 dark:hover:bg-blue-950/60";
+      return "bg-primary/5 text-primary-dark hover:bg-primary/10 dark:bg-primary-dark/45 dark:text-primary-hover dark:hover:bg-blue-950/60";
     case "deny":
       return "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/45 dark:text-red-300 dark:hover:bg-red-950/60";
     default:
@@ -1790,7 +1790,6 @@ const visibleImageSizeChoices = computed(() => {
 const hiddenImageSizeCount = computed(
   () => otherImageSizeChoices.value.length - visibleImageSizeChoices.value.length,
 );
-
 
 /** 出图风格。本质是往提示词里塞修饰词，不是接口参数——实测网关对 quality/style
  *  这类字段一律忽略，所以扩充这里不产生任何接口约束，只是让用户少打几个字。
@@ -2507,7 +2506,6 @@ watch(() => props.agentId, () => {
   resetImageParams();
 });
 
-
 const showDataKnowledgeCascade = ref(false);
 const dataKnowledgeCascadeRef = ref<InstanceType<typeof DataKnowledgeCascadeMenu> | null>(null);
 const skillCascadeRef = ref<InstanceType<typeof SkillCascadeMenu> | null>(null);
@@ -2708,7 +2706,7 @@ const openDataKnowledgeCascade = () => {
 
 /**
  * 勾选 / 取消一个元数据集：chip 由 `sessionMountChips` 统一重建，
- * 与数据门户里的 📊 勾选写出的格式完全一致。
+ * 与数据门户里的勾选写出的格式完全一致。
  */
 const toggleDatasetMountFromCascade = (datasetId: string, datasetName?: string) => {
   const files = uploadedFiles.value;
@@ -2990,7 +2988,7 @@ defineExpose({
               :class="{ 'pointer-events-none opacity-50': isProcessing }"
             >
                 <CommandLineIcon class="h-3.5 w-3.5 shrink-0 text-gray-400 group-hover:text-primary" aria-hidden="true" />
-                <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">快捷指令</span>
+                <span class="text-[10px] font-bold text-gray-400 group-hover:text-primary transition-colors tracking-tighter">快捷指令</span>
                 <svg class="w-3 h-3 text-gray-300 group-hover:text-primary transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
             </div>
 
@@ -3018,7 +3016,7 @@ defineExpose({
                                     </template>
                                     <div v-if="showShortcutDivider" class="w-px h-3 bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
                                     <template v-for="cmd in visibleRowUserCommands" :key="'row-user-'+cmd.id">
-                                        <button @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors flex-shrink-0" :class="{ 'pointer-events-none opacity-40': isProcessing }"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
+                                        <button @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary-hover border border-primary/10 dark:border-primary-dark rounded-full whitespace-nowrap hover:bg-primary/10 transition-colors flex-shrink-0" :class="{ 'pointer-events-none opacity-40': isProcessing }"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                     </template>
                                 </div>
                             </div>
@@ -3027,7 +3025,7 @@ defineExpose({
                                 data-shortcut-more
                                 type="button"
                                 @click.stop="toggleCommandDrawer"
-                                class="flex-shrink-0 inline-flex items-center text-[10px] font-black text-primary hover:opacity-80 transition-all whitespace-nowrap"
+                                class="flex-shrink-0 inline-flex items-center text-[10px] font-bold text-primary hover:opacity-80 transition-all whitespace-nowrap"
                                 :class="isProcessing ? 'pointer-events-none opacity-50' : (isDrawerExpanded ? 'opacity-100' : '')"
                             >
                                 {{ isDrawerExpanded ? '收起' : '更多' }}
@@ -3060,33 +3058,19 @@ defineExpose({
                     @click="openImagePreview"
                   />
                   <!-- Metadata Dataset Icon -->
-                  <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-purple-500/10 dark:bg-purple-500/20 flex items-center justify-center text-purple-500 text-sm flex-shrink-0 mr-2">
-                      📊
-                  </div>
+                  <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2"><ChartBarIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Knowledge Base Icon -->
-                  <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-emerald-500/10 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-sm flex-shrink-0 mr-2">
-                      📚
-                  </div>
+                  <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-emerald-500/10 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-sm flex-shrink-0 mr-2"><BookOpenIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Skill Icon -->
-                  <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center text-amber-500 text-sm flex-shrink-0 mr-2 font-mono">
-                      ⚙️
-                  </div>
+                  <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center text-amber-500 text-sm flex-shrink-0 mr-2 font-mono"><Cog6ToothIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Memory Icon -->
-                  <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-indigo-500/10 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-500 text-sm flex-shrink-0 mr-2">
-                      🧠
-                  </div>
+                  <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2"><CircleStackIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Server File Icon -->
-                  <div v-else-if="file.type === 'local_file'" class="w-8 h-8 rounded bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center text-blue-500 text-sm flex-shrink-0 mr-2">
-                      💻
-                  </div>
+                  <div v-else-if="file.type === 'local_file'" class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2"><ComputerDesktopIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Server Dir Icon -->
-                  <div v-else-if="file.type === 'local_dir'" class="w-8 h-8 rounded bg-yellow-500/10 dark:bg-yellow-500/20 flex items-center justify-center text-yellow-500 text-sm flex-shrink-0 mr-2">
-                      📁
-                  </div>
+                  <div v-else-if="file.type === 'local_dir'" class="w-8 h-8 rounded bg-yellow-500/10 dark:bg-yellow-500/20 flex items-center justify-center text-yellow-500 text-sm flex-shrink-0 mr-2"><FolderIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- File Icon -->
-                  <div v-else class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2">
-                      📄
-                  </div>
+                  <div v-else class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2"><DocumentIcon class="h-4 w-4" aria-hidden="true" /></div>
                   <!-- Metadata -->
                   <div class="flex-1 min-w-0 flex flex-col">
                       <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{{ file.filename }}</span>
@@ -3144,7 +3128,7 @@ defineExpose({
             >
               <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-600 dark:bg-gray-700">
                 <div class="flex items-center space-x-2">
-                  <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">快捷指令库</span>
+                  <span class="text-[10px] font-bold uppercase tracking-widest text-gray-400">快捷指令库</span>
                   <span class="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">{{ filteredCommands.length }} 匹配</span>
                 </div>
                 <span class="text-[9px] text-gray-400 hidden sm:inline shrink-0">Enter 选择 · Esc 关闭</span>
@@ -3167,7 +3151,7 @@ defineExpose({
                         {{ cmd.label }}
                       </span>
                       <span v-if="cmd.disabled" class="rounded border border-yellow-200 bg-yellow-50 px-1 py-0.5 text-[8px] font-bold text-yellow-600 dark:border-yellow-900/30 dark:bg-yellow-950/20">功能未启用</span>
-                      <span v-if="String(cmd.id).startsWith('sys_')" class="rounded border border-gray-200 bg-gray-100 px-1 py-0.5 text-[8px] font-black uppercase tracking-tighter text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">SYS</span>
+                      <span v-if="String(cmd.id).startsWith('sys_')" class="rounded border border-gray-200 bg-gray-100 px-1 py-0.5 text-[8px] font-bold uppercase tracking-tighter text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">SYS</span>
                     </div>
                     <div class="truncate font-mono text-[10px] text-gray-400 opacity-70">
                       {{ cmd.command }}
@@ -3238,10 +3222,7 @@ defineExpose({
                   @click="emit('open-grounding-settings')"
                   :title="`反幻觉校验已开启 (${groundingBlockMode === 'stream_with_retraction' ? '实时撤回' : '严格缓冲'})，点击可调整设置`"
                 >
-                  <span class="relative flex h-1.5 w-1.5 shrink-0">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
-                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                  </span>
+                  <span class="relative inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"></span>
                   <svg class="h-3 w-3 text-emerald-600/75 dark:text-emerald-400/75 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
@@ -3584,7 +3565,7 @@ defineExpose({
                               <button
                                 v-if="(sandboxWorkspaceStatus || 'idle') === 'idle' || (sandboxWorkspaceStatus || 'idle') === 'error'"
                                 type="button"
-                                class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
+                                class="rounded bg-primary px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all disabled:opacity-50"
                                 :disabled="isInteractionLocked"
                                 :title="(sandboxWorkspaceStatus || 'idle') === 'error' ? (sandboxWorkspaceError || '重试启动沙箱') : (sandboxBackend === 'k8s' ? '启动当前用户的 Kubernetes 沙箱 Pod' : '启动当前用户的 Docker 沙箱容器')"
                                 @click.stop="emit('start-sandbox-workspace')"
@@ -3594,7 +3575,7 @@ defineExpose({
                               <button
                                 type="button"
                                 :disabled="sandboxRefreshing"
-                                class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                                class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-primary hover:bg-primary/5 dark:text-gray-400 dark:hover:text-primary-hover dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                                 title="手动检测刷新沙箱状态（创建中/停止中也允许查询）"
                                 @click.stop="emit('refresh-sandbox-workspace', true)"
                               >
@@ -3610,7 +3591,7 @@ defineExpose({
                               >
                                 <button
                                   type="button"
-                                  class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors" :class="{ 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-gray-700': showSandboxActionsMenu }"
+                                  class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-primary hover:bg-primary/5 dark:text-gray-400 dark:hover:text-primary-hover dark:hover:bg-gray-700 transition-colors" :class="{ 'text-primary bg-primary/5 dark:text-primary-hover dark:bg-gray-700': showSandboxActionsMenu }"
                                   title="沙箱管理操作"
                                   @click.stop="showSandboxActionsMenu = !showSandboxActionsMenu"
                                 >
@@ -3626,7 +3607,7 @@ defineExpose({
                                   <!-- 沙箱体检：让 AI 采集系统状态并产出 HTML 报告 -->
                                   <button
                                     type="button"
-                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-primary/5 dark:hover:bg-primary-dark/40 hover:text-primary dark:hover:text-primary-hover transition-colors"
                                     title="让 AI 对当前沙箱做一次系统体检，并把结果整理成 HTML 报告"
                                     @click="showSandboxActionsMenu = false; emit('sandbox-health-report')"
                                   >
@@ -3637,7 +3618,7 @@ defineExpose({
                                   <!-- 沙箱终端：Docker 进容器，K8s 进 Pod -->
                                   <button
                                     type="button"
-                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-primary/5 dark:hover:bg-primary-dark/40 hover:text-primary dark:hover:text-primary-hover transition-colors"
                                     @click="showSandboxActionsMenu = false; emit('open-docker-terminal')"
                                   >
                                     <CommandLineIcon class="h-3.5 w-3.5 text-emerald-500" />
@@ -3645,10 +3626,10 @@ defineExpose({
                                   </button>
                                   <button
                                     type="button"
-                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-primary/5 dark:hover:bg-primary-dark/40 hover:text-primary dark:hover:text-primary-hover transition-colors"
                                     @click="showSandboxActionsMenu = false; emit('restart-sandbox-workspace')"
                                   >
-                                    <ArrowPathIcon class="h-3.5 w-3.5 text-indigo-500" />
+                                    <ArrowPathIcon class="h-3.5 w-3.5 text-primary" />
                                     <span>{{ sandboxBackend === 'k8s' ? '重启 Pod' : '重启容器' }}</span>
                                   </button>
                                   <div class="my-0.5 border-t border-gray-100 dark:border-gray-700/60"></div>
@@ -3690,19 +3671,19 @@ defineExpose({
                   role="dialog"
                   aria-label="上下文压缩记录"
                   aria-live="polite"
-                  class="absolute right-0 z-40 h-[min(70vh,32rem)] w-[min(94vw,42rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-violet-100 bg-white/95 text-[10px] shadow-xl dark:border-violet-900/60 dark:bg-gray-800/95"
+                  class="absolute right-0 z-40 h-[min(70vh,32rem)] w-[min(94vw,42rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-primary/10 bg-white/95 text-[10px] shadow-xl dark:border-primary-dark/60 dark:bg-gray-800/95"
                   :class="contextCompactionDetailsPlacement === 'above'
                     ? 'bottom-[calc(100%+0.5rem)]'
                     : 'top-[calc(100%+0.5rem)]'"
                   @click.stop
                 >
                     <div class="flex h-full flex-col">
-                      <div class="flex shrink-0 items-center justify-between border-b border-violet-100 px-4 py-2 text-xs font-semibold text-gray-600 dark:border-violet-900/60 dark:text-gray-300">
+                      <div class="flex shrink-0 items-center justify-between border-b border-primary/10 px-4 py-2 text-xs font-semibold text-gray-600 dark:border-primary-dark/60 dark:text-gray-300">
                         <span>上下文压缩记录</span>
                         <button
                           type="button"
                           data-testid="context-compaction-close"
-                          class="rounded-md p-1 text-gray-400 transition-colors hover:bg-violet-50 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          class="rounded-md p-1 text-gray-400 transition-colors hover:bg-primary/5 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                           aria-label="关闭上下文压缩记录"
                           title="关闭"
                           @click="closeContextCompactionDetails"
@@ -3756,7 +3737,7 @@ defineExpose({
                                       @click="openDataPortalFromPlusMenu"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <ChartBarIcon class="h-5 w-5 shrink-0 text-blue-500" aria-hidden="true" />
+                                        <ChartBarIcon class="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                                         <span class="font-medium text-left">打开数据门户</span>
                                     </button>
 
@@ -3800,7 +3781,7 @@ defineExpose({
                                       @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('select-memory');"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <CpuChipIcon class="h-5 w-5 shrink-0 text-violet-500" aria-hidden="true" />
+                                        <CpuChipIcon class="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                                         <span class="font-medium text-left">选择记忆记录</span>
                                     </button>
 
@@ -3825,7 +3806,7 @@ defineExpose({
                                       @click.stop="openDataKnowledgeCascade"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <CircleStackIcon class="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
+                                            <CircleStackIcon class="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                                             <span class="font-medium text-left">数据&amp;知识库</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3883,7 +3864,7 @@ defineExpose({
                                       @click.stop="openExpertCascade"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-indigo-500" aria-hidden="true" />
+                                            <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                                             <span class="font-medium text-left">专家中心</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -4769,7 +4750,7 @@ defineExpose({
                         showApprovalMenu && !isInteractionLocked
                           ? (activeApprovalMode === 'ask'
                             ? 'bg-gray-100 dark:bg-gray-700/70'
-                            : 'ring-1 ring-current/25 shadow-sm')
+                            : 'ring-1 ring-[color-mix(in_srgb,currentColor_25%,transparent)] shadow-sm')
                           : '',
                       ]"
                       aria-haspopup="listbox"
@@ -4953,7 +4934,7 @@ defineExpose({
                           class="pointer-events-none flex-shrink-0 rounded-full px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold transition-colors"
                           :class="effectiveTemperature > 1
                             ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-300'
-                            : 'bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-300'"
+                            : 'bg-sky-50 text-primary dark:bg-primary-dark/60 dark:text-sky-300'"
                         >
                           {{ temperatureSummaryLabel }}
                         </span>
@@ -5359,7 +5340,7 @@ defineExpose({
             <div class="flex items-center justify-between mb-6">
               <div class="flex items-center space-x-2">
                 <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-                <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
+                <span class="text-[11px] font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
               </div>
               <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
@@ -5367,7 +5348,7 @@ defineExpose({
             </div>
             <div class="space-y-6">
               <div v-if="filteredUserCommands.length > 0">
-                <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
+                <div class="text-[10px] font-bold text-primary mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div v-for="cmd in filteredUserCommands" :key="'grid-user-'+cmd.id" class="relative group/grid-item">
                     <button draggable="true" @dragstart="handleDragStart($event, cmd, 'user')" @dragover.prevent @drop="handleDrop($event, cmd, 'user')" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
@@ -5379,7 +5360,7 @@ defineExpose({
                 </div>
               </div>
               <div>
-                <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
+                <div class="text-[10px] font-bold text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
                     <div class="flex items-center gap-1.5 text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-4 w-4 shrink-0" aria-hidden="true" />{{ cmd.label }}</div>
@@ -5440,7 +5421,7 @@ defineExpose({
             <div class="flex items-center justify-between mb-6">
               <div class="flex items-center space-x-2">
                 <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-                <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
+                <span class="text-[11px] font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
               </div>
               <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
@@ -5448,7 +5429,7 @@ defineExpose({
             </div>
             <div class="space-y-6">
               <div v-if="filteredUserCommands.length > 0">
-                <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
+                <div class="text-[10px] font-bold text-primary mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
                 <div class="grid grid-cols-2 gap-3">
                   <div v-for="cmd in filteredUserCommands" :key="'mobile-user-'+cmd.id" class="relative">
                     <button @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
@@ -5460,7 +5441,7 @@ defineExpose({
                 </div>
               </div>
               <div>
-                <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
+                <div class="text-[10px] font-bold text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
                 <div class="grid grid-cols-2 gap-3">
                   <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'mobile-sys-'+cmd.id" @click="cmd.disabled ? null : (handleShortcutClick(cmd), closeCommandDrawer());" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
                     <div class="flex items-center gap-1.5 text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-4 w-4 shrink-0" aria-hidden="true" />{{ cmd.label }}</div>
@@ -5478,7 +5459,6 @@ defineExpose({
 <style scoped>
 /* ── 原有动画保留 ── */
 @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-.animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
 /* ── AI 生成中：三点跳动 ── */
 @keyframes ai-bounce {

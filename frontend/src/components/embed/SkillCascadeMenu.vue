@@ -87,11 +87,11 @@ const skillAccentClass = (skill: SkillItem, index: number) => {
     return 'bg-emerald-500 text-white'
   }
   const accents = [
-    'bg-teal-500 text-white',
+    'bg-primary text-white',
     'bg-lime-500 text-white',
-    'bg-violet-500 text-white',
+    'bg-primary text-white',
     'bg-green-500 text-white',
-    'bg-sky-500 text-white',
+    'bg-primary text-white',
   ]
   return accents[index % accents.length]
 }

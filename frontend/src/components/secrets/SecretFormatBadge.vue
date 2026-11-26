@@ -43,7 +43,7 @@ const title = computed(() => {
   <span
     class="shrink-0 whitespace-nowrap rounded px-1 py-0.5 font-normal"
     :class="[
-      structured ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-400',
+      structured ? 'bg-primary/5 text-primary-dark' : 'bg-gray-100 text-gray-400',
       size === 'sm' ? 'text-[11px]' : 'text-[10px]',
     ]"
     :title="title"

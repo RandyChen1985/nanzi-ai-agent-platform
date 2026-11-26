@@ -1,16 +1,22 @@
 # 会话级工具授权（本会话总是允许）设计
 
-- 日期：2026-10-28
-- 状态：已确认，进入实现
+- 日期：2026-10-28（2026-11-25 `#337` 修订安全口径）
+- 状态：已实现并按 `#337` 收敛口径
 - 涉及面：AgentScope 运行时权限判定、工具确认接口、SSE 事件、对话卡片前端
 
 ## 1. 背景
 
 工具确认卡片（`frontend/src/components/chat/ToolPermissionCard.vue`）目前只有两个动作：
-「拒绝执行」与「本次允许执行」。后者只对单次调用生效，同一个会话里连续的探测类命令
-（例如核对挂载与可写性的一串 Bash）会让用户重复确认十几次。
+「拒绝执行」与「本次允许执行」。后者只对单次调用生效，同一个会话里连续的非 shell 写/外部调用工具
+（例如反复写入工作区文件、调用同一个业务写接口或浏览器操作）会让用户重复确认十几次。
 
-需要增加「本会话总是允许」：用户授权一次后，**本会话内同名工具不再逐条询问**。
+需要增加「本会话总是允许」：用户授权一次后，**本会话内同名非 shell 工具不再逐条询问**。
+
+> **2026-11-25（PR `#337`）安全口径修订**：所有 shell 类工具（由 `is_shell_like_tool_name()` 判定，
+> 包括原生 `Bash`、`execute_system_command`、`terminal` 及名称含 `bash`/`shell`/`exec`/`command`/`terminal`
+> 的 `mcp_*` 工具如 `mcp_sandbox_bash_*`）**不再提供也不接受「本会话总是允许」**。原因是会话授权按工具名
+> 记账，而单个 shell 工具名下可执行任意命令，沙箱 shell 缺少原生 Bash 的命令替换与敏感路径 `bypass_immune`
+> 复核，按工具名放行粒度过宽。需要连续免确认执行 shell 命令时，请切换会话审批模式为「自动批准」。
 
 ## 2. 已确认的取舍
 
@@ -33,11 +39,15 @@
    规则都不能覆盖，因此判定时显式排除：`bypass_immune` 的 ASK 一律不降级。
 2. **不做中间件层拦截**。引擎存在先于 `check_permissions` 的只读快速通道，在中间件层
    直接返回 ALLOW 会绕过工具自身的删除保护，必须在工具内、且在危险判定之后判定。
-3. **fail-closed**。取不到 `conversation_id` 或 `user_id` 时不生效（宁可不放行）。
-4. **不信任前端传参**。写入授权时使用的 `conversation_id` 取自服务端挂起快照
+3. **shell 类工具硬性禁用**（`#337` 修订）：
+   - `supports_session_grant(tool)` 对 `is_shell_like_tool_name(tool.name)` 一律返回 `False`，卡片不渲染「本会话总是允许」按钮；
+   - 主会话 `_grant_session_permission()` 对 shell 类工具一律返回 `granted=False, reason="not_grantable"`（含跨进程恢复缺少工具定义的场景，防客户端伪造 `scope="session"`）；
+   - 子代理交接 `_handoff_subagent_permission()` 对 shell 类工具一律强降级为一次性令牌（`once_permission_grants`）。
+4. **fail-closed**。取不到 `conversation_id` 或 `user_id` 时不生效（宁可不放行）。
+5. **不信任前端传参**。写入授权时使用的 `conversation_id` 取自服务端挂起快照
    （`pending.snapshot.conversation_id`），不使用请求体里的值；写入发生在恢复流的鉴权
    之后（`peek_async(..., user_id=current_user_id)` 与显式归属比对）。
-5. 跨会话不共享；TTL 到期自动失效；Redis 写入失败时退化到进程内存兜底，行为与
+6. 跨会话不共享；TTL 到期自动失效；Redis 写入失败时退化到进程内存兜底，行为与
    `pending_store` 一致。**Redis 可用时它是唯一权威来源**：内存兜底只在 Redis 取不到
    连接时参与判定，否则多实例下「另一实例撤销」会被本进程的内存记录挡住 24 小时。
 
@@ -46,8 +56,8 @@
 新增模块 `app/services/ai/runtime/agentscope/session_permission_grants.py`：
 
 - Key：`{memory_service.KEY_PREFIX}:{user_id}:session_grant:{conversation_id}`
-- Value：Redis Set，成员为工具名（如 `Bash`）
-- TTL：`SESSION_GRANT_TTL_SECONDS = 24 * 60 * 60`，写入时设置，命中不续期
+- Value：Redis Set，成员为工具名（如 `Write`、`web_fetch`）
+- TTL：`SESSION_GRANT_TTL_SECONDS = 24 * 60 * 60`，仅在 Redis key 尚无 TTL（`ttl < 0`）时设置，新增其他工具或命中均不续期
 - 接口：`grant` / `revoke` / `is_granted` / `list_grants`（全部 async，失败不抛给调用方）
 - 内存兜底：带过期时间戳的 dict，Redis 不可用时使用
 
@@ -94,8 +104,9 @@ if await session_permission_grants.is_granted(user_id, conversation_id, self.nam
 
 ## 7. 事件与前端
 
-- `permission` SSE 事件新增 `supports_session_grant: bool`：由工具 `permission_scope`
-  决定（`read` / `dangerous` 不给该选项），前端据此决定是否渲染第三个按钮。
+- `permission` SSE 事件新增 `supports_session_grant: bool`：由 `supports_session_grant(tool)`
+  与删除类安全判定共同决定（`read` / `dangerous` / shell 类工具以及删除类命令不给该选项），
+  前端据此决定是否渲染第三个按钮。
 - 工具结果事件在自动放行时带 `auto_approved: true`，时间线展示浅色徽标；该字段随
   `finalize_process_timeline` 落库（白名单压缩不能把它洗掉），刷新/回放仍可见。
 - 卡片新增状态 `approved_session`：转灰、折叠、显示「已允许（本会话内不再询问）」+「撤销」。

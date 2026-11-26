@@ -810,7 +810,7 @@ function collectLogsByPredicate(
   match: (log: ProcessTimelineLogItem) => boolean,
 ): ProcessTimelineLogItem[] {
   const found: ProcessTimelineLogItem[] = [];
-  // ⚠️ 防环：这是深度优先递归，且每次 props 变化都会跑（模型 / 工具两套汇总各一次）。
+  //  防环：这是深度优先递归，且每次 props 变化都会跑（模型 / 工具两套汇总各一次）。
   // 委派场景的树是「旁白 → 子代理容器 → 步骤 → 子步骤」，容器会按 subagent 元数据
   // 合并、按 parent_id 重挂；一旦某节点被挂到自己下面（或两节点互指），没有 visited
   // 就是**主线程无限递归** → Chrome「页面无响应」，刷新后重新 hydrate 继续卡。

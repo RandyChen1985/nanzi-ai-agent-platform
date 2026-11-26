@@ -43,7 +43,7 @@ const fieldLabel = computed(() => {
 const fieldClass = computed(() =>
   structured.value && !props.valuePath
     ? 'bg-amber-50 text-amber-700'
-    : 'bg-blue-50 text-blue-700',
+    : 'bg-primary/5 text-primary-dark',
 )
 
 const fieldTitle = computed(() => {

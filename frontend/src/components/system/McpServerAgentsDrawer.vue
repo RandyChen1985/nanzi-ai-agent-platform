@@ -109,7 +109,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
       <div class="flex items-start justify-between gap-3 border-b border-gray-100 bg-gray-50/60 p-4">
         <div class="min-w-0">
           <h3 id="mcp-agent-usage-title" class="flex items-center gap-2 text-sm font-bold text-slate-800">
-            <UsersIcon class="h-4 w-4 text-indigo-500" />
+            <UsersIcon class="h-4 w-4 text-primary" />
             绑定智能体
           </h3>
           <p class="mt-1 truncate font-mono text-[11px] text-slate-400" :title="server?.server_name">
@@ -118,7 +118,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
         </div>
         <button
           type="button"
-          class="shrink-0 rounded-md p-1 text-gray-400 transition-colors hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200"
+          class="shrink-0 rounded-md p-1 text-gray-400 transition-colors hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
           aria-label="关闭绑定智能体"
           @click="emit('close')"
         >
@@ -132,7 +132,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
         <span class="text-slate-400">{{ usage?.bound_version_count ?? 0 }} 个版本配置</span>
         <button
           type="button"
-          class="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-wait disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200"
+          class="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-wait disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
           :disabled="loading"
           @click="emit('refresh')"
         >
@@ -149,7 +149,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
             v-model="search"
             type="search"
             placeholder="搜索智能体名称"
-            class="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 placeholder:text-gray-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            class="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 placeholder:text-gray-400 focus:border-primary/25 focus:outline-none focus:ring-2 focus:ring-primary/10"
           />
         </label>
       </div>
@@ -173,7 +173,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
 
         <ul v-else class="divide-y divide-gray-100">
           <li v-for="agent in filteredAgents" :key="agent.id" class="flex items-center gap-3 px-4 py-3">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-bold text-indigo-600">
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/5 text-xs font-bold text-primary">
               {{ agentInitial(agent) }}
             </span>
             <div class="min-w-0 flex-1">
@@ -202,6 +202,5 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
 </template>
 
 <style scoped>
-.animate-slide-in-right { animation: slideInRight 0.25s ease-out; }
-@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
 </style>

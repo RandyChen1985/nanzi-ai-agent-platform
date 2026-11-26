@@ -151,7 +151,7 @@ const submit = async () => {
         </div>
 
         <div class="space-y-4 px-5 py-4">
-          <div class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
+          <div class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
             <strong>对方接受后会得到一份属于他自己的副本</strong><br />
             需要重新命名并走向导确认配置；你的这个智能体不受影响，也不会变成共用。<br />
             对方无权使用的工具与技能会在复制时自动剔除。

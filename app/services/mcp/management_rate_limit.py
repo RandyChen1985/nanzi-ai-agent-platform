@@ -17,6 +17,8 @@ DEFAULT_LIMITS = {
     "verify": (20, 60),
     "sync": (10, 60),
     "execute": (60, 60),
+    # 定义探测同样是出站连接（tools/list），阈值与 sync 一致：正常人工不会刷到 10 次/分。
+    "probe": (10, 60),
 }
 
 

@@ -9,7 +9,7 @@ withDefaults(defineProps<{
 <template>
   <div
     role="note"
-    class="mb-2 inline-flex max-w-full items-start gap-2 rounded-lg border border-violet-100 bg-violet-50/80 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/25 dark:text-violet-300"
+    class="mb-2 inline-flex max-w-full items-start gap-2 rounded-lg border border-primary/10 bg-primary/5 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-primary-dark dark:border-primary-dark/50 dark:bg-primary-dark/25 dark:text-primary-hover"
   >
     <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 3a9 9 0 100 18 9 9 0 000-18z" />

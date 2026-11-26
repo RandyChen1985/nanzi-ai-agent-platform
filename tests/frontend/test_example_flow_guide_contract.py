@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_example_flow_guide_banner_contract():
     banner = _source("frontend/src/components/example/ExampleFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     view = _source("frontend/src/views/ExampleManagement.vue")
 
     # 1. 验证 5 步流程定义与核心业务规则
@@ -24,7 +25,7 @@ def test_example_flow_guide_banner_contract():
     assert "/dashboard/chat" in banner
     assert "/dashboard/agent-management" in banner
     assert "一键全量同步" in banner
-    assert "不再提示" in banner
+    assert "不再提示" in strip
 
     # 3. 验证主视图中的组件引入与持久化机制
     assert "ExampleFlowGuideBanner" in view

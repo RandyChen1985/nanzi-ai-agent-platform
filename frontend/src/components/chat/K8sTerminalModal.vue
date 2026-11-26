@@ -322,7 +322,7 @@ onUnmounted(() => {
             v-for="item in QUICK_COMMANDS"
             :key="item.cmd"
             type="button"
-            class="shrink-0 px-2 py-0.5 rounded bg-gray-800/80 hover:bg-indigo-900/40 hover:text-indigo-200 border border-gray-700/60 hover:border-indigo-600/50 text-gray-300 transition-colors font-mono"
+            class="shrink-0 px-2 py-0.5 rounded bg-gray-800/80 hover:bg-primary-dark/40 hover:text-primary-bright border border-gray-700/60 hover:border-primary/50 text-gray-300 transition-colors font-mono"
             :disabled="isExecuting"
             @click="runCommand(item.cmd)"
           >
@@ -363,7 +363,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="mt-3 rounded-md border border-rose-500/30 bg-rose-950/20 p-2 text-rose-200">
-                <div class="font-semibold">⚠ 安全提示</div>
+                <div class="font-semibold">安全提示</div>
                 <div class="text-rose-200/80">命令在当前沙箱 Pod 内执行；删除文件、安装依赖、联网或启动后台进程前，请先确认路径与影响范围。Pod 停止/重建后容器内非挂载路径改动不保留。</div>
               </div>
             </div>
@@ -372,7 +372,7 @@ onUnmounted(() => {
                 <div class="flex items-center gap-2">
                   <span class="text-emerald-400 font-semibold">root@nanzi-k8s</span>
                   <span class="text-gray-500">:</span>
-                  <span class="text-sky-400 font-medium">{{ rec.workdir }}</span>
+                  <span class="text-primary font-medium">{{ rec.workdir }}</span>
                   <span class="text-gray-400">$</span>
                   <span class="text-gray-100 font-mono font-medium">{{ rec.command }}</span>
                 </div>
@@ -380,7 +380,7 @@ onUnmounted(() => {
                   <span v-if="rec.durationMs" class="text-[10px] text-gray-500">{{ rec.durationMs }}ms</span>
                   <span
                     v-if="!rec.loading && rec.exitCode !== 0 && rec.exitCode !== null"
-                    class="px-1 py-0.2 rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
+                    class="px-1 py-px rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
                   >
                     code {{ rec.exitCode }}
                   </span>
@@ -396,7 +396,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div v-if="rec.loading" class="flex items-center gap-2 text-indigo-400 py-1 text-xs">
+              <div v-if="rec.loading" class="flex items-center gap-2 text-primary py-1 text-xs">
                 <ArrowPathIcon class="w-3.5 h-3.5 animate-spin" />
                 <span>执行中...</span>
               </div>
@@ -414,7 +414,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-2 pt-2 text-[12px] font-mono">
             <span class="text-emerald-400 font-semibold shrink-0">root@nanzi-k8s</span>
             <span class="text-gray-500 shrink-0">:</span>
-            <span class="text-sky-400 font-medium shrink-0">{{ currentWorkdir }}</span>
+            <span class="text-primary font-medium shrink-0">{{ currentWorkdir }}</span>
             <span class="text-gray-400 shrink-0">$</span>
             <input
               ref="commandInputRef"
@@ -455,17 +455,5 @@ onUnmounted(() => {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-.animate-fade-in {
-  animation: fadeIn 0.15s ease-out forwards;
-}
+
 </style>

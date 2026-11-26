@@ -6,6 +6,7 @@ import {
   resolveFileTypeVisual,
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
+import { workspaceFileIcon } from '@/utils/workspaceFileIcon'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash, extractWorkspaceArchive, copyFileToWorkspace } from '@/utils/workspaceFilePreview'
 import { parentDirectoryOf } from '@/utils/workspacePath'
 import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
@@ -18,17 +19,29 @@ import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } 
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
 import { shouldAutoDismissUploads } from '@/utils/workspaceUploadQueue'
 import {
+  ArchiveBoxIcon,
   ArrowPathIcon,
   ArrowUpTrayIcon,
   ChatBubbleLeftEllipsisIcon,
+  ChatBubbleLeftRightIcon,
   CheckCircleIcon,
+  CircleStackIcon,
   ClockIcon,
+  CodeBracketIcon,
   ComputerDesktopIcon,
+  DocumentIcon,
   DocumentTextIcon,
   EllipsisVerticalIcon,
+  FilmIcon,
+  FolderIcon,
+  GlobeAltIcon,
   HomeIcon,
   ListBulletIcon,
+  PhotoIcon,
+  PresentationChartBarIcon,
+  SpeakerWaveIcon,
   Squares2X2Icon,
+  TableCellsIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/vue/24/outline'
@@ -211,20 +224,20 @@ const showTypeFilter = ref(
   typeof window !== 'undefined' && localStorage.getItem(SHOW_TYPE_FILTER_KEY) === '1',
 )
 
-const TYPE_FILTER_OPTIONS: Array<{ key: TypeFilterKey; label: string; icon: string }> = [
-  { key: 'all', label: '全部', icon: '✨' },
-  { key: 'folder', label: '文件夹', icon: '📁' },
-  { key: 'image', label: '图片', icon: '🖼️' },
-  { key: 'markdown', label: 'Markdown', icon: '📝' },
-  { key: 'document', label: '文档', icon: '📄' },
-  { key: 'html', label: 'HTML', icon: '🌐' },
-  { key: 'code', label: '代码', icon: '💻' },
-  { key: 'spreadsheet', label: '表格', icon: '📊' },
-  { key: 'presentation', label: '演示', icon: '📽️' },
-  { key: 'archive', label: '压缩包', icon: '🗜️' },
-  { key: 'video', label: '视频', icon: '🎬' },
-  { key: 'audio', label: '音频', icon: '🎵' },
-  { key: 'data', label: '数据', icon: '🗃️' },
+const TYPE_FILTER_OPTIONS: Array<{ key: TypeFilterKey; label: string; icon: Component }> = [
+  { key: 'all', label: '全部', icon: Squares2X2Icon },
+  { key: 'folder', label: '文件夹', icon: FolderIcon },
+  { key: 'image', label: '图片', icon: PhotoIcon },
+  { key: 'markdown', label: 'Markdown', icon: DocumentTextIcon },
+  { key: 'document', label: '文档', icon: DocumentIcon },
+  { key: 'html', label: 'HTML', icon: GlobeAltIcon },
+  { key: 'code', label: '代码', icon: CodeBracketIcon },
+  { key: 'spreadsheet', label: '表格', icon: TableCellsIcon },
+  { key: 'presentation', label: '演示', icon: PresentationChartBarIcon },
+  { key: 'archive', label: '压缩包', icon: ArchiveBoxIcon },
+  { key: 'video', label: '视频', icon: FilmIcon },
+  { key: 'audio', label: '音频', icon: SpeakerWaveIcon },
+  { key: 'data', label: '数据', icon: CircleStackIcon },
 ]
 
 /** 仅选类型、无搜索词时，按扩展名通配符递归扫描子目录 */
@@ -412,11 +425,11 @@ const formatRecentFileLocation = (filePath: string) => {
   const root = userWorkspaceRoot.value
   if (root && parent.startsWith(root)) {
     const rel = parent.slice(root.length).replace(/^\//, '')
-    return rel ? `📂 ${rel}` : '📂 我的目录'
+    return rel || '我的目录'
   }
   const parts = parent.split('/').filter(Boolean)
-  if (parts.length >= 2) return `📂 …/${parts.slice(-2).join('/')}`
-  return parts.length ? `📂 ${parts[parts.length - 1]}` : '📂 —'
+  if (parts.length >= 2) return `…/${parts.slice(-2).join('/')}`
+  return parts.length ? parts[parts.length - 1] : '—'
 }
 
 const openRecentFile = async (recent: { path: string; name: string; mtime: number }) => {
@@ -1267,10 +1280,11 @@ const getFileExt = (filename: string) => {
 const getItemVisual = (item: { name: string; is_dir: boolean }) =>
   resolveFileTypeVisual(item.name, item.is_dir)
 
+
 const getRowVisual = (item: { name: string; is_dir: boolean; path: string }) => {
   if (isTrashRootItem(item)) {
     return {
-      icon: '🗑️',
+      icon: TrashIcon,
       label: '回收站',
       iconBg: 'bg-amber-50 dark:bg-amber-500/10',
       iconRing: 'ring-amber-200/60 dark:ring-amber-500/20',
@@ -1282,17 +1296,23 @@ const getRowVisual = (item: { name: string; is_dir: boolean; path: string }) => 
   }
   if (isSessionDirItem(item)) {
     return {
-      icon: '💬',
+      icon: ChatBubbleLeftRightIcon,
       label: '会话目录',
-      iconBg: 'bg-sky-50 dark:bg-sky-500/10',
-      iconRing: 'ring-sky-200/60 dark:ring-sky-500/20',
-      badgeBg: 'bg-sky-50 dark:bg-sky-500/10',
-      badgeText: 'text-sky-700 dark:text-sky-300',
+      iconBg: 'bg-sky-50 dark:bg-primary/10',
+      iconRing: 'ring-sky-200/60 dark:ring-primary/20',
+      badgeBg: 'bg-sky-50 dark:bg-primary/10',
+      badgeText: 'text-primary-dark dark:text-sky-300',
       category: 'folder' as FileTypeCategory,
       ext: '',
     }
   }
-  return getItemVisual(item)
+  return { ...getItemVisual(item), icon: workspaceFileIcon(item.name, item.is_dir) }
+}
+
+/** 行首图标：回收站/会话目录用自己的图标，其余按扩展名分类 */
+const rowIcon = (item: { name: string; is_dir: boolean; path: string }) => {
+  const visual = getRowVisual(item)
+  return visual.icon ?? workspaceFileIcon(item.name, item.is_dir)
 }
 
 const scopedHomeCrumbName = () => '工作空间'
@@ -2063,14 +2083,14 @@ onUnmounted(() => {
             </div>
 
             <div
-              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
+              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
-                <ComputerDesktopIcon class="h-5 w-5 flex-shrink-0 text-blue-500" aria-hidden="true" />
+                <ComputerDesktopIcon class="h-5 w-5 flex-shrink-0 text-primary" aria-hidden="true" />
                 <span class="truncate">浏览工作空间</span>
                 <span
                   v-if="pinned"
-                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
+                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-primary bg-primary/5 border border-primary/10 dark:text-primary-hover dark:bg-primary/10 dark:border-primary/20"
                 >
                   已钉住
                 </span>
@@ -2089,8 +2109,8 @@ onUnmounted(() => {
                 </label>
                 <button
                   type="button"
-                  class="hidden sm:inline-flex text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
-                  :class="{ 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10': pinned }"
+                  class="hidden sm:inline-flex text-gray-400 hover:text-primary dark:hover:text-primary p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  :class="{ 'text-primary dark:text-primary bg-primary/5 dark:bg-blue-500/10': pinned }"
                   :title="pinButtonTitle"
                   :aria-label="pinned ? '取消钉住' : '钉住侧栏'"
                   @click="pinned = !pinned"
@@ -2126,7 +2146,7 @@ onUnmounted(() => {
                 </button>
                 <button
                   type="button"
-                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="关闭 (Esc)"
                   aria-label="关闭工作空间"
                   @click="closeDrawer"
@@ -2220,7 +2240,7 @@ onUnmounted(() => {
                         class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200/60 dark:ring-amber-500/20 shrink-0 ml-auto"
                         title="当前处于公共只读目录，禁止新建、修改或删除"
                       >
-                        🔒 只读
+                         只读
                       </span>
                     </div>
                   </div>
@@ -2302,7 +2322,7 @@ onUnmounted(() => {
                           : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 hover:border-primary/20 hover:text-primary'"
                         @click="setTypeFilter(opt.key)"
                       >
-                        <span class="text-[10px] leading-none">{{ opt.icon }}</span>
+                        <component :is="opt.icon" class="h-3 w-3" aria-hidden="true" />
                         {{ opt.label }}
                       </button>
                     </div>
@@ -2349,7 +2369,7 @@ onUnmounted(() => {
                       </button>
                     </div>
                   </div>
-                  <div v-if="viewMode === 'list'" class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider shrink-0">
+                  <div v-if="viewMode === 'list'" class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-bold text-gray-400 tracking-wider shrink-0">
                     <div v-if="multiSelectMode" class="col-span-1 flex items-center">
                       <input
                         type="checkbox"
@@ -2452,10 +2472,10 @@ onUnmounted(() => {
                             :class="multiSelectMode ? 'col-span-6 sm:col-span-5' : 'col-span-7 sm:col-span-6'"
                           >
                             <div
-                              class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ring-1 text-sm mt-0.5"
+                              class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ring-1 text-[9px] font-semibold tracking-tight leading-none mt-0.5"
                               :class="[visual.iconBg, visual.iconRing]"
                             >
-                              {{ visual.icon }}
+                              <component :is="visual.icon" class="h-3.5 w-3.5" aria-hidden="true" />
                             </div>
                             <div class="min-w-0 flex-1">
                               <div
@@ -2482,7 +2502,7 @@ onUnmounted(() => {
                               </span>
                               <span
                                 v-if="isSessionDirItem(item)"
-                                class="inline-flex sm:hidden mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 ring-1 ring-sky-200/60 dark:ring-sky-500/20"
+                                class="inline-flex sm:hidden mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-sky-50 dark:bg-primary/10 text-primary-dark dark:text-sky-300 ring-1 ring-sky-200/60 dark:ring-primary/20"
                               >
                                 会话目录
                               </span>
@@ -2491,7 +2511,7 @@ onUnmounted(() => {
                                 class="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 truncate font-mono"
                                 :title="item.path"
                               >
-                                📂 {{ getItemLocationHint(item.path) }}
+                                 {{ getItemLocationHint(item.path) }}
                               </div>
                             </div>
                           </div>
@@ -2560,10 +2580,14 @@ onUnmounted(() => {
                       >
                         <div class="flex items-start justify-between gap-1">
                           <div
-                            class="flex h-10 w-10 items-center justify-center rounded-lg text-lg"
+                            class="flex h-10 w-10 items-center justify-center rounded-lg text-[9px] font-semibold tracking-tight leading-none"
                             :class="[getRowVisual(item).iconBg, getRowVisual(item).iconRing]"
                           >
-                            {{ getRowVisual(item).icon }}
+                            <component
+                              :is="rowIcon(item)"
+                              class="h-4 w-4"
+                              aria-hidden="true"
+                            />
                           </div>
                           <input
                             v-if="multiSelectMode"
@@ -2834,7 +2858,7 @@ onUnmounted(() => {
             @click="openRecentFile(recent)"
           >
             <div class="flex items-start gap-2 min-w-0">
-              <span class="text-sm shrink-0 mt-0.5">{{ getItemVisual({ name: recent.name, is_dir: false }).icon }}</span>
+              <component :is="workspaceFileIcon(recent.name)" class="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
               <div class="min-w-0 flex-1">
                 <div class="text-[11px] font-bold text-gray-700 dark:text-gray-200 truncate" :title="recent.name">
                   {{ recent.name }}
@@ -2948,7 +2972,7 @@ onUnmounted(() => {
       <div class="w-full max-w-sm rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl p-4" @click.stop>
         <h3 class="text-sm font-bold mb-2" :class="deleteTarget.isPublic ? 'text-red-600' : ''">{{ deleteTarget.isPublic ? '永久删除？' : '移入回收站？' }}</h3>
         <p class="text-xs text-gray-500 mb-1">{{ deleteTarget.name }}</p>
-        <p v-if="deleteTarget.isPublic" class="text-xs text-red-500 mb-4">⚠️ 该文件属于公共目录，将被<strong>永久删除</strong>，不可恢复。</p>
+        <p v-if="deleteTarget.isPublic" class="text-xs text-red-500 mb-4"> 该文件属于公共目录，将被<strong>永久删除</strong>，不可恢复。</p>
         <p v-else class="text-xs text-gray-400 mb-4">将被移入回收站，可在回收站中恢复。</p>
         <div class="flex justify-end gap-2">
           <button type="button" class="px-3 py-1.5 text-xs font-bold text-gray-500" @click="deleteTarget = null">取消</button>

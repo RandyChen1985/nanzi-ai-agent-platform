@@ -1392,6 +1392,81 @@ async def _system_update_check_job():
         logger.warning(f"⚠️ Failed to run system update check job: {e}", exc_info=True)
 
 
+async def _system_mcp_definition_probe_job():
+    """系统级定时任务：每天凌晨 4:30 只读探测 MCP 工具定义的远端变更。
+
+    为什么放在 4:30 而不是跟其它任务挤在一起：这条任务要逐个连远端 ``tools/list``，
+    是外部请求而不是纯 DB 操作。2:00/3:00/3:30/4:00 那四条已经错开，这条接在最后。
+
+    为什么只探「启用中的平台服务」：
+
+    - 个人服务是用户自己建的，后台探它等于替别人做决定，且失败率更高；
+    - 禁用服务探了也没意义，只会刷出一堆 unreachable 干扰「服务挂了」的判断；
+    - 需要用户签名的服务由探测层降级成 ``needs_user``，这里不特殊处理。
+
+    探测本身**不改任何已生效的定义**，只写差异记录；所以即使误报也只是多一条待办，
+    不会有「半夜把工具悄悄下线」的风险。
+    """
+    logger.info("⏰ Starting MCP definition probe job...")
+
+    lock_key = f"lock:system_mcp_definition_probe:{datetime.now().strftime('%Y%m%d%H%M')}"
+    if redis.redis_client is not None:
+        try:
+            if not await redis.redis_client.set(lock_key, "locked", ex=1800, nx=True):
+                logger.warning("⏩ MCP definition probe skipped: lock already acquired by another node.")
+                return
+        except Exception as lock_err:
+            # 探测是只读的，重复跑最多多写一次相同的差异记录（有唯一 pending 去重），
+            # 宁可多跑也不要整天不探。
+            logger.warning(
+                "MCP definition probe: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
+
+    try:
+        from app.models.mcp import McpServer
+        from app.services.mcp.definition_probe import (
+            DETECTED_NIGHTLY,
+            notify_admins_about_changes,
+            probe_servers,
+        )
+
+        async with AsyncSessionLocal() as db:
+            rows = (
+                await db.execute(
+                    select(McpServer.id).where(
+                        McpServer.scope == "global",
+                        McpServer.enabled_status == 1,
+                    )
+                )
+            ).scalars().all()
+        server_ids = [str(row) for row in rows]
+        if not server_ids:
+            logger.info("MCP definition probe: no enabled platform MCP server, skipped.")
+            return
+
+        results = await probe_servers(
+            server_ids, detected_by=DETECTED_NIGHTLY, skip_disabled=True
+        )
+        changed = [item for item in results if item.get("status") == "changed"]
+        unreachable = [item for item in results if item.get("status") == "unreachable"]
+        if changed:
+            sent = await notify_admins_about_changes(results)
+            logger.info(
+                "✅ MCP definition probe: %s 个服务有定义变更，已通知 %s 位管理员。",
+                len(changed), sent,
+            )
+        else:
+            logger.info("✅ MCP definition probe finished: 未发现定义变更。")
+        if unreachable:
+            logger.warning(
+                "MCP definition probe: %s 个服务本次不可达（不会改动任何工具定义）。",
+                len(unreachable),
+            )
+    except Exception as e:  # noqa: BLE001 - 巡检失败不能刷一屏堆栈
+        logger.error(f"❌ Failed to run MCP definition probe job: {e}", exc_info=True)
+
+
 async def _system_third_party_user_sync_job():
     """系统级定时任务：从第三方数据源同步用户。"""
     logger.info("⏰ Starting third-party user sync job...")
@@ -1693,6 +1768,17 @@ class TaskSchedulerService:
             CronTrigger(hour=4, minute=0, timezone=tz),
             id="system_update_check",
             replace_existing=True
+        )
+
+        # 注册 MCP 工具定义探测任务，每日凌晨 4:30 运行
+        # 只读探测：发现远端定义与本地不一致时写变更记录 + 通知管理员，不改动任何工具。
+        self._scheduler.add_job(
+            _system_mcp_definition_probe_job,
+            CronTrigger(hour=4, minute=30, timezone=tz),
+            id="system_mcp_definition_probe",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
 
         # API 节点可能关闭本地调度器；由唯一的启用节点定期从任务库对账，

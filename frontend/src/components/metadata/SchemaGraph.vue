@@ -154,7 +154,7 @@ const handleResize = () => {
 <template>
   <div class="w-full h-[600px] bg-slate-50 rounded-xl border border-gray-200 shadow-inner relative overflow-hidden">
      <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/50 z-10">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
      </div>
      
      <div v-if="!loading && tables.length === 0" class="absolute inset-0 flex items-center justify-center text-gray-400">
@@ -168,7 +168,7 @@ const handleResize = () => {
      <div class="absolute top-4 left-4 bg-white/80 backdrop-blur p-3 rounded-lg border border-gray-100 shadow-sm text-xs pointer-events-none select-none">
         <div class="font-bold text-gray-700 mb-2">Legend</div>
         <div class="flex items-center gap-2 mb-1">
-           <span class="w-3 h-3 rounded-full bg-indigo-600"></span> <span>Fact Table</span>
+           <span class="w-3 h-3 rounded-full bg-primary"></span> <span>Fact Table</span>
         </div>
         <div class="flex items-center gap-2">
            <span class="w-3 h-3 rounded-full bg-emerald-500"></span> <span>Dim/Other</span>

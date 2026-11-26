@@ -116,7 +116,7 @@ const forwardToast = (message: string, type?: 'success' | 'error' | 'info') => {
       >
         <div
           v-if="modelValue"
-          class="markdown-body prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-a:text-blue-600 prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200"
+          class="markdown-body max-w-none"
           v-html="renderMarkdown(modelValue)"
         ></div>
         <div v-else class="h-full flex flex-col items-center justify-center text-gray-300">

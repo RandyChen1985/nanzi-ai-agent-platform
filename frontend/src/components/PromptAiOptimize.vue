@@ -129,7 +129,7 @@ onUnmounted(() => {
     type="button"
     @click="openConfirm"
     :disabled="!canOptimize"
-    class="ml-1 flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+    class="ml-1 flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md text-primary hover:bg-primary/5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
   >
     <SparklesIcon class="w-3.5 h-3.5 mr-1" :class="{ 'animate-spin': optimizing }" />
     AI 润色
@@ -152,7 +152,7 @@ onUnmounted(() => {
         v-if="optimizing"
         class="fixed inset-0 z-[10050] bg-white/50 backdrop-blur-[2px] flex flex-col items-center justify-center"
       >
-        <div class="relative p-10 pt-12 bg-white rounded-3xl shadow-2xl border border-indigo-100 flex flex-col items-center min-w-[280px]">
+        <div class="relative p-10 pt-12 bg-white rounded-3xl shadow-2xl border border-primary/10 flex flex-col items-center min-w-[280px]">
           <button
             type="button"
             class="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
@@ -163,9 +163,9 @@ onUnmounted(() => {
             <XMarkIcon class="w-5 h-5" />
           </button>
           <div class="relative w-20 h-20 mb-6">
-            <div class="absolute inset-0 rounded-full border-4 border-indigo-50"></div>
-            <div class="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"></div>
-            <SparklesIcon class="absolute inset-0 m-auto w-8 h-8 text-indigo-500 animate-pulse" />
+            <div class="absolute inset-0 rounded-full border-4 border-primary/5"></div>
+            <div class="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+            <SparklesIcon class="absolute inset-0 m-auto w-8 h-8 text-primary animate-pulse" />
           </div>
           <div class="text-base font-bold text-gray-900 mb-2">AI 正在深度优化中...</div>
           <div class="text-xs text-gray-400 mb-5">{{ props.loadingHint }}</div>
@@ -187,8 +187,8 @@ onUnmounted(() => {
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
           <div class="flex items-center">
-            <div class="p-2 bg-indigo-100 rounded-lg mr-3">
-              <SparklesIcon class="w-5 h-5 text-indigo-600" />
+            <div class="p-2 bg-primary/10 rounded-lg mr-3">
+              <SparklesIcon class="w-5 h-5 text-primary" />
             </div>
             <div>
               <h3 class="text-sm font-bold text-gray-900">AI 优化建议</h3>
@@ -215,7 +215,7 @@ onUnmounted(() => {
               class="px-4 py-4 cursor-pointer transition-all border-l-4"
               :class="
                 activeOptimizeTab === index
-                  ? 'bg-white border-indigo-500 text-indigo-700 font-bold'
+                  ? 'bg-white border-primary text-primary-dark font-bold'
                   : 'border-transparent text-gray-500 hover:bg-gray-100/50'
               "
             >
@@ -229,9 +229,9 @@ onUnmounted(() => {
               v-if="activeOptimizeSuggestion"
               class="flex-1 flex flex-col p-6 overflow-hidden"
             >
-              <div class="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
-                <div class="text-[10px] font-bold text-indigo-700 uppercase mb-1">推荐理由 (Reason)</div>
-                <p class="text-xs text-indigo-900 leading-relaxed">
+              <div class="mb-4 p-3 bg-primary/5 border border-primary/10 rounded-xl">
+                <div class="text-[10px] font-bold text-primary-dark uppercase mb-1">推荐理由 (Reason)</div>
+                <p class="text-xs text-primary-dark leading-relaxed">
                   {{ activeOptimizeSuggestion.reason || '暂无说明' }}
                 </p>
               </div>
@@ -241,7 +241,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     @click="copyToClipboard(activeOptimizeSuggestion.content)"
-                    class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-indigo-600 transition-all"
+                    class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-primary transition-all"
                     title="复制此版本"
                   >
                     <DocumentDuplicateIcon class="w-4 h-4" />
@@ -256,7 +256,7 @@ onUnmounted(() => {
                 <button
                   type="button"
                   @click="applySuggestion(activeOptimizeSuggestion.content)"
-                  class="px-6 py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 active:scale-95 transition-all flex items-center"
+                  class="px-6 py-2.5 bg-primary text-white text-xs font-bold rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/30 active:scale-95 transition-all flex items-center"
                 >
                   <CheckBadgeIcon class="w-4 h-4 mr-2" />
                   应用此方案

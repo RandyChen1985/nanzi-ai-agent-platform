@@ -79,7 +79,7 @@
               </div>
               <button
                 type="button"
-                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                class="inline-flex items-center px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-sm hover:bg-primary-dark active:scale-95 transition-all"
                 @click="downloadOriginalFile"
               >
                 重新下载原档
@@ -140,7 +140,7 @@
             class="flex-1 min-h-0 flex flex-col bg-white dark:bg-gray-900 px-4 pb-4 overflow-hidden"
           >
             <div
-              class="flex-1 min-h-0 overflow-y-auto p-3 bg-blue-50/30 dark:bg-blue-900/5 border border-blue-100/50 dark:border-blue-900/10 rounded-xl text-xs text-gray-600 dark:text-gray-300 leading-relaxed custom-table-render scrollbar-thin"
+              class="flex-1 min-h-0 overflow-y-auto p-3 bg-primary/5 dark:bg-primary-dark/5 border border-primary/10 dark:border-primary-dark/10 rounded-xl text-xs text-gray-600 dark:text-gray-300 leading-relaxed custom-table-render scrollbar-thin"
               v-html="safeContent"
             />
           </div>

@@ -154,21 +154,21 @@ const testConnection = async (component: string) => {
     if (data.status === 'success') {
       results.value[component] = 'success'
       showToast(`${component} 连接成功`, 'success')
-      appendLog(`>>> ✅ ${component} 测试通过`)
+      appendLog(`>>> [OK] ${component} 测试通过`)
     } else if (data.status === 'skipped') {
       results.value[component] = null
       showToast(`${component} 已跳过`, 'info')
-      appendLog(`>>> ⚠️ ${component} 测试跳过: ${data.message}`)
+      appendLog(`>>> [WARN] ${component} 测试跳过: ${data.message}`)
     } else {
       results.value[component] = 'failed'
       showToast(`${component} 连接失败`, 'error')
-      appendLog(`>>> ❌ ${component} 测试失败: ${data.message}`)
+      appendLog(`>>> [FAIL] ${component} 测试失败: ${data.message}`)
     }
   } catch (error: any) {
     results.value[component] = 'failed'
     const msg = error.response?.data?.detail || error.message
     showToast(`测试请求失败: ${msg}`, 'error')
-    appendLog(`>>> ❌ 请求异常: ${msg}`)
+    appendLog(`>>> [FAIL] 请求异常: ${msg}`)
   } finally {
     loading.value[component] = false
   }
@@ -181,7 +181,7 @@ const scanRedisKeys = async () => {
   try {
      const response = await axios.post('/api/portal/system/redis/keys')
      const { count, keys } = response.data
-     appendLog(`>>> 📊 Redis Keys 总数: ${count}`)
+     appendLog(`>>> Redis Keys 总数: ${count}`)
      appendLog('>>> ----------------------------')
      if (keys.length === 0) {
          appendLog('>>> (无数据)')
@@ -191,11 +191,11 @@ const scanRedisKeys = async () => {
          })
      }
      appendLog('>>> ----------------------------')
-     appendLog('>>> ✅ 扫描完成')
+     appendLog('>>> [OK] 扫描完成')
      showToast('扫描成功', 'success')
   } catch (e: any) {
     const msg = e.response?.data?.detail || e.message
-    appendLog(`>>> ❌ 扫描失败: ${msg}`)
+    appendLog(`>>> [FAIL] 扫描失败: ${msg}`)
     showToast('扫描失败', 'error')
   } finally {
     loading.value['redis_scan'] = false
@@ -216,13 +216,13 @@ const testRedisVectorSearch = async (force = true) => {
     redisVectorHealth.value = data
     results.value.redis_vector = data?.ok ? 'success' : 'failed'
 
-    appendLog(`>>> ${data?.ok ? '✅' : '❌'} ${data?.message || 'Redis 向量搜索检测完成'}`)
+    appendLog(`>>> ${data?.ok ? '[OK]' : '[FAIL]'} ${data?.message || 'Redis 向量搜索检测完成'}`)
     if (data?.redis_host) {
       appendLog(`>>> 连接: ${data.redis_host}:${data.redis_port ?? '-'} / db ${data.redis_db ?? '-'}`)
     }
     if (data?.checks?.length) {
       data.checks.forEach((check) => {
-        appendLog(`>>> ${check.passed ? '✅' : '❌'} ${check.name}: ${check.message}`)
+        appendLog(`>>> ${check.passed ? '[OK]' : '[FAIL]'} ${check.name}: ${check.message}`)
       })
     }
 
@@ -240,7 +240,7 @@ const testRedisVectorSearch = async (force = true) => {
           }
     redisVectorHealth.value = data
     results.value.redis_vector = 'failed'
-    appendLog(`>>> ❌ ${data.message}`)
+    appendLog(`>>> [FAIL] ${data.message}`)
     showToast('Redis 向量搜索检测失败', 'error')
   } finally {
     loading.value.redis_vector = false
@@ -252,7 +252,7 @@ const openClearConfirm = () => {
 }
 
 const handleRedisKeysDeleted = async (payload: { deletedCount: number; message: string }) => {
-  appendLog(`>>> ✅ ${payload.message}`)
+  appendLog(`>>> [OK] ${payload.message}`)
   showToast(`已删除 ${payload.deletedCount} 个 Key`, 'success')
   if (diagSubTab.value === 'redis') {
     await fetchRedisKeys()
@@ -276,7 +276,7 @@ const executeRebuildVectors = async () => {
          appendLog(`>>> ${logStr}`)
        })
      }
-     appendLog(`>>> ✅ ${message || '重构任务已启动'}`)
+     appendLog(`>>> [OK] ${message || '重构任务已启动'}`)
      if (taskId) {
        // 后台任务已启动：打开实时进度抽屉，由 SSE 推送进度与日志
        rebuildTaskId.value = taskId
@@ -292,7 +292,7 @@ const executeRebuildVectors = async () => {
       showToast(e.response?.data?.detail || '已有重构任务正在运行，请稍后再试', 'warning')
     } else {
       const msg = e.response?.data?.detail || e.message
-      appendLog(`>>> ❌ 重构失败: ${msg}`)
+      appendLog(`>>> [FAIL] 重构失败: ${msg}`)
       showToast('重构失败', 'error')
     }
   } finally {
@@ -302,10 +302,10 @@ const executeRebuildVectors = async () => {
 
 const handleRebuildTaskFinished = async (payload: { ok: boolean; message: string }) => {
   if (payload.ok) {
-    appendLog(`>>> ✅ ${payload.message || '本地向量重构完成'}`)
+    appendLog(`>>> [OK] ${payload.message || '本地向量重构完成'}`)
     showToast(payload.message || '本地向量重构完成', 'success')
   } else {
-    appendLog(`>>> ❌ 本地向量重构失败: ${payload.message || '未知错误'}`)
+    appendLog(`>>> [FAIL] 本地向量重构失败: ${payload.message || '未知错误'}`)
     showToast(payload.message || '本地向量重构失败', 'error')
   }
   // 收到终态后照旧重新检测 Redis 向量搜索能力
@@ -2311,17 +2311,17 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
 
 【三种模式详细解析与排布举例】
 
-1️⃣ legacy（传统兼容模式）：
+1⃣ legacy（传统兼容模式）：
 * 排布举例：[当前时间锚点] ➔ [本轮路由快照] ➔ [平台固定规则 5K] ➔ [智能体发布提示词 10K]
 * 为什么命中率低：因为把每秒都在变化的“时间”或每轮都在变化的“路由快照”放在了最头部，导致发送给大模型的第一个字符永远在变，彻底打碎服务端的 KV 缓存，多轮对话命中率通常为 0%。
 * 适用场景：极端异常时的全局紧急回退兜底。
 
-2️⃣ observe（仅观测基线模式）：
+2⃣ observe（仅观测基线模式）：
 * 排布举例：保持与 legacy 完全一致的传统排布发送，业务逻辑 0 变动、0 风险。
 * 核心作用：打通并记录大模型供应商真实返回的 cached_tokens / cache_read 命中字段，在调用明细弹框与后台日志中呈现真实命中数据。
 * 适用场景：新功能上线前观察当前环境的基线缓存命中水平，作为优化前的对照组。
 
-3️⃣ enabled（启用稳定前缀优化模式）：
+3⃣ enabled（启用稳定前缀优化模式）：
 * 排布举例：
   ┌─ 稳定前缀层（命中缓存金矿，~15K Tokens 保持绝对一致）
   │   ├── 平台固定规则与格式规范
@@ -2345,18 +2345,18 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
 
 【不同数值具体举例（大白话）】
 
-📌 设为 0%（虽然开了总关，但滴水不放）：
+ 设为 0%（虽然开了总关，但滴水不放）：
 * 举例：线上即使有 100 个用户在聊天，所有人的对话全都走老逻辑，新优化 0 生效。
 * 作用：即开即关的安全刹车（紧急情况下秒级熔断）。
 
-📌 设为 20%（小范围灰度试水，做效果对比）：
+ 设为 20%（小范围灰度试水，做效果对比）：
 * 举例：线上有 100 个对话窗口，系统会随机分流 20 个对话开启缓存新布局，其余 80 个对话依然走老逻辑。
 * 作用：您可以打开「调用明细指标」对比这两部分对话的耗时和命中率，验证新布局的加速效果。
 
-📌 设为 50%（半量放行）：
+ 设为 50%（半量放行）：
 * 举例：一半对话走新布局，一半走老逻辑，进一步扩大观察范围。
 
-📌 设为 100%（全量开启，推荐稳定后使用）：
+ 设为 100%（全量开启，推荐稳定后使用）：
 * 举例：所有用户的全部对话窗口，100% 全量享受「稳定层前置」带来的极速响应和 Token 费用大减免。
 
 【特别安心机制：同一会话绝不来回跳变】
@@ -2401,7 +2401,7 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
   - 0.0：没有任何门槛。系统会把检索出的相关表结构描述全部喂给大模型，不管它们是否相关。（容易引入大量不相关干扰信息，导致大模型混淆或胡说八道）。
   - 0.9：门槛极高。只有和问题中表述极其相似、几乎一模一样的元数据描述才能通过。（极易导致大模型找不到任何参考表结构，回答“无法获取相关信息”）。
 
-💡 调优建议：
+ 调优建议：
 * 一般推荐设置在 0.4 到 0.6 之间作为起步（平台默认建议 0.40）。
 * 如果发现大模型经常瞎编不存在的表或字段名，说明阈值太低了混入了杂音，需要调高。
 * 如果发现大模型经常明明有对应的表，却回答“找不到相关表结构”，说明门槛太高了，需要调低。`,
@@ -2418,7 +2418,7 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
   - 0.0：只看关键词匹配（全文检索），完全忽略同义词或相近语义的理解。
   - 0.70 / 0.85（默认值）：代表系统更倾向于语义理解，但同时保留 15%~30% 的权重给精确的关键词/表名匹配。
 
-💡 调优建议：
+ 调优建议：
 * 如果你的数据集多为行业术语、字母缩写、特定型号、人名或股票代码等需要精准字面匹配的场景，调低该值（如 0.3 ~ 0.4）。
 * 如果用户提问多为口语化日常表达、长句描述，或包含大量同义词（如“查找”与“搜索”），调高该值（如 0.7 ~ 0.85）。`,
     'ragflow_metadata_top_k': '检索数据库表/字段描述时，最大召回的候选文档数量。值越大，召回的内容越多，但会增加 Token 消耗。',
@@ -2447,7 +2447,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
   - 0.0：无任何过滤。无论是否相关，最相似的几个案例都会全部作为 Few-shot 喂给大模型。（可能误导大模型套用错误模板，引入大量噪音导致大模型胡说八道）。
   - 0.9：门槛极高。只有和历史案例极其吻合的提问才能匹配上，参考难度极大。（容易导致大模型找不到任何参考案例）。
 
-💡 调优建议：
+ 调优建议：
 * 一般推荐设置在 0.5 到 0.7 之间作为起步（平台默认建议 0.65，在本地模式下建议 0.40）。
 * 若大模型经常乱套用历史案例的 SQL 模板，说明阈值太低了混入了杂音，需要调高。
 * 若明明有相似案例大模型却无法参考，说明门槛太高了，需要调低。`,
@@ -2464,7 +2464,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
   - 0.0：只以字面关键词匹配进行案例搜索（全文检索），完全忽略同义词或相近语义的理解。
   - 0.85（默认值）：更倾向于语义匹配，保证在追问或同义表达时仍能稳定匹配到相应的查数案例（保留 15% 权重给关键词精确匹配）。
 
-💡 调优建议：
+ 调优建议：
 * 如果案例中包含大量行业术语、人名、股票代码或特定型号等需要精准字面匹配的词，调低该值（如 0.3 ~ 0.5）。
 * 如果用户提问多为日常用语、描述性问题或包含大量同义词，调高该值（如 0.7 ~ 0.85）。`,
     'embedchat_watermark_enabled': '开启后，将在嵌入式对话界面（EmbedChat）背景中平铺渲染防止信息截屏泄露的安全审计水印。',
@@ -2503,7 +2503,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
   - 0.0：没有任何门槛。系统会把检索出的所有文档段落全部喂给大模型，不管它们是否真的相关。（容易引入大量噪音，导致大模型胡说八道）。
   - 0.9：门槛极高。只有和提问几乎一模一样的文档段落才能通过。（极易导致大模型找不到任何参考资料，回答“不知道”）。
 
-💡 调优建议：
+ 调优建议：
 * 一般推荐设置在 0.2 到 0.4 之间作为起步（平台默认建议 0.20）。
 * 如果发现大模型经常瞎编无关事实，说明阈值太低了混入了杂音，需要调高。
 * 如果发现大模型经常明明有对应的知识，却回答“知识库中没有相关信息”，说明门槛太高了，需要调低。`,
@@ -2520,7 +2520,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
   - 0.0：只看关键词匹配（全文检索），完全忽略同义词或相近语义的理解。
   - 0.30（默认值）：代表知识库检索更倾向于全文关键词匹配（占 70% 权重），对精准度要求较高。
 
-💡 调优建议：
+ 调优建议：
 * 如果知识库多为技术文档、规格手册或包含大量专业代号，调低该值（如 0.2 ~ 0.3）。
 * 如果问题比较多样化、偏口语表述，调高该值（如 0.6 ~ 0.7）以强化语义召回。`,
     'knowledge_ragflow_metadata_top_k': '知识库问答检索时，最大召回匹配的候选文档片段数。值越大参考条数越多，但会消耗更多的模型 Token。',
@@ -2571,8 +2571,8 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 【要显式指定某个共享 PVC？】
 * 格式要求：填写 Kubernetes 集群目标命名空间（默认与平台同命名空间 nanzi-ai-agent）中【已存在的 PVC 资源名称】。
 * 填写示例：nanzi-ai-agent-data（平台主 PVC）或 my-shared-pvc。
-* ⚠️ 注意：仅填写标准的 K8s 资源名（纯字母、数字、短横线），不要写成路径（例如不要加 / 或 /app/data）。
-* ⚠️ 注意：PVC 是命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC；否则沙箱 Pod 会因找不到 PVC 而长期 Pending。
+* [WARN] 注意：仅填写标准的 K8s 资源名（纯字母、数字、短横线），不要写成路径（例如不要加 / 或 /app/data）。
+* [WARN] 注意：PVC 是命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC；否则沙箱 Pod 会因找不到 PVC 而长期 Pending。
 
 【最终会生成和挂载什么路径？】
 1. 沙箱容器内路径：固定挂载为沙箱 Pod 内部的 /workspace。
@@ -2583,7 +2583,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 指定动态创建独立专属 PVC 时所使用的 Kubernetes 存储类（StorageClass）。
 
 【生效前提】
-⚠️ 仅在沙箱回退为「动态独立卷」模式时生效：即上方 sandbox_k8s_existing_pvc 填了 none（强制独立临时卷），或留空但平台数据卷自动探测失败。若已共享平台/已有 PVC，则此配置项会被自动忽略。
+[WARN] 仅在沙箱回退为「动态独立卷」模式时生效：即上方 sandbox_k8s_existing_pvc 填了 none（强制独立临时卷），或留空但平台数据卷自动探测失败。若已共享平台/已有 PVC，则此配置项会被自动忽略。
 
 【可以为空吗？】
 可以为空（默认留空）。
@@ -2603,7 +2603,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 平台作为 SSH 客户端，通过密钥（ssh -i 临时受限文件）免密登录目标 Linux 服务器，在远端沙箱工作区（默认 /workspace）下执行 Agent 的各类 Bash、代码运行及排障工具。
 
 【步骤一：在本地或运维终端生成免密私钥对（推荐 Ed25519）】
-⚠️ 核心要求：沙箱连接由后台自动化批处理非交互运行，私钥必须为【无密码保护（No Passphrase）】！
+[WARN] 核心要求：沙箱连接由后台自动化批处理非交互运行，私钥必须为【无密码保护（No Passphrase）】！
 在终端执行以下命令生成专属密钥对（-N "" 即代表无密码）：
 ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key
 
@@ -3659,17 +3659,17 @@ const pendingDeleteKey = ref<string | null>(null)
 // 规则按前缀长度降序排列并顺序匹配（长前缀优先），避免 `nanzi:` 抢走 `nanzi:agent:ltm:`。
 // label 面向运维阅读，用业务名而非原始前缀；chip 是完整的 Tailwind 类名（不可动态拼接）。
 const REDIS_KEY_GROUP_RULES: { prefix: string; label: string; desc: string; chip: string }[] = [
-  { prefix: 'agent:dataset_navigation_recent_questions:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'agent:dataset_navigation:cache_generation', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'sys:meta:has_cross_dataset_relationship:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
-  { prefix: 'agent:dataset_navigation_click_meta:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'agent:dataset_navigation_click_rank:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'agent:branding:default_agent_avatar', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'knowledge:ragflow:alive_dataset_ids', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'agent:dataset_navigation_recent_questions:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation:cache_generation', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'sys:meta:has_cross_dataset_relationship:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-slate-50 text-slate-700 border-slate-200' },
+  { prefix: 'agent:dataset_navigation_click_meta:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation_click_rank:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'agent:branding:default_agent_avatar', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'knowledge:ragflow:alive_dataset_ids', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 dark:text-teal-300 border-teal-200' },
   { prefix: 'nanzi:lock:rebuild_local_vectors', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'nanzi:chat_request_idempotency:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
-  { prefix: 'agent:workspace_browser_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'agent:workspace_recent_files:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:workspace_browser_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'agent:workspace_recent_files:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
   { prefix: 'sys:auth:permissions:v2:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
   { prefix: 'sys:auth:permissions:v3:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
   // v4（新增 models）/ v5（新增禁用技能）/ v6（新增智能体级作用域）都是当前版本链路实际
@@ -3678,43 +3678,43 @@ const REDIS_KEY_GROUP_RULES: { prefix: string; label: string; desc: string; chip
   { prefix: 'sys:auth:permissions:v4:user:', label: '权限缓存', desc: '用户权限（含模型白名单）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'sys:auth:permissions:v5:user:', label: '权限缓存', desc: '用户权限（含禁用技能）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'sys:auth:permissions:v6:user:', label: '权限缓存', desc: '用户权限（含智能体级作用域）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
-  { prefix: 'memory:_vector_health_probe:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
-  { prefix: 'ragflow:doc_recommendations:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
-  { prefix: 'metadata:metric_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
-  { prefix: 'agent:dataset_navigation:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'nanzi:skills:stats:daily:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
-  { prefix: 'metadata:rel_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
-  { prefix: 'nanzi:skills:stats:total', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
-  { prefix: 'agent:welcome_cards:v1:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'memory:summary:daily:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'memory:_vector_health_probe:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-primary/5 text-primary border-primary/20' },
+  { prefix: 'ragflow:doc_recommendations:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 dark:text-teal-300 border-teal-200' },
+  { prefix: 'metadata:metric_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-slate-50 text-slate-700 border-slate-200' },
+  { prefix: 'agent:dataset_navigation:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'nanzi:skills:stats:daily:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-primary-dark border-sky-200' },
+  { prefix: 'metadata:rel_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-slate-50 text-slate-700 border-slate-200' },
+  { prefix: 'nanzi:skills:stats:total', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-primary-dark border-sky-200' },
+  { prefix: 'agent:welcome_cards:v1:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'memory:summary:daily:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-primary/5 text-primary border-primary/20' },
   { prefix: 'metadata_sync:events:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
-  { prefix: 'agent:portal_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:portal_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
   { prefix: 'auth:user_sessions:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
   { prefix: 'metadata_sync:task:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
-  { prefix: 'agent:dataset_menu', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { prefix: 'ai:user-question:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'agent:dataset_menu', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200' },
+  { prefix: 'ai:user-question:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-primary-dark border-sky-200' },
   { prefix: 'auth:2fa_pending:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
-  { prefix: 'metadata:dataset:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'metadata:dataset:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-slate-50 text-slate-700 border-slate-200' },
   { prefix: 'sandbox:degraded:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'auth:login_fail:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
-  { prefix: 'memory:debounce:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
-  { prefix: 'nanzi:agent:ltm:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'memory:debounce:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-primary/5 text-primary border-primary/20' },
+  { prefix: 'nanzi:agent:ltm:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-primary/5 text-primary border-primary/20' },
   { prefix: 'audit:log_queue', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
   { prefix: 'auth:2fa_setup:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
   { prefix: 'lock:task_exec:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'mcp_rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
-  { prefix: 'memory:summary:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'memory:summary:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-primary/5 text-primary border-primary/20' },
   { prefix: 'nanzi:conv_run:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'presence:touch:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { prefix: 'memory_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
   { prefix: 'nanzi:example:', label: 'ChatBI 样例库', desc: '经验案例向量索引', chip: 'bg-orange-50 text-orange-700 border-orange-200' },
   { prefix: 'presence:user:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { prefix: 'presence:users', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  { prefix: 'sql_result:v2:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'sql_result:v2:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-primary-dark border-sky-200' },
   { prefix: 'auth:api_key:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
-  { prefix: 'conversation:', label: '会话记忆与上下文', desc: '会话历史、上下文快照、结果栈与调用统计', chip: 'bg-blue-50 text-blue-700 border-blue-200' },
-  { prefix: 'embed:ticket:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
-  { prefix: 'kb:citation:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'conversation:', label: '会话记忆与上下文', desc: '会话历史、上下文快照、结果栈与调用统计', chip: 'bg-primary/5 text-primary border-primary/20' },
+  { prefix: 'embed:ticket:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-primary-dark border-sky-200' },
+  { prefix: 'kb:citation:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 dark:text-teal-300 border-teal-200' },
   { prefix: 'rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'sys_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
 ]
@@ -3891,7 +3891,7 @@ const executeDeleteGroup = async () => {
     }
 
     showToast(`已清空分组「${group.id}」，共删除 ${totalDeleted} 个 Key`, 'success')
-    appendLog(`>>> ✅ 已清空分组「${group.id}」，批量删除 ${totalDeleted} 个 Redis Key`)
+    appendLog(`>>> [OK] 已清空分组「${group.id}」，批量删除 ${totalDeleted} 个 Redis Key`)
 
     if (selectedRedisKey.value && allKeys.includes(selectedRedisKey.value)) {
       selectedRedisKey.value = null
@@ -3902,7 +3902,7 @@ const executeDeleteGroup = async () => {
   } catch (e: any) {
     const msg = e.response?.data?.detail || e.message
     showToast(`清空分组失败: ${msg}`, 'error')
-    appendLog(`>>> ❌ 清空分组「${group.id}」失败: ${msg}`)
+    appendLog(`>>> [FAIL] 清空分组「${group.id}」失败: ${msg}`)
   } finally {
     deletingGroupLoading.value = false
     pendingDeleteGroup.value = null
@@ -4185,7 +4185,7 @@ onUnmounted(() => {
                <button
                  @click="saveLogConfig"
                  :disabled="savingLogConfig || !canSave"
-                 class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 disabled:opacity-50"
+                 class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary-dark disabled:opacity-50"
                >
                  {{ savingLogConfig ? '保存中...' : '保存配置' }}
                </button>
@@ -4242,7 +4242,7 @@ onUnmounted(() => {
                    <tr v-for="(p, index) in partitions" :key="index" class="hover:bg-gray-50/50 transition-colors">
                      <td class="py-3 px-4 font-mono text-xs text-gray-900">{{ p.table_name }}</td>
                      <td class="py-3 px-4">
-                       <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 font-mono">
+                       <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/5 text-primary-dark border border-primary/10 font-mono">
                          {{ p.partition_name }}
                        </span>
                      </td>
@@ -4670,7 +4670,7 @@ onUnmounted(() => {
                     v-model="redisPattern"
                     placeholder="匹配模式 (例如 * 或 nanzi:*)..."
                     @keyup.enter="fetchRedisKeys"
-                    class="block w-full pl-9 pr-18 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50/70 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                    class="block w-full pl-9 pr-[4.5rem] py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50/70 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                   />
                   <div class="absolute inset-y-0 right-1 flex items-center pr-0.5">
                     <button
@@ -4759,14 +4759,14 @@ onUnmounted(() => {
                           :key="key.name"
                           @click="fetchRedisKeyDetail(key.name)"
                           class="pl-6 pr-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
-                          :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                          :class="selectedRedisKey === key.name ? 'bg-primary/5 hover:bg-primary/5' : ''"
                         >
                           <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
                             {{ key.name }}
                           </span>
                           <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
                             key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
-                            key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                            key.type === 'hash' ? 'bg-primary/5 text-primary-dark border border-primary/10' :
                             key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
                             'bg-gray-50 text-gray-600 border border-gray-100'
                           ">
@@ -4798,7 +4798,7 @@ onUnmounted(() => {
                         </h3>
                       </div>
                       <div class="flex items-center space-x-2 text-[10px]">
-                        <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
+                        <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-primary/5 text-primary-dark border border-primary/10">
                           {{ redisKeyDetail.type }}
                         </span>
                         <span class="font-mono text-gray-500">
@@ -4818,7 +4818,7 @@ onUnmounted(() => {
 
                   <!-- Value area -->
                   <div class="flex-1 min-h-0 overflow-y-auto bg-gray-950 rounded-lg p-3 font-mono text-[11px] text-green-400 custom-scrollbar border border-gray-950">
-                    <pre class="whitespace-pre-wrap break-all select-text selection:bg-indigo-500/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
+                    <pre class="whitespace-pre-wrap break-all select-text selection:bg-primary/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
                   </div>
                 </div>
                 <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
@@ -4941,7 +4941,7 @@ onUnmounted(() => {
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-2 border-t border-gray-100">
               <div>
                 <p class="text-sm font-medium text-gray-700">隐藏版本号外链</p>
-                <p class="text-xs text-gray-400">开启后侧栏版本号不再链接到 GitHub，并隐藏 GitHub 图标</p>
+                <p class="text-xs text-gray-400">开启后账户菜单「关于」里不再显示仓库外链、版本检测与更新日志入口</p>
               </div>
               <Switch v-model="brandingConfig.hide_version_link" />
             </div>
@@ -5117,7 +5117,7 @@ onUnmounted(() => {
                <div class="flex items-center gap-2">
                  <div
                    v-if="hasUnsavedConfigChanges"
-                   class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-semibold text-amber-700 shadow-2xs animate-pulse"
+                   class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-700"
                  >
                    <span class="h-2 w-2 rounded-full bg-amber-500"></span>
                    <span>已修改 {{ unsavedConfigCount }} 项参数（未保存）</span>
@@ -5164,7 +5164,7 @@ onUnmounted(() => {
                         <component :is="getCategoryIcon(String(category))" class="h-5 w-5" />
                      </div>
                      <div class="min-w-0">
-                        <h3 class="text-md font-medium text-gray-800" :title="getCategoryLabel(String(category), false)">{{ getCategoryLabel(String(category)) }}</h3>
+                        <h3 class="text-base font-medium text-gray-800" :title="getCategoryLabel(String(category), false)">{{ getCategoryLabel(String(category)) }}</h3>
                         <p class="text-[11px] text-gray-500 truncate max-w-md">{{ getGroupSubtitle(String(category)) }}</p>
                      </div>
                      <span class="ml-auto shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500" :title="`共 ${totalConfigCountFor(String(category))} 项配置`">{{ totalConfigCountFor(String(category)) }} 项</span>
@@ -5186,25 +5186,25 @@ onUnmounted(() => {
                      class="p-6 divide-y divide-gray-100"
                  >
                     <div v-if="category === 'agent'" class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md text-sm text-amber-900 flex items-start space-x-2 mb-4">
-                       <span class="text-amber-500 font-bold shrink-0">⚠️ 提示：</span>
+                       <span class="text-amber-500 font-bold shrink-0">提示：</span>
                        <div>
                           如果在此处变更了全局 <strong>Embedding 模型名</strong> 或 <strong>向量维度</strong>，已有的向量数据（包括本地元数据和经验案例集）必须进行重新向量化重建，否则无法正常进行相似度检索。保存变更后，请前往 <strong>【系统诊断】</strong> 标签页执行 <strong>【重构本地向量数据】</strong> 即可。
                        </div>
                     </div>
                     <div v-if="category === 'knowledge' && !isKnowledgeFeatureEnabled" class="bg-gray-50 border-l-4 border-gray-300 p-4 rounded-md text-sm text-gray-600 flex items-start space-x-2 mb-4">
-                       <span class="text-gray-400 font-bold shrink-0">ℹ️</span>
+                       <span class="text-gray-400 font-bold shrink-0">ℹ</span>
                        <div>
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
                        </div>
                     </div>
-                    <div v-if="category === 'image'" class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-md text-sm text-blue-900 flex items-start space-x-2 mb-4">
-                       <span class="text-blue-500 font-bold shrink-0">ℹ️</span>
+                    <div v-if="category === 'image'" class="bg-primary/5 border-l-4 border-primary p-4 rounded-md text-sm text-primary-dark flex items-start space-x-2 mb-4">
+                       <span class="text-primary font-bold shrink-0">ℹ</span>
                        <div>
                           打开总开关后，平台才会把 <code class="font-mono text-xs">generate_image</code> 工具挂到<strong>已勾选该工具</strong>的智能体上；新建智能体默认不带。关闭总开关时工具完全不暴露给模型，不会出现「调了才报错」的多余一轮。
                        </div>
                     </div>
-                    <div v-if="category === 'email'" class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-md text-sm text-blue-900 flex items-start space-x-2 mb-4">
-                       <span class="text-blue-500 font-bold shrink-0">ℹ️</span>
+                    <div v-if="category === 'email'" class="bg-primary/5 border-l-4 border-primary p-4 rounded-md text-sm text-primary-dark flex items-start space-x-2 mb-4">
+                       <span class="text-primary font-bold shrink-0">ℹ</span>
                        <div>
                           「发送测试邮件」<strong>使用已保存的配置</strong>，请先保存再测试。前端只持有脱敏后的密码，尚未保存的改动无法用于发信。
                        </div>
@@ -5213,28 +5213,28 @@ onUnmounted(() => {
                          并落在整行上，让「高亮、搜索滚动、引导锚点」指向同一个盒子 -->
                     <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" :data-tour="`config-${item.key}`" :id="`config-item-${item.key}`" class="grid grid-cols-1 md:grid-cols-3 gap-6 py-5 first:pt-0 last:pb-2 transition-all duration-150" :class="[
                       isConfigItemModified(item.key) ? 'bg-amber-50/40 rounded-xl px-4 -mx-4 border-l-4 border-amber-400 shadow-2xs' : '',
-                      item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-indigo-100/70 bg-indigo-50/30 px-4 pt-4 pb-3 -mx-4' : '',
-                      ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-indigo-100/70 bg-indigo-50/30 px-4 py-3 -mx-4 !mt-0' : '',
-                      ['embed_dimensions'].includes(item.key) ? 'embed-config-group rounded-b-xl border-x border-b border-indigo-100/70 bg-indigo-50/30 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
-                      item.key === 'ragflow_api_url' ? 'ragflow-config-group rounded-t-xl border-x border-t border-sky-200/80 bg-sky-50/70 px-4 pt-4 -mx-4' : '',
-                      item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-sky-200/80 bg-sky-50/70 px-4 pb-4 -mx-4 !mt-0' : '',
-                      item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-emerald-200/80 bg-emerald-50/60 px-4 pt-4 -mx-4' : '',
-                      item.key === 'external_sql_api_key' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group border-x border-emerald-200/80 bg-emerald-50/60 px-4 -mx-4 !mt-0' : '',
-                      item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-emerald-200/80 bg-emerald-50/60 px-4 pb-4 -mx-4 !mt-0' : '',
-                      item.key === 'knowledge_scope_gate_enabled' ? 'scope-gate-config-group rounded-t-xl border-x border-t border-violet-200/80 bg-violet-50/50 px-4 pt-4 -mx-4' : '',
-                      item.key === 'knowledge_scope_gate_threshold' ? 'scope-gate-config-group border-x border-violet-200/80 bg-violet-50/50 px-4 py-3 -mx-4 !mt-0' : '',
-                      item.key === 'knowledge_scope_gate_ranked_limit' ? 'scope-gate-config-group rounded-b-xl border-x border-b border-violet-200/80 bg-violet-50/50 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-gray-200/80 bg-gray-50/60 px-4 pt-4 pb-3 -mx-4' : '',
+                      ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-gray-200/80 bg-gray-50/60 px-4 py-3 -mx-4 !mt-0' : '',
+                      ['embed_dimensions'].includes(item.key) ? 'embed-config-group rounded-b-xl border-x border-b border-gray-200/80 bg-gray-50/60 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'ragflow_api_url' ? 'ragflow-config-group rounded-t-xl border-x border-t border-gray-200/80 bg-gray-50/60 px-4 pt-4 -mx-4' : '',
+                      item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-gray-200/80 bg-gray-50/60 px-4 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-gray-200/80 bg-gray-50/60 px-4 pt-4 -mx-4' : '',
+                      item.key === 'external_sql_api_key' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group border-x border-gray-200/80 bg-gray-50/60 px-4 -mx-4 !mt-0' : '',
+                      item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-gray-200/80 bg-gray-50/60 px-4 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'knowledge_scope_gate_enabled' ? 'scope-gate-config-group rounded-t-xl border-x border-t border-gray-200/80 bg-gray-50/60 px-4 pt-4 -mx-4' : '',
+                      item.key === 'knowledge_scope_gate_threshold' ? 'scope-gate-config-group border-x border-gray-200/80 bg-gray-50/60 px-4 py-3 -mx-4 !mt-0' : '',
+                      item.key === 'knowledge_scope_gate_ranked_limit' ? 'scope-gate-config-group rounded-b-xl border-x border-b border-gray-200/80 bg-gray-50/60 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
                       highlightedConfigKey === item.key ? 'ring-2 ring-primary/60 rounded-xl shadow-lg bg-primary/5 scroll-mt-24 -mx-1 px-1' : ''
                     ]">
-                      <div v-if="item.key === 'knowledge_scope_gate_enabled'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-violet-800">
-                        <ServerIcon class="h-4 w-4 shrink-0 text-violet-600" />
+                      <div v-if="item.key === 'knowledge_scope_gate_enabled'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-gray-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-primary" />
                         <span>知识库检索范围确认</span>
-                        <span class="text-xs font-normal text-violet-700/80">可检索库较多时先让用户选定范围，避免上百个库无差别联合检索</span>
+                        <span class="text-xs font-normal text-gray-500">可检索库较多时先让用户选定范围，避免上百个库无差别联合检索</span>
                       </div>
-                      <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-sky-800">
-                        <ServerIcon class="h-4 w-4 shrink-0 text-sky-600" />
+                      <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-gray-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-primary" />
                         <span>RAGFlow 连接配置</span>
-                        <span class="text-xs font-normal text-sky-700/80">配置地址与密钥后，可立即测试数据集列表接口</span>
+                        <span class="text-xs font-normal text-gray-500">配置地址与密钥后，可立即测试数据集列表接口</span>
                       </div>
                       <div v-if="item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-emerald-800">
                         <ServerIcon class="h-4 w-4 shrink-0 text-emerald-600" />
@@ -5470,11 +5470,11 @@ onUnmounted(() => {
                                   {{ loading.rebuild_vector ? '重构中...' : '一键重构' }}
                                 </button>
                               </div>
-                              <div v-if="item.value === 'local'" class="mt-2 text-xs text-blue-700 bg-blue-50/50 p-3 rounded-xl border border-blue-100/50 leading-relaxed select-none">
-                                  💡 <strong>本地元数据模式：</strong>直接在本地查询由元数据字典维护的表和字段，并使用全局 Embedding 算法计算向量，通过<strong>本地 Redis (HNSW) 向量索引</strong>进行高速检索，<strong>无需配置下方的 RAGFlow 地址与密钥</strong>。服务启动时会自动 ensure 索引并全量同步（不 DROP）；变更 Embedding 模型/维度或索引异常时，请点击右侧<strong>「一键重构」</strong>手动 DROP 后重建。
+                              <div v-if="item.value === 'local'" class="mt-2 text-xs text-primary-dark bg-primary/5 p-3 rounded-xl border border-primary/10 leading-relaxed select-none">
+                                  <strong>本地元数据模式：</strong>直接在本地查询由元数据字典维护的表和字段，并使用全局 Embedding 算法计算向量，通过<strong>本地 Redis (HNSW) 向量索引</strong>进行高速检索，<strong>无需配置下方的 RAGFlow 地址与密钥</strong>。服务启动时会自动 ensure 索引并全量同步（不 DROP）；变更 Embedding 模型/维度或索引异常时，请点击右侧<strong>「一键重构」</strong>手动 DROP 后重建。
                               </div>
                               <div v-else-if="item.value === 'ragflow'" class="mt-2 text-xs text-amber-700 bg-amber-50/50 p-3 rounded-xl border border-amber-100/50 leading-relaxed select-none">
-                                  💡 <strong>RAGFlow 语义检索模式：</strong>需要将本地元数据字典一键同步至 RAGFlow 系统，系统在检索表和字段的描述信息时会调用下方配置的 RAGFlow 网关地址与 API 密钥进行全文 + 向量的混合检索。
+                                  <strong>RAGFlow 语义检索模式：</strong>需要将本地元数据字典一键同步至 RAGFlow 系统，系统在检索表和字段的描述信息时会调用下方配置的 RAGFlow 网关地址与 API 密钥进行全文 + 向量的混合检索。
                               </div>
                           </div>
                           <div v-else-if="item.key === 'sql_execution_mode'">
@@ -5495,7 +5495,7 @@ onUnmounted(() => {
                                <span class="flex min-w-0 items-center gap-2 pr-5">
                                  <component
                                    :is="getSandboxPolicyIcon(currentSandboxPolicy.value)"
-                                   class="h-5 w-5 shrink-0 text-indigo-500"
+                                   class="h-5 w-5 shrink-0 text-primary"
                                    aria-hidden="true"
                                  />
                                  <span class="min-w-0">
@@ -5525,12 +5525,12 @@ onUnmounted(() => {
                                  :aria-disabled="opt.disabled ? 'true' : 'false'"
                                  @click="selectSandboxPolicy(item, opt.value)"
                                  :disabled="isConfigItemDisabled(String(category), item) || opt.disabled"
-                                 class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-indigo-50/80 focus:bg-indigo-50/80 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
-                                 :class="opt.value === item.value ? 'bg-indigo-50/70 font-medium' : ''"
+                                 class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-primary/5 focus:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
+                                 :class="opt.value === item.value ? 'bg-primary/5 font-medium' : ''"
                                >
                                  <component
                                    :is="getSandboxPolicyIcon(opt.value)"
-                                   class="mt-0.5 h-5 w-5 shrink-0 text-indigo-500"
+                                   class="mt-0.5 h-5 w-5 shrink-0 text-primary"
                                    aria-hidden="true"
                                  />
                                  <span class="min-w-0">
@@ -5545,12 +5545,12 @@ onUnmounted(() => {
 
                              <div v-if="item.value === 'k8s'" class="mt-3 text-xs bg-sky-50/70 p-3.5 rounded-xl border border-sky-100 leading-relaxed space-y-3">
                                  <div class="space-y-1">
-                                   <div class="flex items-center gap-1.5 font-semibold text-sky-900 text-xs">
-                                     <ServerStackIcon class="h-4 w-4 text-sky-600 shrink-0" />
+                                   <div class="flex items-center gap-1.5 font-semibold text-primary-dark text-xs">
+                                     <ServerStackIcon class="h-4 w-4 text-primary shrink-0" />
                                      <span>Kubernetes 集群沙箱配置与 RBAC 权限指引</span>
                                    </div>
-                                   <p class="text-sky-700 text-[11px] leading-relaxed">
-                                     在 Kubernetes 生产集群中，平台需通过 API Server 在目标命名空间（默认与平台同命名空间 <code class="font-mono text-sky-800 bg-sky-100/80 px-1 py-0.5 rounded">nanzi-ai-agent</code>）动态创建和管理独立的沙箱 Pod / PVC。同命名空间是共享用户工作区 PVC 的前置条件。
+                                   <p class="text-primary-dark text-[11px] leading-relaxed">
+                                     在 Kubernetes 生产集群中，平台需通过 API Server 在目标命名空间（默认与平台同命名空间 <code class="font-mono text-primary-dark bg-sky-100/80 px-1 py-0.5 rounded">nanzi-ai-agent</code>）动态创建和管理独立的沙箱 Pod / PVC。同命名空间是共享用户工作区 PVC 的前置条件。
                                    </p>
                                  </div>
 
@@ -5561,11 +5561,11 @@ onUnmounted(() => {
                                      <button
                                        type="button"
                                        @click="copyK8sRbacCommand"
-                                       class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
+                                       class="inline-flex items-center gap-1 text-primary hover:text-sky-300 transition-colors cursor-pointer"
                                        title="点击复制命令"
                                      >
                                        <span v-if="k8sRbacCommandCopied" class="text-emerald-400 font-medium">✓ 已复制</span>
-                                       <span v-else class="font-sans">📋 复制命令</span>
+                                       <span v-else class="font-sans">复制命令</span>
                                      </button>
                                    </div>
                                    <div class="text-emerald-400 break-all select-all font-mono">
@@ -5575,17 +5575,17 @@ onUnmounted(() => {
 
                                  <!-- 权限检测操作栏（check-rbac 与保存配置同权：element:system:config_save） -->
                                  <div v-if="canSave" class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-sky-100/80">
-                                   <span class="text-sky-800 text-[11px]">
+                                   <span class="text-primary-dark text-[11px]">
                                      配置好 RBAC 后，点击右侧按钮实时探测当前平台 Pod 是否具备所需权限：
                                    </span>
                                    <button
                                      type="button"
                                      @click="checkK8sRbac"
                                      :disabled="k8sChecking"
-                                     class="inline-flex items-center justify-center py-1.5 px-3 border border-sky-300 rounded-md shadow-sm text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors whitespace-nowrap cursor-pointer"
+                                     class="inline-flex items-center justify-center py-1.5 px-3 border border-sky-300 rounded-md shadow-sm text-xs font-medium text-white bg-primary hover:bg-primary-dark disabled:opacity-50 transition-colors whitespace-nowrap cursor-pointer"
                                    >
                                      <ArrowPathIcon v-if="k8sChecking" class="animate-spin h-3.5 w-3.5 mr-1.5" />
-                                     <span v-else class="mr-1.5">⚡</span>
+                                     <span v-else class="mr-1.5 inline-block h-3.5 w-3.5 shrink-0" aria-hidden="true"></span>
                                      {{ k8sChecking ? "正在探测 K8s 权限..." : "校验 K8s 集群与 RBAC 权限" }}
                                    </button>
                                  </div>
@@ -5620,18 +5620,18 @@ onUnmounted(() => {
                                          </span>
                                        </div>
                                        <div v-if="k8sCheckResult.suggestion" class="text-gray-600 text-[10px]">
-                                         💡 <strong>处置建议：</strong>{{ k8sCheckResult.suggestion }}
+                                         <strong>处置建议：</strong>{{ k8sCheckResult.suggestion }}
                                        </div>
                                      </div>
                                    </div>
                                  </div>
                              </div>
 
-                             <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-violet-700 bg-violet-50/60 p-3 rounded-xl border border-violet-100/60 leading-relaxed select-none space-y-1.5">
-                                 <div>🌐 <strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-violet-800 underline decoration-violet-300 hover:decoration-violet-600">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
-                                 <div>🔑 <strong>API Key 来源</strong>：优先读取下方 <code class="font-mono text-violet-800">sandbox_e2b_api_key</code>；留空则读取进程环境变量 <code class="font-mono text-violet-800">E2B_API_KEY</code>。两者均无时，初始化 E2B 沙箱会失败。请先在 e2b.dev 注册登录并生成 <code class="font-mono text-violet-800">e2b_...</code> 形式的 Key。</div>
-                                 <div>💰 <strong>云端付费</strong>：E2B 沙箱运行在第三方云端，按需创建、消耗配额并产生计费；会话结束后暂停（pause）保存磁盘供下次复用，请留意用量与费用。</div>
-                                 <div>🛠 <strong>相关配置</strong>：沙箱模板（<code class="font-mono text-violet-800">sandbox_e2b_template</code>）为空时使用 E2B 默认模板；超时时间（<code class="font-mono text-violet-800">sandbox_e2b_timeout_seconds</code>）默认 300 秒。</div>
+                             <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-primary-dark bg-primary/5 p-3 rounded-xl border border-primary/10 leading-relaxed select-none space-y-1.5">
+                                 <div><strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-primary-dark underline decoration-primary/25 hover:decoration-primary">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
+                                 <div><strong>API Key 来源</strong>：优先读取下方 <code class="font-mono text-primary-dark">sandbox_e2b_api_key</code>；留空则读取进程环境变量 <code class="font-mono text-primary-dark">E2B_API_KEY</code>。两者均无时，初始化 E2B 沙箱会失败。请先在 e2b.dev 注册登录并生成 <code class="font-mono text-primary-dark">e2b_...</code> 形式的 Key。</div>
+                                 <div><strong>云端付费</strong>：E2B 沙箱运行在第三方云端，按需创建、消耗配额并产生计费；会话结束后暂停（pause）保存磁盘供下次复用，请留意用量与费用。</div>
+                                 <div><strong>相关配置</strong>：沙箱模板（<code class="font-mono text-primary-dark">sandbox_e2b_template</code>）为空时使用 E2B 默认模板；超时时间（<code class="font-mono text-primary-dark">sandbox_e2b_timeout_seconds</code>）默认 300 秒。</div>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'platform_timezone'">
@@ -5661,14 +5661,14 @@ onUnmounted(() => {
                                placeholder="https://your-domain.example.com"
                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                              />
-                             <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
+                             <div class="mt-2 text-xs text-primary-dark bg-primary/5 p-3 rounded-xl border border-primary/10 leading-relaxed">
                                <div class="flex items-start justify-between gap-3">
                                  <div class="min-w-0">
-                                   <span>💡 只填协议 + 域名（如 <code class="font-mono text-blue-800">https://your-domain.example.com</code>），不要填路径、文件名或 token。留空时回退环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code>。</span>
+                                   <span>只填协议 + 域名（如 <code class="font-mono text-primary-dark">https://your-domain.example.com</code>），不要填路径、文件名或 token。留空时回退环境变量 <code class="font-mono text-primary-dark">APP_PUBLIC_URL</code>。</span>
                                  </div>
                                  <button
                                    type="button"
-                                   class="inline-flex items-center flex-shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900 py-0.5 px-1.5 -my-0.5 rounded-lg hover:bg-blue-100/70 transition-colors cursor-pointer"
+                                   class="inline-flex items-center flex-shrink-0 text-xs font-medium text-primary-dark hover:text-primary py-0.5 px-1.5 -my-0.5 rounded-lg hover:bg-primary/10 transition-colors cursor-pointer"
                                    @click="appPublicUrlHelpOpen = !appPublicUrlHelpOpen"
                                  >
                                    {{ appPublicUrlHelpOpen ? '收起说明' : '查看说明' }}
@@ -5676,14 +5676,14 @@ onUnmounted(() => {
                                  </button>
                                </div>
 
-                               <div v-if="appPublicUrlHelpOpen" class="mt-2.5 pt-2.5 border-t border-blue-100/80 space-y-1.5 text-blue-800">
-                                 <div class="font-semibold text-blue-900">这个地址会被下面这些地方用到：</div>
-                                 <div><strong>1）生成文件下载链接</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code></div>
-                                 <div><strong>2）忘记密码的重置邮件</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>。本项留空时登录页的「忘记密码」入口会整块隐藏，否则邮件里的相对地址点不开。</div>
-                                 <div><strong>3）MCP</strong>：Echo 测试服务与平台级 MCP 的公网地址、OAuth 元数据（<code class="font-mono text-blue-800">/.well-known/oauth-*</code>）以及 Host/Origin 白名单。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」，刷新库里保存的 <code class="font-mono text-blue-800">sse_url</code>。</div>
+                               <div v-if="appPublicUrlHelpOpen" class="mt-2.5 pt-2.5 border-t border-primary/10 space-y-1.5 text-primary-dark">
+                                 <div class="font-semibold text-primary-dark">这个地址会被下面这些地方用到：</div>
+                                 <div><strong>1）生成文件下载链接</strong>：<code class="font-mono text-primary-dark">https://your-domain.example.com/api/v1/chat/generated-files/...</code></div>
+                                 <div><strong>2）忘记密码的重置邮件</strong>：<code class="font-mono text-primary-dark">https://your-domain.example.com/reset-password?token=...</code>。本项留空时登录页的「忘记密码」入口会整块隐藏，否则邮件里的相对地址点不开。</div>
+                                 <div><strong>3）MCP</strong>：Echo 测试服务与平台级 MCP 的公网地址、OAuth 元数据（<code class="font-mono text-primary-dark">/.well-known/oauth-*</code>）以及 Host/Origin 白名单。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」，刷新库里保存的 <code class="font-mono text-primary-dark">sse_url</code>。</div>
                                  <div><strong>4）报表订阅通知</strong>：定时任务推送到邮件 / 企微等渠道时附带的深链。</div>
                                  <div><strong>5）网页预览</strong>：判定第三方页面能否在平台内嵌打开时，用于识别「本平台自己的页面」。</div>
-                                 <div class="pt-1 text-[11px] text-blue-700/80">只写协议、域名和必要的反向代理前缀；<strong>不要</strong>写 API 路径、文件名、token，也不要写 <code class="font-mono text-blue-800">/reset-password</code> 这类页面路径。</div>
+                                 <div class="pt-1 text-[11px] text-primary-dark/80">只写协议、域名和必要的反向代理前缀；<strong>不要</strong>写 API 路径、文件名、token，也不要写 <code class="font-mono text-primary-dark">/reset-password</code> 这类页面路径。</div>
                                </div>
                              </div>
                           </div>
@@ -5721,13 +5721,13 @@ onUnmounted(() => {
                                <div class="space-y-1.5 flex-1">
                                  <div class="font-semibold text-amber-900 flex items-center gap-1.5">
                                    <span>平台后端环境尚未安装 sshpass 工具</span>
-                                   <span class="rounded bg-amber-200/80 px-1.5 py-0.2 text-[10px] text-amber-900 font-mono">密码认证受限</span>
+                                   <span class="rounded bg-amber-200/80 px-1.5 py-px text-[10px] text-amber-900 font-mono">密码认证受限</span>
                                  </div>
                                  <div class="text-amber-700 text-[11px] leading-relaxed">
                                    SSH 密码认证方式必须依赖服务端系统的 <code class="bg-amber-100 px-1 py-0.5 rounded font-mono">sshpass</code> CLI 才能非交互传递密码。当前环境缺失该工具，密码连接测试与执行将失败。
                                  </div>
                                  <div class="rounded-md bg-amber-100/70 p-2 text-[11px] text-amber-900 space-y-1 border border-amber-200/60">
-                                   <div class="font-semibold">💡 建议解决方案：</div>
+                                   <div class="font-semibold">建议解决方案：</div>
                                    <div>1. <strong>改用私钥认证（推荐）</strong>：切换为上方「私钥认证」，免密码且无需安装 sshpass；</div>
                                    <div>2. <strong>在服务端环境安装</strong>：
                                      <div class="mt-1 space-y-0.5 font-mono text-[10px]">
@@ -5742,10 +5742,10 @@ onUnmounted(() => {
                              <!-- 私钥认证友好提示 -->
                              <div
                                v-else
-                               class="flex items-center gap-2 rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs text-sky-800"
+                               class="flex items-center gap-2 rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs text-primary-dark"
                              >
-                               <span class="text-sky-600 font-bold">ℹ️</span>
-                               <span class="text-sky-700 text-[11px]">
+                               <span class="text-primary font-bold">ℹ</span>
+                               <span class="text-primary-dark text-[11px]">
                                  当前为私钥认证：依托下方私钥文本免密连接，无需依赖 sshpass 工具
                                  <span v-if="sandboxSshHasSshCli" class="ml-1 text-emerald-700 font-medium">（OpenSSH 客户端已就绪）</span>
                                  <span v-else class="ml-1 text-amber-700 font-medium">（未检测到 OpenSSH 客户端）</span>。
@@ -5834,9 +5834,9 @@ onUnmounted(() => {
                                   <button
                                     type="button"
                                     @click="sshPrivateKeyExampleExpanded = !sshPrivateKeyExampleExpanded"
-                                    class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50/80 px-2 py-1 text-[11px] font-medium text-sky-700 shadow-xs hover:bg-sky-100 transition-colors"
+                                    class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50/80 px-2 py-1 text-[11px] font-medium text-primary-dark shadow-xs hover:bg-sky-100 transition-colors"
                                   >
-                                    <InformationCircleIcon class="h-3.5 w-3.5 text-sky-600" />
+                                    <InformationCircleIcon class="h-3.5 w-3.5 text-primary" />
                                     <span>{{ sshPrivateKeyExampleExpanded ? '收起示例' : '格式示例' }}</span>
                                     <ChevronUpIcon v-if="sshPrivateKeyExampleExpanded" class="h-3 w-3" />
                                     <ChevronDownIcon v-else class="h-3 w-3" />
@@ -5900,7 +5900,7 @@ onUnmounted(() => {
                                 >
                                   <ExclamationTriangleIcon class="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                                   <div>
-                                    <div class="font-semibold text-amber-800">⚠️ 格式严重警告：当前填入的是公钥（Public Key）！</div>
+                                    <div class="font-semibold text-amber-800">格式严重警告：当前填入的是公钥（Public Key）！</div>
                                     <div class="mt-0.5 text-amber-700">
                                       此处必须填入用于 SSH 客户端登录的<strong>私钥（Private Key）</strong>文本。公钥（如 <code class="bg-amber-100/80 px-1 rounded font-mono">id_ed25519.pub</code>）应配置在远程主机的 <code class="bg-amber-100/80 px-1 rounded font-mono">~/.ssh/authorized_keys</code> 中，而非填在平台管理端。
                                     </div>
@@ -5930,7 +5930,7 @@ onUnmounted(() => {
                                   <div class="space-y-1">
                                     <div class="font-semibold text-emerald-900 flex items-center gap-1.5">
                                       <span>私钥已安全保存到服务端数据库</span>
-                                      <span class="rounded bg-emerald-100 px-1.5 py-0.2 text-[10px] text-emerald-800 font-mono">已脱敏保护</span>
+                                      <span class="rounded bg-emerald-100 px-1.5 py-px text-[10px] text-emerald-800 font-mono">已脱敏保护</span>
                                     </div>
                                     <div class="text-emerald-700">
                                       为保障凭据安全，界面仅回显脱敏掩码（如 <code class="bg-emerald-100 px-1 py-0.5 rounded font-mono text-[11px]">---****----</code>）。若无需更换密钥，请<strong>保持当前内容不变</strong>；如需更换私钥，可点击右上角<strong>「清空」</strong>或直接全选粘贴新的完整私钥。
@@ -5955,33 +5955,33 @@ onUnmounted(() => {
                                   v-else
                                   class="text-[11px] text-gray-500 leading-relaxed space-y-0.5"
                                 >
-                                  <div>💡 <strong>填写指南：</strong>粘贴 OpenSSH 或 RSA PEM 格式的未加密私钥完整文本。平台会严格保护敏感内容，绝不在任何进程参数中暴露。</div>
+                                  <div><strong>填写指南：</strong>粘贴 OpenSSH 或 RSA PEM 格式的未加密私钥完整文本。平台会严格保护敏感内容，绝不在任何进程参数中暴露。</div>
                                 </div>
                               </div>
 
                               <!-- 可折叠展开的格式示例与生成指引卡片 -->
                               <div
                                 v-if="sshPrivateKeyExampleExpanded"
-                                class="mt-3 rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-xs text-sky-900 space-y-2.5"
+                                class="mt-3 rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-xs text-primary-dark space-y-2.5"
                               >
                                 <div class="flex items-center justify-between">
-                                  <span class="font-semibold text-sky-800">📖 SSH 私钥标准格式与生成指引</span>
+                                  <span class="font-semibold text-primary-dark">SSH 私钥标准格式与生成指引</span>
                                   <button
                                     type="button"
                                     @click="copySshPrivateKeyExample"
-                                    class="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-200 shadow-xs hover:bg-sky-50 transition-colors"
+                                    class="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-primary-dark border border-sky-200 shadow-xs hover:bg-sky-50 transition-colors"
                                   >
                                     <DocumentDuplicateIcon class="h-3.5 w-3.5" />
                                     <span>{{ sshPrivateKeyCopied ? '已复制示例' : '复制标准格式模板' }}</span>
                                   </button>
                                 </div>
-                                <div class="text-[11px] leading-relaxed text-sky-800">
+                                <div class="text-[11px] leading-relaxed text-primary-dark">
                                   沙箱自动化连接推荐使用 <strong>无密码保护（No Passphrase）</strong> 的 Ed25519 或 RSA 密钥对：
-                                  <code class="mt-1 block rounded bg-white/90 p-1.5 font-mono text-[11px] text-sky-900 border border-sky-100">
+                                  <code class="mt-1 block rounded bg-white/90 p-1.5 font-mono text-[11px] text-primary-dark border border-sky-100">
                                     ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key
                                   </code>
                                 </div>
-                                <div class="text-[11px] text-sky-700">
+                                <div class="text-[11px] text-primary-dark">
                                   将生成的 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">nanzi_sandbox_key</code> 完整文本粘贴到上方输入框，并将对应的公钥 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">nanzi_sandbox_key.pub</code> 追加写入远端主机的 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">~/.ssh/authorized_keys</code>。
                                 </div>
                               </div>
@@ -6140,10 +6140,10 @@ onUnmounted(() => {
                                  type="button"
                                  @click="testRagflowMetadataConnection"
                                  :disabled="ragflowTestDisabled || ragflowConnectionTesting"
-                                 class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 shadow-sm transition-colors hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                 class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-primary-dark shadow-sm transition-colors hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
                                >
                                  <PlayIcon v-if="!ragflowConnectionTesting" class="h-4 w-4" />
-                                 <span v-else class="h-4 w-4 animate-spin rounded-full border-2 border-sky-400 border-t-transparent"></span>
+                                 <span v-else class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></span>
                                  {{ ragflowConnectionTesting ? '测试中...' : '测试连接' }}
                                </button>
                                <span
@@ -6221,7 +6221,7 @@ onUnmounted(() => {
                                     <!-- Toggle Details Button -->
                                     <button 
                                        @click="showUserSyncDetail = !showUserSyncDetail"
-                                       class="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-indigo-600 hover:bg-white active:bg-gray-100 border border-gray-200 rounded-md px-2 py-1 transition-all focus:outline-none select-none shadow-sm cursor-pointer"
+                                       class="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-primary hover:bg-white active:bg-gray-100 border border-gray-200 rounded-md px-2 py-1 transition-all focus:outline-none select-none shadow-sm cursor-pointer"
                                     >
                                        <span>{{ showUserSyncDetail ? '收起配置详情' : '查看配置详情' }}</span>
                                        <svg 
@@ -6238,20 +6238,20 @@ onUnmounted(() => {
                                  <div v-show="showUserSyncDetail" class="space-y-4 pt-1 transition-all duration-300">
                                     <!-- 数据源与对应表 -->
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
-                                       <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-150">
+                                       <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-200">
                                           <span class="font-medium text-gray-500">外部数据源 ID:</span>
                                           <span class="font-mono text-gray-800 font-bold bg-slate-50 px-2 py-0.5 rounded border border-slate-200">{{ parseJson(item.value)?.connection_config_id || '未配置' }}</span>
                                        </div>
-                                       <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-150">
+                                       <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-200">
                                           <span class="font-medium text-gray-500">外部用户表名:</span>
-                                          <span class="font-mono text-indigo-700 font-semibold bg-indigo-50/30 px-2 py-0.5 rounded border border-indigo-100/60">{{ parseJson(item.value)?.table_name || '未配置' }}</span>
+                                          <span class="font-mono text-primary-dark font-semibold bg-primary/5 px-2 py-0.5 rounded border border-primary/10">{{ parseJson(item.value)?.table_name || '未配置' }}</span>
                                        </div>
                                     </div>
 
                                     <!-- 核心字段映射 -->
                                     <div class="space-y-2">
                                        <span class="text-xs font-semibold text-gray-700 block">核心字段映射:</span>
-                                       <div class="bg-white rounded-lg border border-gray-150 divide-y divide-gray-100 overflow-hidden shadow-sm">
+                                       <div class="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden shadow-sm">
                                           <div class="grid grid-cols-[110px_1fr] px-3.5 py-2.5 text-xs items-center">
                                              <span class="text-gray-500 font-medium">用户名 (user_name):</span>
                                              <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.user_name || '未配置' }}</span>
@@ -6284,8 +6284,8 @@ onUnmounted(() => {
                                     </div>
                                  </div>
                               </div>
-                              <p class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
-                                  💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
+                              <p class="mt-2 text-xs text-primary bg-primary/5 p-2.5 rounded-lg border border-primary/10 leading-normal select-none">
+                                  <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
                               </p>
                           </div>
                           <div v-else-if="['ragflow_dataset_ids', 'knowledge_ragflow_dataset_ids'].includes(item.key)">
@@ -6310,7 +6310,7 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="item.key === 'chatbi_sample_knowledge_base'">
                                <div v-if="metadataProvider === 'local'" class="text-sm text-gray-500 py-2 bg-gray-50 border border-gray-200 rounded-md px-3 font-medium flex items-center">
-                                   <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 mr-2 border border-blue-200 whitespace-nowrap shrink-0">local-redis</span>
+                                   <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-primary/10 text-primary-dark mr-2 border border-primary/20 whitespace-nowrap shrink-0">local-redis</span>
                                    使用本地 Redis 向量存储 (HNSW)
                                </div>
                                <div v-else class="flex items-center space-x-2">
@@ -6332,9 +6332,9 @@ onUnmounted(() => {
                                </div>
                           </div>
                           <div v-else-if="item.key === 'embed_api_url'">
-                              <div class="mb-3 rounded-md border border-indigo-100 bg-white/80 px-3 py-2 text-xs text-indigo-900">
+                              <div class="mb-3 rounded-md border border-primary/10 bg-white/80 px-3 py-2 text-xs text-primary-dark">
                                 <div class="font-semibold">向量模式配置</div>
-                                <div class="mt-0.5 text-indigo-700/80">用于会话记忆向量化以及 Redis 模式下元数据向量化</div>
+                                <div class="mt-0.5 text-primary-dark/80">用于会话记忆向量化以及 Redis 模式下元数据向量化</div>
                               </div>
                               <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                                   <select
@@ -6358,7 +6358,7 @@ onUnmounted(() => {
                                     type="button"
                                     @click="loadEmbedConfigFromModel"
                                     :disabled="isConfigItemDisabled(String(category), item) || !selectedEmbedModelId"
-                                    class="inline-flex shrink-0 items-center justify-center px-3 py-2 border border-indigo-200 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
+                                    class="inline-flex shrink-0 items-center justify-center px-3 py-2 border border-primary/20 shadow-sm text-sm leading-4 font-medium rounded-md text-primary-dark bg-primary/5 hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
                                     title="将所选模型的 API 地址与模型名填入下方配置"
                                   >
                                     加载配置
@@ -6433,7 +6433,7 @@ onUnmounted(() => {
                                           <p v-for="guidance in temperatureScaleGuidance" :key="guidance.range">
                                               <span class="font-medium text-gray-600">{{ guidance.range }}</span>：{{ guidance.description }}
                                           </p>
-                                          <p class="sm:col-span-3 text-blue-600">
+                                          <p class="sm:col-span-3 text-primary">
                                               当前 {{ Number(item.value).toFixed(2) }}：{{ getTemperatureGuidance(item.value) }}
                                           </p>
                                       </div>
@@ -6692,8 +6692,8 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="isLongText(item)">
                              <textarea v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" rows="10" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md font-mono text-xs bg-white disabled:bg-gray-100 p-3 disabled:opacity-70 disabled:cursor-not-allowed"></textarea>
-                             <p v-if="item.key === 'third_party_user_sync_config'" class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
-                                 💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
+                             <p v-if="item.key === 'third_party_user_sync_config'" class="mt-2 text-xs text-primary bg-primary/5 p-2.5 rounded-lg border border-primary/10 leading-normal select-none">
+                                 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
                              </p>
                           </div>
                           <div v-else-if="item.key === 'agent_context_max_tokens'">
@@ -7037,7 +7037,7 @@ onUnmounted(() => {
                                   role="option"
                                   :aria-selected="item.value === preset.value && !isCustomDockerBaseImage"
                                   class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  :class="item.value === preset.value && !isCustomDockerBaseImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                  :class="item.value === preset.value && !isCustomDockerBaseImage ? 'bg-primary/5 font-medium text-primary' : 'text-gray-700'"
                                 >
                                   <span class="block">{{ preset.label }}</span>
                                 </button>
@@ -7047,7 +7047,7 @@ onUnmounted(() => {
                                   role="option"
                                   :aria-selected="isCustomDockerBaseImage"
                                   class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
-                                  :class="isCustomDockerBaseImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                  :class="isCustomDockerBaseImage ? 'bg-primary/5 font-medium text-primary' : 'text-gray-700'"
                                 >
                                   自定义镜像地址…
                                 </button>
@@ -7084,21 +7084,21 @@ onUnmounted(() => {
                                  type="button"
                                  @click="executeDockerPrebuild"
                                  :disabled="dockerPrebuilding || dockerPrebuildChecking"
-                                 class="inline-flex shrink-0 items-center justify-center py-2 px-3 border border-indigo-200 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 whitespace-nowrap"
+                                 class="inline-flex shrink-0 items-center justify-center py-2 px-3 border border-primary/20 rounded-md shadow-sm text-sm font-medium text-primary-dark bg-primary/5 hover:bg-primary/10 disabled:opacity-50 whitespace-nowrap"
                                  title="按当前 sandbox_docker_base_image 预构建/复用沙箱镜像，避免首个会话等待构建"
                                >
                                  <ArrowPathIcon v-if="!dockerPrebuilding" class="h-4 w-4 mr-1.5" />
-                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-indigo-400 border-t-transparent rounded-full"></span>
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-primary border-t-transparent rounded-full"></span>
                                  <template v-if="dockerPrebuilding">预构建中 {{ dockerPrebuildElapsedSeconds }}s</template>
                                  <template v-else>{{ dockerPrebuilt ? '重新预构建' : '预构建镜像' }}</template>
                                </button>
                                <span v-if="dockerPrebuildChecking" class="text-xs text-gray-500">正在检查预构建状态...</span>
                                <span v-else-if="dockerPrebuilt" class="text-xs text-green-700 bg-green-50 border border-green-100 rounded-md px-2.5 py-1">
-                                 ✅ 镜像已预构建
+                                 镜像已预构建
                                  <template v-if="dockerPrebuildReused">（复用了既有缓存）</template>
                                </span>
                                <span v-else class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
-                                 ⚠ 镜像尚未预构建，首个 docker 沙箱会话需等待构建
+                                 镜像尚未预构建，首个 docker 沙箱会话需等待构建
                                </span>
                              </div>
                              <div
@@ -7138,7 +7138,7 @@ onUnmounted(() => {
                                </div>
                              </div>
                              <div v-if="dockerPrebuildTag" class="mt-1.5 text-[11px] text-gray-500 leading-relaxed select-none">
-                               当前预构建镜像 Tag：<code class="font-mono text-indigo-700">{{ dockerPrebuildTag }}</code>
+                               当前预构建镜像 Tag：<code class="font-mono text-primary-dark">{{ dockerPrebuildTag }}</code>
                              </div>
                              <div v-if="dockerPrebuildMessage && !dockerPrebuilt" class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                                <div class="font-medium">{{ dockerPrebuildMessage }}</div>
@@ -7146,9 +7146,9 @@ onUnmounted(() => {
                                  :href="dockerPrebuildHelpUrl"
                                  target="_blank"
                                  rel="noopener noreferrer"
-                                 class="mt-1.5 inline-flex items-center gap-1 text-indigo-700 underline hover:text-indigo-900 font-medium"
+                                 class="mt-1.5 inline-flex items-center gap-1 text-primary-dark underline hover:text-primary font-medium"
                                >
-                                 📖 查看 FAQ 离线镜像与沙箱环境排查指南 ↗
+                                 查看 FAQ 离线镜像与沙箱环境排查指南 ↗
                                </a>
                              </div>
                           </div>
@@ -7185,7 +7185,7 @@ onUnmounted(() => {
                                   role="option"
                                   :aria-selected="item.value === preset.value && !isCustomK8sImage"
                                   class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  :class="item.value === preset.value && !isCustomK8sImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                  :class="item.value === preset.value && !isCustomK8sImage ? 'bg-primary/5 font-medium text-primary' : 'text-gray-700'"
                                 >
                                   <span class="block">{{ preset.label }}</span>
                                 </button>
@@ -7195,7 +7195,7 @@ onUnmounted(() => {
                                   role="option"
                                   :aria-selected="isCustomK8sImage"
                                   class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
-                                  :class="isCustomK8sImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                  :class="isCustomK8sImage ? 'bg-primary/5 font-medium text-primary' : 'text-gray-700'"
                                 >
                                   自定义镜像地址…
                                 </button>
@@ -7214,7 +7214,7 @@ onUnmounted(() => {
                                 <button
                                   type="button"
                                   :disabled="isConfigItemDisabled(String(category), item)"
-                                  class="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
+                                  class="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-primary-dark hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
                                   title="沙箱镜像需先在节点构建并导入；点击查看构建/导入/查看指引"
                                   @click="showK8sImageGuide = true"
                                 >
@@ -7227,11 +7227,11 @@ onUnmounted(() => {
                             </div>
 
                             <!-- 可选加速：K8s 沙箱网关预置镜像构建提示 -->
-                            <div class="mt-2 space-y-1.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-[11px] leading-relaxed text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/40 dark:text-sky-100">
-                              <div class="font-semibold text-sky-800 dark:text-sky-100">🚀 可选加速：K8s 沙箱“网关预置镜像”</div>
+                            <div class="mt-2 space-y-1.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-[11px] leading-relaxed text-primary-dark dark:border-primary/30 dark:bg-primary-dark/40 dark:text-sky-100">
+                              <div class="font-semibold text-primary-dark dark:text-sky-100">可选加速：K8s 沙箱“网关预置镜像”</div>
                               <div>沙箱每次冷启动都会初始化 AgentScope 网关环境（装 venv/依赖），较慢。可先手动构建一个预置镜像（把网关环境与常用排障工具 <span class="font-mono">tree</span>、<span class="font-mono">telnet</span>、<span class="font-mono">netstat</span> 等直接打进镜像），把本项填为该镜像后，新沙箱 Pod 冷启动会直接复用、从数十秒降到秒级。</div>
                               <div>在可访问 Docker 的构建机（k8s_deploy 目录）执行构建与导入：
-                                <code class="mt-1 block rounded bg-white/70 px-1.5 py-0.5 font-mono text-sky-800 dark:bg-gray-900/60 dark:text-sky-100">./build-k8s-sandbox-image.sh --version 1.0.0</code>
+                                <code class="mt-1 block rounded bg-white/70 px-1.5 py-0.5 font-mono text-primary-dark dark:bg-gray-900/60 dark:text-sky-100">./build-k8s-sandbox-image.sh --version 1.0.0</code>
                                 <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）；也支持无参数交互引导或免交互默认构建 <code class="font-mono">./build-k8s-sandbox-image.sh -y</code>。</span>
                               </div>
                               <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。填入后请点击页面右上角<b>【保存变更 (⌘S)】</b>保存生效。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span> 即可。</div>
@@ -7245,11 +7245,11 @@ onUnmounted(() => {
                                  type="button"
                                  @click="testSandboxConnection('e2b')"
                                  :disabled="sandboxConnectionTesting !== null"
-                                 class="inline-flex items-center justify-center py-2 px-3 border border-violet-200 rounded-md shadow-sm text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-50 whitespace-nowrap"
+                                 class="inline-flex items-center justify-center py-2 px-3 border border-primary/20 rounded-md shadow-sm text-sm font-medium text-primary-dark bg-primary/5 hover:bg-primary/10 disabled:opacity-50 whitespace-nowrap"
                                  title="按当前页面填写的 E2B 配置创建一次临时沙箱并立即释放"
                                >
                                  <ArrowPathIcon v-if="sandboxConnectionTesting !== 'e2b'" class="h-4 w-4 mr-1.5" />
-                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-violet-400 border-t-transparent rounded-full"></span>
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-primary border-t-transparent rounded-full"></span>
                                  {{ sandboxConnectionTesting === 'e2b' ? '测试中...' : '测试连接' }}
                                </button>
                                <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
@@ -7261,28 +7261,28 @@ onUnmounted(() => {
                                  type="button"
                                  @click="testSandboxConnection('ssh')"
                                  :disabled="sandboxConnectionTesting !== null"
-                                 class="inline-flex items-center justify-center py-2 px-3 border border-sky-200 rounded-md shadow-sm text-sm font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
+                                 class="inline-flex items-center justify-center py-2 px-3 border border-sky-200 rounded-md shadow-sm text-sm font-medium text-primary-dark bg-sky-50 hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
                                  title="按当前页面填写的 SSH 配置执行一次真实连接与远程工作目录检查"
                                >
                                  <ArrowPathIcon v-if="sandboxConnectionTesting !== 'ssh'" class="h-4 w-4 mr-1.5" />
-                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-sky-400 border-t-transparent rounded-full"></span>
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-primary border-t-transparent rounded-full"></span>
                                  {{ sandboxConnectionTesting === 'ssh' ? '测试中...' : '测试连接' }}
                                </button>
                                <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                  使用当前填写值测试，不会保存配置；会检查 SSH 认证和远程工作目录。
                                </p>
                              </div>
-                              <div v-else-if="item.key === 'sandbox_k8s_existing_pvc'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
-                                <div>💡 <strong>参数作用与是否必填：</strong>可选参数（<strong>建议留空</strong>）。用于决定沙箱 Pod 的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code> 是「共享平台数据卷中的用户工作区（与 Docker 沙箱一致）」还是「每个工作区独立的全新临时卷（强隔离）」。<strong>留空即可满足绝大多数场景，无需手工填写卷名。</strong></div>
-                                <div>📂 <strong>留空（默认处理）：</strong>走<strong>自动探测共享模式</strong>。平台自动读取自身 Pod 的存储配置，探测出自身数据目录（<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/app/data</code>）背后的 PVC 并共享之，因此兼容自定义 PVC 名的部署；若探测失败（平台未运行在 Kubernetes 中、数据目录不是 PVC 等），则安全回退为独立临时卷，并在日志与「⚡ 校验 K8s 集群与 RBAC 权限」结果中给出提醒。</div>
-                                <div>🧱 <strong>想强制独立临时卷（强隔离）：</strong>填写 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>（也支持 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">disabled</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">off</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">false</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">-</code>）。平台为每个工作区动态申请独立 PVC（按下方 storage_size 大小），会话结束且超时后随 Pod 自动删除，用户/会话间数据物理隔离——此模式下沙箱内看不到用户工作区（属有意选择，平台不再告警）。</div>
-                                <div>🔗 <strong>要显式指定某个共享 PVC 时：</strong>填写当前命名空间中<strong>已存在的 PVC 资源名称</strong>（例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nanzi-ai-agent-data</code>（平台主 PVC）或 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">my-shared-pvc</code>，纯名称，不带路径）。⚠️ PVC 为命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC，否则沙箱 Pod 会因找不到 PVC 而长期 Pending。</div>
-                                <div>🎯 <strong>最终映射路径：</strong>共享模式下挂载至沙箱容器内部的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code>。底层通过 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">subPath: agent_workspaces/{user_key}</code> 挂载该用户<strong>完整工作区</strong>（与 Docker 沙箱一致，可读写其 sessions/docs 等全部内容），且无法访问整卷根目录或其他用户数据；若平台挂载了公共文档，则自动只读挂载至 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace/public/docs</code>。</div>
+                              <div v-else-if="item.key === 'sandbox_k8s_existing_pvc'" class="mt-2 text-xs text-primary-dark bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
+                                <div><strong>参数作用与是否必填：</strong>可选参数（<strong>建议留空</strong>）。用于决定沙箱 Pod 的 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code> 是「共享平台数据卷中的用户工作区（与 Docker 沙箱一致）」还是「每个工作区独立的全新临时卷（强隔离）」。<strong>留空即可满足绝大多数场景，无需手工填写卷名。</strong></div>
+                                <div><strong>留空（默认处理）：</strong>走<strong>自动探测共享模式</strong>。平台自动读取自身 Pod 的存储配置，探测出自身数据目录（<code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">/app/data</code>）背后的 PVC 并共享之，因此兼容自定义 PVC 名的部署；若探测失败（平台未运行在 Kubernetes 中、数据目录不是 PVC 等），则安全回退为独立临时卷，并在日志与「校验 K8s 集群与 RBAC 权限」结果中给出提醒。</div>
+                                <div><strong>想强制独立临时卷（强隔离）：</strong>填写 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>（也支持 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">disabled</code> / <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">off</code> / <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">false</code> / <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">-</code>）。平台为每个工作区动态申请独立 PVC（按下方 storage_size 大小），会话结束且超时后随 Pod 自动删除，用户/会话间数据物理隔离——此模式下沙箱内看不到用户工作区（属有意选择，平台不再告警）。</div>
+                                <div><strong>要显式指定某个共享 PVC 时：</strong>填写当前命名空间中<strong>已存在的 PVC 资源名称</strong>（例如 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">nanzi-ai-agent-data</code>（平台主 PVC）或 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">my-shared-pvc</code>，纯名称，不带路径）。PVC 为命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC，否则沙箱 Pod 会因找不到 PVC 而长期 Pending。</div>
+                                <div><strong>最终映射路径：</strong>共享模式下挂载至沙箱容器内部的 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code>。底层通过 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">subPath: agent_workspaces/{user_key}</code> 挂载该用户<strong>完整工作区</strong>（与 Docker 沙箱一致，可读写其 sessions/docs 等全部内容），且无法访问整卷根目录或其他用户数据；若平台挂载了公共文档，则自动只读挂载至 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace/public/docs</code>。</div>
                               </div>
-                              <div v-else-if="item.key === 'sandbox_k8s_storage_class'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
-                                <div>💡 <strong>参数作用与生效前提：</strong>可选参数（<strong>默认留空</strong>）。<strong>仅在沙箱回退为动态独立卷模式时生效</strong>（即上方 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">sandbox_k8s_existing_pvc</code> 填了 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>，或留空但平台数据卷自动探测失败）；若已共享平台/已有 PVC，则此配置项自动被忽略。</div>
-                                <div>⚙️ <strong>留空（默认处理）：</strong>创建 PVC 时不指定 StorageClass，Kubernetes 会自动使用集群管理员标记为 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">(default)</code> 的默认存储类进行自动分配。</div>
-                                <div>📝 <strong>填写的格式：</strong>填写集群支持的存储类标识名称（可通过运维终端命令 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">kubectl get sc</code> 查询，例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">local-path</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nfs-client</code> 或云厂商提供的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">gp3</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">alicloud-disk-topology</code>）。</div>
+                              <div v-else-if="item.key === 'sandbox_k8s_storage_class'" class="mt-2 text-xs text-primary-dark bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
+                                <div><strong>参数作用与生效前提：</strong>可选参数（<strong>默认留空</strong>）。<strong>仅在沙箱回退为动态独立卷模式时生效</strong>（即上方 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">sandbox_k8s_existing_pvc</code> 填了 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>，或留空但平台数据卷自动探测失败）；若已共享平台/已有 PVC，则此配置项自动被忽略。</div>
+                                <div><strong>留空（默认处理）：</strong>创建 PVC 时不指定 StorageClass，Kubernetes 会自动使用集群管理员标记为 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">(default)</code> 的默认存储类进行自动分配。</div>
+                                <div><strong>填写的格式：</strong>填写集群支持的存储类标识名称（可通过运维终端命令 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">kubectl get sc</code> 查询，例如 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">local-path</code>、<code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">nfs-client</code> 或云厂商提供的 <code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">gp3</code>、<code class="font-mono text-primary-dark bg-white/80 px-1 py-0.5 rounded border border-sky-200">alicloud-disk-topology</code>）。</div>
                               </div>
                           </div>
                        </div>
@@ -7313,7 +7313,7 @@ onUnmounted(() => {
                         <button
                           type="button"
                           :disabled="imageTestLoading || !canSave"
-                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
                           @click="runImageTest"
                         >
                           <span v-if="imageTestLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/60 border-t-transparent"></span>
@@ -7326,10 +7326,10 @@ onUnmounted(() => {
                           type="button"
                           :disabled="imageEditTestLoading || !canSave"
                           title="用内置样图验证这个模型能不能改图"
-                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition-opacity hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                           @click="runImageEditTest"
                         >
-                          <span v-if="imageEditTestLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-400 border-t-transparent"></span>
+                          <span v-if="imageEditTestLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></span>
                           <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-3.5 w-3.5">
                             <path d="M13.5 3a.75.75 0 01.75.75V6h2.25a.75.75 0 010 1.5H14.25v2.25a.75.75 0 01-1.5 0V7.5H10.5a.75.75 0 010-1.5h2.25V3.75A.75.75 0 0113.5 3zM2 12a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5A.75.75 0 012 12z" />
                           </svg>
@@ -7411,33 +7411,30 @@ onUnmounted(() => {
          >
            <div
              v-if="activeTab === 'configs' && hasUnsavedConfigChanges && canSave"
-             class="fixed bottom-8 left-1/2 z-[70] flex -translate-x-1/2 flex-wrap items-center gap-3 sm:gap-4 rounded-2xl border border-amber-200/90 bg-white/95 px-5 py-3 shadow-2xl shadow-amber-900/10 backdrop-blur-md"
+             class="fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-wrap items-center gap-3 sm:gap-4 rounded-xl border border-slate-700/80 bg-slate-900 px-4 py-2.5 text-white shadow-xl"
            >
-             <div class="flex items-center gap-2.5">
-               <span class="relative flex h-3 w-3 shrink-0">
-                 <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-                 <span class="relative inline-flex h-3 w-3 rounded-full bg-amber-500"></span>
-               </span>
-               <div class="text-xs font-semibold text-gray-800 flex items-center gap-1.5 flex-wrap">
-                 <span>您有 <strong class="text-amber-600 font-bold tabular-nums">{{ unsavedConfigCount }}</strong> 项未保存的配置修改</span>
+             <div class="flex items-center gap-2">
+               <span class="h-2 w-2 shrink-0 rounded-full bg-amber-400"></span>
+               <div class="text-xs font-medium text-slate-100 flex items-center gap-1.5 flex-wrap">
+                 <span>有 <strong class="text-amber-300 font-semibold tabular-nums">{{ unsavedConfigCount }}</strong> 项未保存修改</span>
                  <div class="hidden md:flex items-center gap-1 max-w-xs overflow-hidden text-ellipsis whitespace-nowrap">
                    <span
                      v-for="cfg in changedConfigsList.slice(0, 2)"
                      :key="cfg.key"
-                     class="inline-block font-mono text-[10px] bg-amber-50 text-amber-800 border border-amber-200/70 rounded px-1.5 py-0.5 truncate max-w-[120px]"
+                     class="inline-block font-mono text-[10px] bg-white/10 text-slate-200 rounded px-1.5 py-0.5 truncate max-w-[120px]"
                      :title="cfg.key"
                    >{{ cfg.key }}</span>
-                   <span v-if="changedConfigsList.length > 2" class="text-[10px] text-amber-700/80 font-mono">
+                   <span v-if="changedConfigsList.length > 2" class="text-[10px] text-slate-400 font-mono">
                      +{{ changedConfigsList.length - 2 }}
                    </span>
                  </div>
                </div>
              </div>
 
-             <div class="flex items-center gap-2 border-l border-gray-200/80 pl-3 sm:pl-4">
+             <div class="flex items-center gap-2 border-l border-white/15 pl-3 sm:pl-4">
                <button
                  type="button"
-                 class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-2xs hover:bg-gray-50 hover:text-gray-900 transition-colors cursor-pointer active:scale-95"
+                 class="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/20 hover:text-white transition-colors cursor-pointer"
                  @click="resetUnsavedConfigs"
                >
                  放弃修改
@@ -7445,7 +7442,7 @@ onUnmounted(() => {
                <button
                  type="button"
                  :disabled="saving"
-                 class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90 transition-all disabled:opacity-50 cursor-pointer active:scale-95"
+                 class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark transition-colors disabled:opacity-50 cursor-pointer"
                  @click="saveConfigs"
                >
                  <svg v-if="saving" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -7501,9 +7498,9 @@ onUnmounted(() => {
     <!-- K8s 沙箱镜像：构建 / 导入 / 查看指引 Modal -->
     <div v-if="showK8sImageGuide" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" @click.self="showK8sImageGuide = false">
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-100 dark:border-gray-700 flex flex-col text-[13px]">
-        <div class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-sky-50/50 dark:bg-sky-950/30">
+        <div class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-sky-50/50 dark:bg-primary-dark/30">
           <div>
-            <h3 class="text-md font-bold text-gray-900 dark:text-gray-100">如何构建与导入 K8s 沙箱镜像</h3>
+            <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">如何构建与导入 K8s 沙箱镜像</h3>
             <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">平台（Pod 内）无法直接读取节点镜像列表，请按以下指引在<b>节点/构建机</b>完成构建与导入</p>
           </div>
           <button type="button" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200/60 hover:text-gray-600 dark:hover:bg-gray-700" aria-label="关闭" @click="showK8sImageGuide = false">
@@ -7517,7 +7514,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="px-3 py-1 rounded-md text-xs font-medium transition-colors"
-              :class="k8sImageGuideTab === 'standard' ? 'bg-white dark:bg-gray-700 text-sky-700 dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+              :class="k8sImageGuideTab === 'standard' ? 'bg-white dark:bg-gray-700 text-primary-dark dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
               @click="k8sImageGuideTab = 'standard'"
             >
               标准 containerd
@@ -7525,7 +7522,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="px-3 py-1 rounded-md text-xs font-medium transition-colors"
-              :class="k8sImageGuideTab === 'k3s' ? 'bg-white dark:bg-gray-700 text-sky-700 dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+              :class="k8sImageGuideTab === 'k3s' ? 'bg-white dark:bg-gray-700 text-primary-dark dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
               @click="k8sImageGuideTab = 'k3s'"
             >
               K3s（自带 containerd）
@@ -7577,7 +7574,7 @@ onUnmounted(() => {
         <div class="px-5 py-3 border-t border-gray-100 dark:border-gray-700 flex justify-end bg-gray-50/50 dark:bg-gray-900/30">
           <button
             type="button"
-            class="rounded-lg bg-sky-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+            class="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-hover"
             @click="showK8sImageGuide = false"
           >
             我知道了
@@ -7592,11 +7589,11 @@ onUnmounted(() => {
         <!-- Header -->
         <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <div class="flex items-center space-x-2.5">
-            <div class="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+            <div class="p-2 bg-primary/5 rounded-xl text-primary">
               <SparklesIcon class="w-5 h-5" />
             </div>
             <div>
-              <h3 class="text-md font-bold text-gray-900">默认大模型参数影响场景</h3>
+              <h3 class="text-base font-bold text-gray-900">默认大模型参数影响场景</h3>
               <p class="text-xs text-gray-400 mt-0.5">参数名：llm_model_name</p>
             </div>
           </div>
@@ -7615,7 +7612,7 @@ onUnmounted(() => {
           <div class="space-y-3.5">
             <!-- Scenario 1 -->
             <div class="flex gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100/60 transition-colors">
-              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-xs">1</div>
+              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 text-primary-dark font-bold text-xs">1</div>
               <div class="space-y-1">
                 <h4 class="font-bold text-gray-900">智能意图路由与分发决策 (Intent Routing)</h4>
                 <p class="text-xs text-gray-500 leading-relaxed">
@@ -7648,7 +7645,7 @@ onUnmounted(() => {
             
             <!-- Scenario 4 -->
             <div class="flex gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100/60 transition-colors">
-              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-blue-100 text-blue-700 font-bold text-xs">4</div>
+              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 text-primary-dark font-bold text-xs">4</div>
               <div class="space-y-1">
                 <h4 class="font-bold text-gray-900">轻量级文本清洗与 RAG 决策 (Text Clean & RAG)</h4>
                 <p class="text-xs text-gray-500 leading-relaxed">
@@ -7677,11 +7674,11 @@ onUnmounted(() => {
         <!-- Header -->
         <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <div class="flex items-center space-x-2.5">
-            <div class="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+            <div class="p-2 bg-primary/5 rounded-xl text-primary">
               <CircleStackIcon class="w-5 h-5" />
             </div>
             <div>
-              <h3 class="text-md font-bold text-gray-900">元数据提供方参数说明</h3>
+              <h3 class="text-base font-bold text-gray-900">元数据提供方参数说明</h3>
               <p class="text-xs text-gray-400 mt-0.5">参数名：metadata_provider</p>
             </div>
           </div>
@@ -7700,7 +7697,7 @@ onUnmounted(() => {
           <div class="space-y-3">
             <!-- Mode 1: Local -->
             <div class="flex gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100/60 transition-colors">
-              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-xs">local</div>
+              <div class="flex-shrink-0 flex items-center justify-center px-2 h-7 rounded-lg bg-primary/10 text-primary-dark font-bold text-xs font-mono">local</div>
               <div class="space-y-1">
                 <h4 class="font-bold text-gray-900">本地元数据模式 (Local Metadata)</h4>
                 <p class="text-xs text-gray-500 leading-relaxed">
@@ -7711,7 +7708,7 @@ onUnmounted(() => {
 
             <!-- Mode 2: RAGFlow -->
             <div class="flex gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100/60 transition-colors">
-              <div class="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">ragflow</div>
+              <div class="flex-shrink-0 flex items-center justify-center px-2 h-7 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs font-mono">ragflow</div>
               <div class="space-y-1">
                 <h4 class="font-bold text-gray-900">知识库检索模式 (RAGFlow Retrieval)</h4>
                 <p class="text-xs text-gray-500 leading-relaxed">
@@ -7723,7 +7720,7 @@ onUnmounted(() => {
             <!-- Shared parameters section -->
             <div class="p-3 rounded-xl bg-amber-50/50 border border-amber-100 space-y-2">
               <h4 class="font-bold text-amber-900 flex items-center text-xs">
-                <span class="mr-1">💡</span> 元数据检索参数说明（仅适用于元数据检索场景）
+                元数据检索参数说明（仅适用于元数据检索场景）
               </h4>
               <p class="text-xs text-amber-800 leading-relaxed">
                 以下三个配置参数仅控制了<strong>元数据检索</strong>的召回和过滤评分（无论是<strong>本地元数据检索</strong>还是 <strong>RAGFlow 元数据检索</strong>模式，均会使用这组参数）：
@@ -7767,7 +7764,7 @@ onUnmounted(() => {
               </svg>
             </div>
             <div>
-              <h3 class="text-md font-bold text-gray-900">配置参数说明</h3>
+              <h3 class="text-base font-bold text-gray-900">配置参数说明</h3>
               <p class="text-xs text-gray-400 mt-0.5 font-mono">{{ activeExplanationItem.key }}</p>
             </div>
           </div>
@@ -7789,22 +7786,22 @@ onUnmounted(() => {
           <!-- Category specific tips -->
           <div class="space-y-2" v-if="getCategoryTip(activeExplanationItem.key)">
             <span class="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">使用建议与配置指引</span>
-            <p class="text-xs text-gray-600 leading-relaxed bg-indigo-50/50 p-4 rounded-xl border border-indigo-100/50 text-indigo-950 whitespace-pre-wrap">
+            <p class="text-xs leading-relaxed bg-primary/5 p-4 rounded-xl border border-primary/10 text-primary-dark whitespace-pre-wrap">
               {{ getCategoryTip(activeExplanationItem.key) }}
             </p>
           </div>
 
           <!-- SSH 私钥配置专属命令助手 -->
-          <div v-if="activeExplanationItem.key === 'sandbox_ssh_private_key'" class="space-y-3 rounded-xl border border-sky-200 bg-sky-50/80 p-4 text-xs text-sky-950">
-            <div class="font-bold text-sky-900 flex items-center justify-between">
-              <span>🚀 快速配置命令助手</span>
-              <span class="text-[11px] font-normal text-sky-600">已自动带入当前主机与端口</span>
+          <div v-if="activeExplanationItem.key === 'sandbox_ssh_private_key'" class="space-y-3 rounded-xl border border-sky-200 bg-sky-50/80 p-4 text-xs text-primary-dark">
+            <div class="font-bold text-primary-dark flex items-center justify-between">
+              <span>快速配置命令助手</span>
+              <span class="text-[11px] font-normal text-primary">已自动带入当前主机与端口</span>
             </div>
             
             <div class="space-y-1">
-              <div class="flex items-center justify-between text-[11px] text-sky-800">
+              <div class="flex items-center justify-between text-[11px] text-primary-dark">
                 <span class="font-medium">① 本地终端生成免密私钥对：</span>
-                <button type="button" @click="copySshKeygenCommand" class="text-sky-600 hover:text-sky-800 font-medium underline inline-flex items-center gap-0.5">
+                <button type="button" @click="copySshKeygenCommand" class="text-primary hover:text-primary-dark font-medium underline inline-flex items-center gap-0.5">
                   <DocumentDuplicateIcon class="h-3 w-3" />
                   复制命令
                 </button>
@@ -7815,9 +7812,9 @@ onUnmounted(() => {
             </div>
 
             <div class="space-y-1">
-              <div class="flex items-center justify-between text-[11px] text-sky-800">
+              <div class="flex items-center justify-between text-[11px] text-primary-dark">
                 <span class="font-medium">② 将公钥一键追加到远程服务器：</span>
-                <button type="button" @click="copySshSetupCommand" class="text-sky-600 hover:text-sky-800 font-medium underline inline-flex items-center gap-0.5">
+                <button type="button" @click="copySshSetupCommand" class="text-primary hover:text-primary-dark font-medium underline inline-flex items-center gap-0.5">
                   <DocumentDuplicateIcon class="h-3 w-3" />
                   复制命令
                 </button>
@@ -7827,7 +7824,7 @@ onUnmounted(() => {
               </code>
             </div>
 
-            <div class="text-[11px] text-sky-700 leading-relaxed">
+            <div class="text-[11px] text-primary-dark leading-relaxed">
               ③ 查看私钥文本：<code class="font-mono bg-white px-1 py-0.5 rounded border border-sky-100">cat ~/.ssh/nanzi_sandbox_key</code>，粘贴到输入框后点击右上角【规范换行】保存即可。
             </div>
           </div>
@@ -7901,7 +7898,7 @@ onUnmounted(() => {
               <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
             </svg>
           </div>
-          <h3 class="text-md font-bold text-gray-900">发送测试邮件</h3>
+          <h3 class="text-base font-bold text-gray-900">发送测试邮件</h3>
         </div>
         <div class="px-6 py-5 space-y-3">
           <label class="block text-xs font-medium text-gray-700">收件人</label>
@@ -7950,7 +7947,7 @@ onUnmounted(() => {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
               </svg>
             </div>
-            <h3 class="text-md font-bold text-gray-900">裁剪个性化图标</h3>
+            <h3 class="text-base font-bold text-gray-900">裁剪个性化图标</h3>
           </div>
           <button @click="showCropper = false" class="text-gray-400 hover:text-gray-600 focus:outline-none transition-colors">
             <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -8003,7 +8000,7 @@ onUnmounted(() => {
             </div>
           </div>
           <p class="text-xs text-gray-400 text-center leading-relaxed">
-            💡 按住鼠标左键并拖拽可移动图片位置，使用下方滑块进行缩放。<br/>
+            按住鼠标左键并拖拽可移动图片位置，使用下方滑块进行缩放。<br/>
             系统会自动把图片压缩并裁剪到标准清晰尺寸，避免大图上传失败。
           </p>
         </div>
@@ -8039,7 +8036,7 @@ onUnmounted(() => {
             <PhotoIcon class="h-5 w-5" />
           </div>
           <div class="min-w-0">
-            <h3 class="text-md font-bold text-gray-900">选择模型</h3>
+            <h3 class="text-base font-bold text-gray-900">选择模型</h3>
             <p class="text-[11px] text-gray-500 truncate" :title="imageModelEndpoint">
               即时请求 <code class="font-mono">{{ imageModelEndpoint || 'GET {API 地址}/models' }}</code>，用上方已填的地址与密钥
             </p>
@@ -8133,7 +8130,7 @@ onUnmounted(() => {
             >{{ mid }}</span>
             <span
               v-if="isImageModelId(mid)"
-              class="shrink-0 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
+              class="shrink-0 rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark"
             >图像生成</span>
             <span v-else class="shrink-0 text-[10px] text-gray-400">其他 · 不可选</span>
           </button>

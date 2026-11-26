@@ -185,11 +185,11 @@ void load()
                 >
                   <span
                     :class="[
-                      'flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center border text-lg',
+                      'flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center border text-[9px] font-semibold tracking-tight leading-none',
                       fileVisuals[it.id]?.iconBg || 'bg-gray-100 dark:bg-gray-800',
                     ]"
                   >
-                    {{ fileVisuals[it.id]?.icon || '📎' }}
+                    {{ fileVisuals[it.id]?.icon || 'FILE' }}
                   </span>
                   <span class="flex-1 min-w-0">
                     <span class="block text-xs font-semibold text-gray-800 dark:text-gray-100 truncate">

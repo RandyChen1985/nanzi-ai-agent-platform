@@ -79,7 +79,7 @@
             v-model="searchQuery"
             type="search"
             placeholder="搜索工具或技能名…"
-            class="shrink-0 text-[11px] border border-gray-200 rounded-lg px-2 py-1 w-[170px] focus:outline-none focus:border-indigo-500"
+            class="shrink-0 text-[11px] border border-gray-200 rounded-lg px-2 py-1 w-[170px] focus:outline-none focus:border-primary"
           />
         </div>
 
@@ -92,7 +92,7 @@
             <p class="text-[11px] text-red-500 leading-relaxed">{{ loadError }}</p>
             <button
               type="button"
-              class="text-[11px] font-bold text-indigo-600 hover:underline"
+              class="text-[11px] font-bold text-primary hover:underline"
               @click="load"
             >
               重新加载
@@ -120,7 +120,7 @@
                 :aria-controls="`agent-restriction-panel-${tab.key}`"
                 class="relative flex-1 min-w-0 px-2 py-2.5 text-xs font-bold transition-colors border-b-2 -mb-px"
                 :class="activeTab === tab.key
-                  ? 'border-indigo-600 text-indigo-600 bg-white'
+                  ? 'border-primary text-primary bg-white'
                   : 'border-transparent text-gray-500 hover:text-gray-700'"
                 @click="activeTab = tab.key"
               >
@@ -134,7 +134,7 @@
               <button
                 v-if="activeTabGroups.length > 1"
                 type="button"
-                class="shrink-0 self-center mr-2 px-2 py-1 rounded-md text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 whitespace-nowrap"
+                class="shrink-0 self-center mr-2 px-2 py-1 rounded-md text-[10px] font-bold text-primary hover:bg-primary/5 whitespace-nowrap"
                 :title="allGroupsCollapsedInActiveTab
                   ? '展开当前页签的全部分组'
                   : '折叠当前页签的全部分组'"
@@ -201,7 +201,7 @@
                   <button
                     type="button"
                     class="shrink-0 text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
-                    :class="groupState(group).selected > 0 ? 'text-red-600 hover:text-red-800' : 'text-indigo-600 hover:text-indigo-800'"
+                    :class="groupState(group).selected > 0 ? 'text-red-600 hover:text-red-800' : 'text-primary hover:text-primary-dark'"
                     :disabled="!groupState(group).selectable"
                     @click.stop="toggleGroup(group, !groupState(group).allSelected)"
                   >

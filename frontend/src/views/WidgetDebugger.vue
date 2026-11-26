@@ -5,7 +5,7 @@
         <h1 class="text-2xl font-bold text-gray-800 truncate">组件调试台</h1>
         <button
           @click="openIntegrationGuide"
-          class="h-8 w-8 inline-flex items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors flex-shrink-0"
+          class="h-8 w-8 inline-flex items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 hover:border-primary/25 transition-colors flex-shrink-0"
           title="查看 EmbedChat 集成指南"
           aria-label="查看 EmbedChat 集成指南"
         >
@@ -31,15 +31,15 @@
                         <button
                             type="button"
                             @click="config.authMode = 'ticket'"
-                            :class="config.authMode === 'ticket' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            :class="config.authMode === 'ticket' ? 'bg-white text-primary shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
                             class="px-2 py-1 rounded-md transition-all"
                         >
-                            ⭐ Ticket 模式
+                            Ticket 模式
                         </button>
                         <button
                             type="button"
                             @click="config.authMode = 'token'"
-                            :class="config.authMode === 'token' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            :class="config.authMode === 'token' ? 'bg-white text-primary shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
                             class="px-2 py-1 rounded-md transition-all"
                         >
                             API Token 模式
@@ -48,19 +48,19 @@
                 </div>
 
                 <!-- Ticket 模式表单 -->
-                <div v-if="config.authMode === 'ticket'" class="p-3 bg-blue-50/60 border border-blue-100 rounded-lg space-y-2 text-xs">
-                    <div class="flex items-center justify-between text-blue-800 font-medium">
+                <div v-if="config.authMode === 'ticket'" class="p-3 bg-primary/5 border border-primary/10 rounded-lg space-y-2 text-xs">
+                    <div class="flex items-center justify-between text-primary-dark font-medium">
                         <span>凭据模式：临时 Ticket（推荐）</span>
-                        <span class="text-[11px] text-blue-600 bg-blue-100/80 px-1.5 py-0.5 rounded">自动签发</span>
+                        <span class="text-[11px] text-primary bg-primary/10 px-1.5 py-0.5 rounded">自动签发</span>
                     </div>
                     <p class="text-gray-600 text-[11px] leading-relaxed">
-                        点击发送时将自动调用 <code class="bg-white px-1 py-0.5 rounded border border-blue-200">/api/v1/embed/tickets</code> 申请一次性短时 Ticket 并发给 IFrame。
+                        点击发送时将自动调用 <code class="bg-white px-1 py-0.5 rounded border border-primary/20">/api/v1/embed/tickets</code> 申请一次性短时 Ticket 并发给 IFrame。
                     </p>
                     <div>
                         <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
                         <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
                         <p class="text-[10px] text-amber-700/90 mt-1">
-                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或在「API 权限」中授予「代他人签发嵌入凭证」权限。
+                            普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或在「API 权限」中授予「代他人签发嵌入凭证」权限。
                         </p>
                     </div>
                 </div>
@@ -73,7 +73,7 @@
                         </svg>
                         <div class="leading-relaxed">
                             <span class="font-semibold text-rose-800">兼容模式（不推荐在生产使用）：</span>
-                            直接向前端传递长期 API Key 存在泄露风险，仅供存量旧系统兼容调试。新集成强烈建议切换为 <strong>⭐ Ticket 模式</strong>。
+                            直接向前端传递长期 API Key 存在泄露风险，仅供存量旧系统兼容调试。新集成强烈建议切换为 <strong>Ticket 模式</strong>。
                         </div>
                     </div>
                     <div class="grid grid-cols-1 gap-2">
@@ -105,7 +105,7 @@
                 <button
                     @click="sendInit"
                     :disabled="isSubmittingInit"
-                    class="w-full py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+                    class="w-full py-2 bg-primary text-white rounded-md text-sm hover:bg-primary-dark disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
                 >
                     <span v-if="isSubmittingInit">正在发送登录请求...</span>
                     <span v-else>发送登录请求（INIT_CONFIG{{ config.authMode === 'ticket' ? ' · Ticket 换票' : '' }}）</span>
@@ -136,7 +136,7 @@
                 </div>
                 <div class="flex gap-2">
                     <input v-model="commandInput" type="text" placeholder="/help" class="flex-1 text-sm border-gray-300 rounded-md">
-                    <button @click="sendCommand" class="px-3 bg-purple-100 text-purple-700 rounded-md text-sm hover:bg-purple-200">发送指令</button>
+                    <button @click="sendCommand" class="px-3 bg-primary/10 text-primary-dark rounded-md text-sm hover:bg-primary/20">发送指令</button>
                 </div>
             </section>
             
@@ -150,7 +150,7 @@
         <!-- Preview Panel -->
         <div class="flex-1 bg-gray-200 rounded-xl flex items-center justify-center relative p-8">
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10">
-                <span class="text-6xl font-black text-gray-400">HOST PAGE</span>
+                <span class="text-6xl font-bold text-gray-400">HOST PAGE</span>
             </div>
             
             <!-- IFrame Container -->
@@ -180,7 +180,7 @@
             <div class="w-full max-w-5xl max-h-[88vh] bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col">
               <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
                 <div class="min-w-0">
-                  <h2 class="text-lg font-black text-gray-900">EmbedChat 集成指南</h2>
+                  <h2 class="text-lg font-bold text-gray-900">EmbedChat 集成指南</h2>
                   <p class="text-xs text-gray-500 mt-1">选择一种方式复制代码，示例会按当前登录态自动填入域名、API Key 和智能体模式。</p>
                 </div>
                 <button
@@ -202,7 +202,7 @@
                 </svg>
                 <div class="leading-relaxed">
                   <span class="font-bold text-rose-800">安全规范提示：</span>
-                  旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
+                  旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
                 </div>
               </div>
 
@@ -213,7 +213,7 @@
                     :key="tab.id"
                     @click="activeIntegrationTab = tab.id"
                     class="h-12 px-4 inline-flex items-center whitespace-nowrap text-sm leading-none font-bold border-b-2 transition-colors flex-shrink-0"
-                    :class="activeIntegrationTab === tab.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-200'"
+                    :class="activeIntegrationTab === tab.id ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-200'"
                   >
                     {{ tab.label }}
                   </button>
@@ -231,7 +231,7 @@
                     <div class="flex items-center gap-2 flex-shrink-0">
                       <button
                         @click="copyGuideCode"
-                        class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-sm"
+                        class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-primary text-white hover:bg-primary-dark transition-colors flex items-center gap-1.5 shadow-sm"
                       >
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -241,7 +241,7 @@
                     </div>
                   </div>
                   <div
-                    class="p-6 text-sm text-gray-800 leading-relaxed font-sans prose prose-slate max-w-none select-text"
+                    class="p-6 text-sm text-gray-800 leading-relaxed font-sans max-w-none select-text"
                     v-html="renderedMarkdownDoc"
                   ></div>
                 </div>
@@ -251,11 +251,11 @@
                   <div class="mb-5 bg-white border border-gray-200 rounded-lg p-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       <div class="min-w-0">
-                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
                         <div class="font-mono text-xs text-gray-700 truncate bg-gray-50 border border-gray-100 rounded-md px-2 py-2">{{ integrationHost }}</div>
                       </div>
                       <div class="min-w-0">
-                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">API Key</div>
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">API Key</div>
                         <div
                           class="font-mono text-xs truncate border rounded-md px-2 py-2"
                           :class="integrationHasRealApiKey ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-amber-700 bg-amber-50 border-amber-100'"
@@ -265,7 +265,7 @@
                         </div>
                       </div>
                       <div class="min-w-0 lg:col-span-2">
-                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
                         <div class="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)] gap-2">
                           <select v-model="integrationAgentMode" class="w-full min-w-0 text-xs border-gray-300 rounded-md h-9">
                             <option value="auto">自动路由</option>
@@ -292,14 +292,14 @@
                   <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-5">
                     <aside class="space-y-3">
                       <div class="bg-white border border-gray-200 rounded-lg p-4">
-                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
                         <p class="text-sm text-gray-700 leading-relaxed">{{ activeIntegrationTabData.summary }}</p>
                       </div>
-                      <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                        <div class="text-xs font-black text-blue-500 uppercase tracking-wider mb-2">关键点</div>
-                        <ul class="space-y-2 text-sm text-blue-900">
+                      <div class="bg-primary/5 border border-primary/10 rounded-lg p-4">
+                        <div class="text-xs font-bold text-primary uppercase tracking-wider mb-2">关键点</div>
+                        <ul class="space-y-2 text-sm text-primary-dark">
                           <li v-for="point in activeIntegrationTabData.points" :key="point" class="flex gap-2 leading-relaxed">
-                            <span class="mt-2 h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
+                            <span class="mt-2 h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0"></span>
                             <span>{{ point }}</span>
                           </li>
                         </ul>
@@ -309,7 +309,7 @@
   	                <section class="bg-white border border-gray-200 rounded-lg overflow-hidden min-w-0">
   	                  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 bg-white">
                         <div class="min-w-0">
-                          <h3 class="font-black text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
+                          <h3 class="font-bold text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
                           <p class="text-xs text-gray-500 mt-0.5">{{ activeIntegrationTabData.caption }}</p>
                         </div>
                         <button
@@ -320,7 +320,7 @@
   	                    </button>
   	                  </div>
                         <div class="p-4 border-b border-gray-100 bg-slate-50">
-                          <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-3">接入效果预览</div>
+                          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">接入效果预览</div>
                           <div class="relative h-56 rounded-lg border border-gray-200 bg-white overflow-hidden shadow-inner">
                             <div class="absolute inset-x-0 top-0 h-9 bg-slate-900 flex items-center px-3 gap-2">
                               <span class="h-2.5 w-2.5 rounded-full bg-red-400"></span>
@@ -330,15 +330,15 @@
                             </div>
 
                             <template v-if="activeIntegrationTab === 'iframe'">
-                              <div class="absolute left-4 right-4 top-14 bottom-4 rounded-lg border border-blue-200 bg-blue-50 shadow-sm overflow-hidden">
-                                <div class="h-9 bg-blue-600 text-white px-3 flex items-center justify-between text-xs font-bold">
+                              <div class="absolute left-4 right-4 top-14 bottom-4 rounded-lg border border-primary/20 bg-primary/5 shadow-sm overflow-hidden">
+                                <div class="h-9 bg-primary text-white px-3 flex items-center justify-between text-xs font-bold">
                                   <span>EmbedChat IFrame</span>
                                   <span>100% x 640px</span>
                                 </div>
                                 <div class="p-4 space-y-3">
-                                  <div class="h-3 w-2/3 rounded bg-blue-200"></div>
-                                  <div class="h-16 rounded-lg bg-white border border-blue-100"></div>
-                                  <div class="h-9 rounded-full bg-blue-600/90"></div>
+                                  <div class="h-3 w-2/3 rounded bg-primary/20"></div>
+                                  <div class="h-16 rounded-lg bg-white border border-primary/10"></div>
+                                  <div class="h-9 rounded-full bg-primary/90"></div>
                                 </div>
                               </div>
                             </template>
@@ -373,25 +373,25 @@
                                   <div class="rounded bg-white border border-slate-200"></div>
                                 </div>
                               </div>
-                              <div class="absolute right-5 bottom-5 h-24 w-32 rounded-xl bg-white border border-blue-200 shadow-2xl overflow-hidden">
-                                <div class="h-7 bg-blue-600 text-white px-2 flex items-center text-[10px] font-bold">AI Assistant</div>
-                                <div class="absolute right-1.5 top-1.5 h-4 w-4 rounded-full bg-white/20 text-white flex items-center justify-center text-[10px] font-black">-</div>
+                              <div class="absolute right-5 bottom-5 h-24 w-32 rounded-xl bg-white border border-primary/20 shadow-2xl overflow-hidden">
+                                <div class="h-7 bg-primary text-white px-2 flex items-center text-[10px] font-bold">AI Assistant</div>
+                                <div class="absolute right-1.5 top-1.5 h-4 w-4 rounded-full bg-white/20 text-white flex items-center justify-center text-[10px] font-bold">-</div>
                                 <div class="p-2 space-y-1">
-                                  <div class="h-2 rounded bg-blue-100"></div>
-                                  <div class="h-2 w-2/3 rounded bg-blue-100"></div>
-                                  <div class="h-5 rounded-full bg-blue-600/90 mt-2"></div>
+                                  <div class="h-2 rounded bg-primary/10"></div>
+                                  <div class="h-2 w-2/3 rounded bg-primary/10"></div>
+                                  <div class="h-5 rounded-full bg-primary/90 mt-2"></div>
                                 </div>
                               </div>
-                              <div class="absolute right-5 bottom-5 translate-x-4 translate-y-4 h-11 w-11 rounded-full bg-blue-600 text-white shadow-xl flex items-center justify-center text-xs font-black ring-4 ring-white">AI</div>
+                              <div class="absolute right-5 bottom-5 translate-x-4 translate-y-4 h-11 w-11 rounded-full bg-primary text-white shadow-xl flex items-center justify-center text-xs font-bold ring-4 ring-white">AI</div>
                             </template>
 
                             <template v-else>
-                              <div class="absolute left-4 top-14 bottom-4 w-[45%] rounded-lg border border-violet-200 bg-white shadow-sm overflow-hidden">
-                                <div class="h-8 bg-violet-600 text-white px-3 flex items-center text-xs font-bold">ticket-sidebar-ai</div>
+                              <div class="absolute left-4 top-14 bottom-4 w-[45%] rounded-lg border border-primary/20 bg-white shadow-sm overflow-hidden">
+                                <div class="h-8 bg-primary text-white px-3 flex items-center text-xs font-bold">ticket-sidebar-ai</div>
                                 <div class="p-3 space-y-2">
-                                  <div class="h-3 rounded bg-violet-100"></div>
-                                  <div class="h-3 w-3/4 rounded bg-violet-100"></div>
-                                  <div class="h-14 rounded-lg border border-violet-100 bg-violet-50"></div>
+                                  <div class="h-3 rounded bg-primary/10"></div>
+                                  <div class="h-3 w-3/4 rounded bg-primary/10"></div>
+                                  <div class="h-14 rounded-lg border border-primary/10 bg-primary/5"></div>
                                 </div>
                               </div>
                               <div class="absolute right-4 top-14 bottom-4 w-[45%] rounded-lg border border-amber-200 bg-white shadow-sm overflow-hidden">
@@ -532,7 +532,7 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
         return [
         {
             id: 'markdown_docs',
-            label: '📖 完整接入开发文档 (Markdown)',
+            label: '完整接入开发文档 (Markdown)',
             title: ' NanZi 智能体平台嵌入式组件集成指南 (EmbedChat)',
             caption: '官方完整技术白皮书：涵盖架构时序、Ticket 签发、多语言后端/前端范例、PostMessage 协议与 FAQ。',
             summary: '包含完整的 Markdown 技术规格说明书，可直接在线浏览或全文复制。',
@@ -640,7 +640,7 @@ async def get_ai_embed_ticket(username: str = "zhangsan"):
         },
         {
             id: 'ticket',
-            label: '⭐ 快速 Ticket IFrame (生产推荐)',
+            label: '快速 Ticket IFrame (生产推荐)',
             title: '服务端生成 Ticket，前端 URL 嵌入',
             caption: '企业级生产推荐：长期 API Key 留在宿主后端，前端仅使用一次性短时 Ticket，自动滑动续期。',
             summary: '宿主后端代表用户调用 /api/v1/embed/tickets 获得 ticket，前端仅传 ticket 即可完成安全鉴权。',
@@ -662,7 +662,7 @@ async def get_ai_embed_ticket(username: str = "zhangsan"):
         },
         {
             id: 'postmessage',
-            label: '⭐ PostMessage 交互 (推荐)',
+            label: 'PostMessage 交互 (推荐)',
             title: 'PostMessage 结合 Ticket 初始化与双向通信',
             caption: '推荐生产使用：iframe src 干净无参，宿主通过 postMessage 传递 Ticket 与业务上下文，并支持超时自动重连。',
             summary: '宿主页面监听 NANZI_WIDGET_READY 后传入 Ticket；监听 INIT_FAILURE 实现会话超时静默自动续期。',
@@ -725,13 +725,13 @@ window.addEventListener('message', async (event) => {
         },
         {
             id: 'floating',
-            label: '⭐ 悬浮助手模式',
+            label: '悬浮助手模式',
             title: '右下角悬浮展开助手 (Ticket 模式)',
             caption: '适合接入已有业务系统，默认收起为右下角悬浮球，点击后换票展开对话。',
             summary: '点击悬浮入口时从后端获取一次性 Ticket 并渲染对话窗口，兼顾整洁与安全。',
             points: ['不占用业务主布局', '点击展开时按需换票', '支持一键收起恢复气泡', 'URL 干净无长期 Key'],
             code: `<div id="nanzi-widget-shell" class="nanzi-widget-shell collapsed">
-  <button id="nanzi-widget-toggle" class="nanzi-widget-toggle">💬 AI 助手</button>
+  <button id="nanzi-widget-toggle" class="nanzi-widget-toggle">AI 助手</button>
   <button id="nanzi-widget-collapse" class="nanzi-widget-collapse" title="收起助手" aria-label="收起助手">−</button>
   <iframe
     id="nanzi-agent-frame"

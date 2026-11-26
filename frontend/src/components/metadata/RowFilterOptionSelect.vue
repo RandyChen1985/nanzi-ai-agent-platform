@@ -95,7 +95,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
         class="w-full px-2.5 py-1.5 text-left transition-colors"
         :class="[
           menuClass,
-          modelValue === option.value ? 'bg-blue-50 text-blue-700' : 'text-gray-800',
+          modelValue === option.value ? 'bg-primary/5 text-primary-dark' : 'text-gray-800',
         ]"
         @click.stop="selectOption(option.value)"
       >

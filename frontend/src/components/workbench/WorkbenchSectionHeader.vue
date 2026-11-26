@@ -32,7 +32,7 @@ const props = withDefaults(
 
 const barClass = computed(() => {
   if (props.tone === "amber") return "bg-amber-500"
-  if (props.tone === "blue") return "bg-blue-500"
+  if (props.tone === "blue") return "bg-primary"
   if (props.tone === "green") return "bg-emerald-500"
   return "bg-gray-300 dark:bg-gray-600"
 })

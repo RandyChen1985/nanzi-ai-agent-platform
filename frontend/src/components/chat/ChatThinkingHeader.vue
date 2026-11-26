@@ -63,11 +63,11 @@
       </span>
       <span
         v-if="skillSummary"
-        class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
-        :class="{ 'dark:border-purple-900/30 dark:bg-purple-950/40 dark:text-purple-400': darkMode }"
+        class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-primary/10 bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary sm:inline-flex sm:items-center sm:gap-0.5"
+        :class="{ 'dark:border-primary-dark/30 dark:bg-primary-dark/40 dark:text-primary-hover': darkMode }"
         :title="skillSummary"
       >
-        ⚡ {{ skillSummary }}
+        {{ skillSummary }}
       </span>
       <span
         v-if="currentStep && !expanded"

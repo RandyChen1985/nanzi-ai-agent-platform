@@ -201,7 +201,7 @@ const highlightJsonHtml = (val: unknown): string => {
           cls = 'text-emerald-300' // string
         }
       } else if (/true|false/.test(match)) {
-        cls = 'text-purple-300 font-semibold' // boolean
+        cls = 'text-violet-300 font-semibold' // boolean
       } else if (/null/.test(match)) {
         cls = 'text-slate-500 italic' // null
       }
@@ -355,7 +355,7 @@ const getSubagentMeta = (step: any) =>
             class="flex flex-col items-center justify-center h-full text-gray-400 space-y-3"
           >
             <div
-              class="w-10 h-10 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"
+              class="w-10 h-10 border-[3px] border-primary border-t-transparent rounded-full animate-spin"
             ></div>
             <p class="text-sm font-medium text-gray-500">正在分析执行链路...</p>
           </div>
@@ -400,7 +400,7 @@ const getSubagentMeta = (step: any) =>
                   :class="[
                     step.status === 'error' ? 'text-red-500 ring-red-100' :
                     step.status === 'pending' ? 'text-amber-500 ring-amber-100 animate-spin-slow' :
-                    'text-indigo-600 ring-indigo-50',
+                    'text-primary ring-primary/10',
                     step.event_type === 'thought' ? 'bg-slate-50' : 'bg-white'
                   ]"
                 >
@@ -436,19 +436,19 @@ const getSubagentMeta = (step: any) =>
                       <div class="flex items-center space-x-2">
                         <span
                           v-if="step.event_type === 'synthesis'"
-                          class="px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-black uppercase tracking-wider"
+                          class="px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-bold uppercase tracking-wider"
                         >
                           Final
                         </span>
                         <span
                           v-else-if="step.event_type === 'thought'"
-                          class="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-black uppercase tracking-wider"
+                          class="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-bold uppercase tracking-wider"
                         >
                           Thought
                         </span>
                         <span
                           v-else
-                          class="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[9px] font-black uppercase tracking-wider"
+                          class="px-1.5 py-0.5 rounded bg-primary text-white text-[9px] font-bold uppercase tracking-wider"
                         >
                           Action
                         </span>
@@ -460,7 +460,7 @@ const getSubagentMeta = (step: any) =>
 
                       <span
                         v-if="step.tool_name"
-                        class="flex items-center space-x-1.5 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md text-xs font-bold border border-indigo-100 shadow-sm"
+                        class="flex items-center space-x-1.5 px-2 py-0.5 bg-primary/5 text-primary-dark rounded-md text-xs font-bold border border-primary/10 shadow-sm"
                       >
                         <CommandLineIcon class="w-3 h-3" />
                         <span>{{ localizeToolName(step.tool_name) }}</span>
@@ -468,7 +468,7 @@ const getSubagentMeta = (step: any) =>
 
                       <span
                         v-if="getSubagentMeta(step)"
-                        class="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-indigo-50 text-indigo-600 border-indigo-100"
+                        class="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-primary/5 text-primary border-primary/10"
                         :title="formatSubagentTraceSummary(getSubagentMeta(step))"
                       >
                         <span>子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}{{ subagentResumeLabel(getSubagentMeta(step)) }}</span>
@@ -512,15 +512,15 @@ const getSubagentMeta = (step: any) =>
                   <div class="p-5 space-y-4">
                     <div
                       v-if="getSubagentMeta(step)"
-                      class="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 space-y-2"
+                      class="rounded-lg border border-primary/10 bg-primary/5 p-3 space-y-2"
                     >
                       <div class="flex items-center justify-between gap-2">
-                        <p class="text-xs font-bold text-indigo-700">子代理委派</p>
-                        <span class="text-[10px] text-indigo-500">
+                        <p class="text-xs font-bold text-primary-dark">子代理委派</p>
+                        <span class="text-[10px] text-primary">
                           {{ formatSubagentTraceSummary(getSubagentMeta(step)) }}
                         </span>
                       </div>
-                      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-indigo-900/70">
+                      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-primary-dark/70">
                         <template v-if="getSubagentMeta(step)?.run_id">
                           <dt class="font-semibold">Run ID</dt>
                           <dd class="font-mono break-all">{{ getSubagentMeta(step)?.run_id }}</dd>
@@ -550,7 +550,7 @@ const getSubagentMeta = (step: any) =>
                     >
                       <div class="flex items-start justify-between gap-2">
                         <div class="flex flex-wrap items-center gap-1.5">
-                          <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-widest">用量</span>
+                          <span class="text-[10px] font-bold text-amber-700/80 uppercase tracking-widest">用量</span>
                           <span
                             v-for="chip in imageUsageChips(step)"
                             :key="`usage-${index}-${chip}`"
@@ -582,14 +582,14 @@ const getSubagentMeta = (step: any) =>
                         @click="toggleSection(`input-${index}`)"
                       >
                         <p
-                          class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-1"
+                          class="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center space-x-1"
                         >
                           <ChevronRightIcon :class="['w-3 h-3 transition-transform', expandedSteps[`input-${index}`] ? 'rotate-90' : '']" />
                           <span>Parameters</span>
                         </p>
                         <button
                           @click.stop="copyToClipboard(step.tool_input, `input-${index}`)"
-                          class="text-gray-400 hover:text-indigo-600 transition-colors"
+                          class="text-gray-400 hover:text-primary transition-colors"
                         >
                           <ClipboardIcon v-if="copiedId !== `input-${index}`" class="w-3.5 h-3.5" />
                           <span v-else class="text-[10px] text-green-600 font-bold uppercase">Copied</span>
@@ -608,7 +608,7 @@ const getSubagentMeta = (step: any) =>
                         @click="toggleSection(`output-${index}`)"
                       >
                         <p
-                          class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-1"
+                          class="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center space-x-1"
                         >
                           <ChevronRightIcon :class="['w-3 h-3 transition-transform', expandedSteps[`output-${index}`] ? 'rotate-90' : '']" />
                           <span>Result</span>
@@ -637,7 +637,7 @@ const getSubagentMeta = (step: any) =>
                         @click="toggleSection(`raw-${index}`)"
                       >
                         <p
-                          class="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center space-x-1"
+                          class="text-[10px] font-bold text-amber-500 uppercase tracking-widest flex items-center space-x-1"
                         >
                           <CpuChipIcon class="w-3 h-3" />
                           <span>Raw LLM Response</span>
@@ -701,7 +701,7 @@ const getSubagentMeta = (step: any) =>
                 <div
                   v-for="(step, index) in timelineSteps"
                   :key="index"
-                  class="relative flex items-bottom group"
+                  class="relative flex items-end group"
                 >
                   <!-- Label -->
                   <div
@@ -717,14 +717,14 @@ const getSubagentMeta = (step: any) =>
                     </div>
                     <div
                       v-if="step.tool_name"
-                      class="text-[10px] text-indigo-600 truncate pl-3"
+                      class="text-[10px] text-primary truncate pl-3"
                       :title="localizeToolName(step.tool_name)"
                     >
                       {{ localizeToolName(step.tool_name) }}
                     </div>
                     <div
                       v-if="getSubagentMeta(step)"
-                      class="text-[10px] text-indigo-600 truncate pl-3"
+                      class="text-[10px] text-primary truncate pl-3"
                       :title="formatSubagentTraceSummary(getSubagentMeta(step))"
                     >
                       子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}{{ subagentResumeLabel(getSubagentMeta(step)) }}
@@ -756,7 +756,7 @@ const getSubagentMeta = (step: any) =>
                     <div
                       class="absolute top-1.5 bottom-1.5 rounded-md shadow-sm transition-all duration-300 flex items-center px-2 cursor-help group-hover:brightness-95"
                       :class="
-                        step.status === 'error' ? 'bg-red-400' : 'bg-indigo-500'
+                        step.status === 'error' ? 'bg-red-400' : 'bg-primary'
                       "
                       :style="step._style"
                     ></div>

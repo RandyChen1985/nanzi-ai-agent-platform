@@ -220,14 +220,14 @@ const backToEmailMode = () => {
             type="email"
             required
             autocomplete="email"
-            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-blue-500 disabled:bg-gray-100"
+            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-primary disabled:bg-gray-100"
             placeholder="you@example.com"
             :disabled="loading || cooldown > 0"
           />
         </div>
         <button
           type="submit"
-          class="flex w-full items-center justify-center rounded-lg bg-blue-600 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/10 transition-all hover:bg-blue-700 active:scale-[0.98] disabled:opacity-70"
+          class="flex w-full items-center justify-center rounded-lg bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/10 transition-all hover:bg-primary-dark active:scale-[0.98] disabled:opacity-70"
           :disabled="loading || cooldown > 0"
         >
           <span
@@ -256,7 +256,7 @@ const backToEmailMode = () => {
           </div>
           <button
             type="button"
-            class="w-full rounded-lg bg-blue-600 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/10 transition-all hover:bg-blue-700 active:scale-[0.98]"
+            class="w-full rounded-lg bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/10 transition-all hover:bg-primary-dark active:scale-[0.98]"
             @click="backToEmailMode"
           >
             重新申请重置链接
@@ -270,7 +270,7 @@ const backToEmailMode = () => {
           </div>
           <button
             type="button"
-            class="w-full rounded-lg border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:border-blue-500 hover:text-blue-600 active:scale-[0.98]"
+            class="w-full rounded-lg border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:border-primary hover:text-primary active:scale-[0.98]"
             @click="checkToken"
           >
             重试
@@ -287,7 +287,7 @@ const backToEmailMode = () => {
             type="password"
             required
             autocomplete="new-password"
-            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-blue-500 disabled:bg-gray-100"
+            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-primary disabled:bg-gray-100"
             placeholder="8-32 位，含大小写字母/数字/符号中的至少三类"
             :disabled="loading"
           />
@@ -301,14 +301,14 @@ const backToEmailMode = () => {
             type="password"
             required
             autocomplete="new-password"
-            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-blue-500 disabled:bg-gray-100"
+            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-primary disabled:bg-gray-100"
             placeholder="再次输入新密码"
             :disabled="loading"
           />
         </div>
         <button
           type="submit"
-          class="flex w-full items-center justify-center rounded-lg bg-blue-600 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/10 transition-all hover:bg-blue-700 active:scale-[0.98] disabled:opacity-70"
+          class="flex w-full items-center justify-center rounded-lg bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/10 transition-all hover:bg-primary-dark active:scale-[0.98] disabled:opacity-70"
           :disabled="loading"
         >
           <span
@@ -319,7 +319,7 @@ const backToEmailMode = () => {
         </button>
         <button
           type="button"
-          class="w-full text-center text-xs text-slate-500 transition-colors hover:text-blue-600"
+          class="w-full text-center text-xs text-slate-500 transition-colors hover:text-primary"
           @click="backToEmailMode"
         >
           链接已失效？重新申请
@@ -328,7 +328,7 @@ const backToEmailMode = () => {
       </template>
 
       <div class="mt-6 text-center">
-        <router-link to="/login" class="text-xs text-blue-600 hover:underline">
+        <router-link to="/login" class="text-xs text-primary hover:underline">
           返回登录
         </router-link>
       </div>

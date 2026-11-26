@@ -72,7 +72,7 @@ const MERMAID_BARE_START_RE =
 
 const renderParseError = (rawBlock: string, message: string) =>
   renderMarkdownPreview(
-    `> ⚠️ **图表配置解析失败**\n> 原因：${message}\n\n${rawBlock}`,
+    `> ⚠ **图表配置解析失败**\n> 原因：${message}\n\n${rawBlock}`,
   );
 
 const parseSegments = (content: string): MarkdownSegment[] => {

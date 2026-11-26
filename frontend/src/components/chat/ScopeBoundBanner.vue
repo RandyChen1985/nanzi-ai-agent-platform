@@ -30,15 +30,15 @@ const detail = computed(() => {
 <template>
   <div
     role="status"
-    class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2 text-xs text-violet-900 dark:border-violet-500/30 dark:bg-violet-950/40 dark:text-violet-100"
+    class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary-dark dark:border-primary/30 dark:bg-primary-dark/40 dark:text-primary-bright"
   >
     <div class="flex min-w-0 items-start gap-2">
-      <span class="shrink-0 font-semibold">🔒 {{ title }}</span>
-      <span class="break-words text-violet-800/90 dark:text-violet-200/80">{{ detail }}</span>
+      <span class="shrink-0 font-semibold">{{ title }}</span>
+      <span class="break-words text-primary-dark/90 dark:text-primary-hover">{{ detail }}</span>
     </div>
     <button
       type="button"
-      class="shrink-0 rounded px-1 text-violet-600/90 hover:text-violet-700 dark:text-violet-300/80 dark:hover:text-violet-200"
+      class="shrink-0 rounded px-1 text-primary/90 hover:text-primary-dark dark:text-primary-hover dark:hover:text-primary-hover"
       title="隐藏提示"
       @click="emit('dismiss')"
     >

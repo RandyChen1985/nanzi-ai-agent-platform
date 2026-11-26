@@ -205,6 +205,17 @@ async def test_history_fields_are_sanitized(monkeypatch):
         def add(self, obj):
             captured["history"] = obj
 
+        async def execute(self, *_args, **_kwargs):
+            class _EmptyResult:
+                def scalars(self):
+                    class _Scalars:
+                        def first(self):
+                            return None
+
+                    return _Scalars()
+
+            return _EmptyResult()
+
         async def commit(self):
             return None
 

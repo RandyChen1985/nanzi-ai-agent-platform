@@ -279,8 +279,8 @@ const reject = async () => {
                   <span
                     class="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
                     :class="item.request_type === 'VERSION_RELEASE'
-                      ? 'bg-sky-50 text-sky-700'
-                      : 'bg-indigo-50 text-indigo-600'"
+                      ? 'bg-sky-50 text-primary-dark'
+                      : 'bg-primary/5 text-primary'"
                   >
                     {{ item.request_type === 'VERSION_RELEASE'
                       ? (item.version_number ? `V${item.version_number} 上线` : '版本上线')
@@ -337,7 +337,7 @@ const reject = async () => {
                 </div>
 
                 <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                  ⚠ <strong>通过后将立即生效</strong>：{{ approveHint }}
+                  <strong>通过后将立即生效</strong>：{{ approveHint }}
                 </div>
 
                 <div v-if="detail.request_comment">
@@ -381,7 +381,7 @@ const reject = async () => {
                         <span
                           v-for="tool in detail.snapshot.version.tools || []"
                           :key="typeof tool === 'string' ? tool : tool?.name"
-                          class="rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 text-[11px] text-blue-700"
+                          class="rounded border border-primary/10 bg-primary/5 px-1.5 py-0.5 text-[11px] text-primary-dark"
                         >
                           {{ typeof tool === "string" ? tool : tool?.name || "未命名工具" }}
                         </span>

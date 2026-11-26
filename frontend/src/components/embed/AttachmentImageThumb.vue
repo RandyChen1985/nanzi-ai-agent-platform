@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from "vue";
+import { PhotoIcon } from "@heroicons/vue/24/outline";
 import axios from "@/utils/axios";
 import {
   attachmentPreviewNeedsAuthFetch,
@@ -92,6 +93,6 @@ const handleClick = () => {
       @click="handleClick"
       @error="failed = true; displayUrl = null"
     />
-    <span v-else-if="failed" class="text-[10px]" title="预览加载失败">🖼️</span>
+    <PhotoIcon v-else-if="failed" class="h-5 w-5 text-gray-300 dark:text-gray-600" title="预览加载失败" aria-label="预览加载失败" />
   </div>
 </template>

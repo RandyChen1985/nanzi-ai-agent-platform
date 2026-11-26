@@ -328,7 +328,7 @@ class TestCustomJsonValidationMessages:
         assert "'border-rose-400'" not in source
         assert (
             source.count(
-                "errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                "errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
             )
             >= 7
         )

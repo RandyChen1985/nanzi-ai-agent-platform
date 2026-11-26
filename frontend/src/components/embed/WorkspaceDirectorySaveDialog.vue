@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { FolderIcon } from "@heroicons/vue/24/outline";
 import { ref, watch } from 'vue'
 import axios from '@/utils/axios'
 
@@ -178,7 +179,7 @@ watch(
           class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-primary/5 dark:text-gray-200 dark:hover:bg-primary/10"
           @click="selectDirectory(directory)"
         >
-          <span>📁</span><span class="truncate">{{ directory.name }}</span>
+          <FolderIcon class="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" /><span class="truncate">{{ directory.name }}</span>
         </button>
       </div>
 

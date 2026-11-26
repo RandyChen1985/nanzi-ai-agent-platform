@@ -113,7 +113,7 @@
           </div>
           <header class="relative flex h-12 shrink-0 items-center justify-between border-b border-gray-200 px-3 dark:border-gray-700">
             <div class="flex min-w-0 items-center gap-2">
-              <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">⌁</span>
+              <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary-dark/40 dark:text-primary-hover">⌁</span>
               <div class="min-w-0">
                 <div class="truncate text-xs font-bold text-gray-800 dark:text-gray-100">服务端浏览器</div>
                 <div class="flex items-center gap-1.5 text-[10px] text-gray-400">
@@ -123,12 +123,12 @@
               </div>
             </div>
             <div class="flex items-center gap-1.5">
-              <span v-if="pinned && !isMobile" class="hidden rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300 sm:inline-flex">已钉住</span>
+              <span v-if="pinned && !isMobile" class="hidden rounded bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary dark:bg-primary/10 dark:text-primary-hover sm:inline-flex">已钉住</span>
               <button
                 v-if="!isMobile"
                 type="button"
-                class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-300"
-                :class="pinned ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300' : ''"
+                class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary-hover"
+                :class="pinned ? 'bg-primary/5 text-primary dark:bg-primary/10 dark:text-primary-hover' : ''"
                 :title="pinned ? '取消钉住' : '钉住浏览器面板'"
                 :aria-label="pinned ? '取消钉住' : '钉住浏览器面板'"
                 @click="pinned = !pinned"
@@ -187,7 +187,7 @@
                     class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
                     @click="openCloseSessionConfirm('keep')"
                   >
-                    <span aria-hidden="true">🚪</span>结束会话（保留登录）
+                    <ArrowRightOnRectangleIcon class="h-3.5 w-3.5" aria-hidden="true" />结束会话（保留登录）
                   </button>
                   <button
                     type="button"
@@ -195,7 +195,7 @@
                     class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
                     @click="openCloseSessionConfirm('destroy')"
                   >
-                    <span aria-hidden="true">🗑️</span>结束会话并清除登录数据
+                    <TrashIcon class="h-3.5 w-3.5" aria-hidden="true" />结束会话并清除登录数据
                   </button>
                 </div>
               </div>
@@ -219,7 +219,7 @@
               @click="switchTab(tab.tab_id)"
               @contextmenu.prevent="openTabContextMenu($event, tab)"
             >
-              <span class="shrink-0 text-[10px] text-gray-400">🌐</span>
+              <GlobeAltIcon class="h-3 w-3 shrink-0 text-gray-400" aria-hidden="true" />
               <span class="min-w-0 flex-1 truncate text-[11px]">
                 {{ tab.title || tab.url || '新标签页' }}
               </span>
@@ -258,7 +258,7 @@
           >
             <button
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-primary/5 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary"
               @click="newTab(); closeTabContextMenu();"
             >
               <span>➕</span>
@@ -267,10 +267,10 @@
             <button
               v-if="tabContextMenu.tab"
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-primary/5 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary"
               @click="reloadPage(); closeTabContextMenu();"
             >
-              <span>🔄</span>
+              <ArrowPathIcon class="h-3.5 w-3.5" aria-hidden="true" />
               <span>重新加载</span>
             </button>
 
@@ -282,22 +282,22 @@
               class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
               @click="closeTab(tabContextMenu.tab.tab_id); closeTabContextMenu();"
             >
-              <span>❌</span>
+              <XMarkIcon class="h-3.5 w-3.5" aria-hidden="true" />
               <span>关闭当前标签页</span>
             </button>
             <button
               v-if="tabContextMenu.tab && tabs.length > 1"
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-primary/5 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary"
               @click="closeOtherTabs(tabContextMenu.tab.tab_id)"
             >
-              <span>🚫</span>
+              <NoSymbolIcon class="h-3.5 w-3.5" aria-hidden="true" />
               <span>关闭其他标签页</span>
             </button>
             <button
               v-if="tabContextMenu.tab && isTabNotLast(tabContextMenu.tab.tab_id)"
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-primary/5 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary"
               @click="closeTabsToRight(tabContextMenu.tab.tab_id)"
             >
               <span>➡️</span>
@@ -308,7 +308,7 @@
               class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
               @click="closeAllTabs"
             >
-              <span>🧹</span>
+              <XCircleIcon class="h-3.5 w-3.5" aria-hidden="true" />
               <span>关闭所有标签页</span>
             </button>
           </div>
@@ -318,7 +318,7 @@
             role="status"
             class="absolute right-3 top-14 z-40 flex w-[min(320px,calc(100%-24px))] items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-amber-950 shadow-lg shadow-amber-900/10 dark:border-amber-700 dark:bg-amber-950/80 dark:text-amber-100"
           >
-            <span class="mt-0.5 text-sm" aria-hidden="true">⚠️</span>
+            <span class="mt-0.5 text-sm" aria-hidden="true">⚠</span>
             <div class="min-w-0 flex-1">
               <div class="text-[11px] font-extrabold">安全确认已开启</div>
               <div class="mt-0.5 text-[10px] leading-relaxed text-amber-800 dark:text-amber-200">提交、删除、支付等高风险动作会等待你的确认。</div>
@@ -339,25 +339,25 @@
             class="flex h-[30px] shrink-0 items-center justify-between gap-3 border-b px-3 text-[10px] transition-colors"
             :class="[
               errorMessage ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' :
-              cropMode ? 'border-purple-200 bg-purple-50 text-purple-900 dark:border-purple-900/60 dark:bg-purple-950/50 dark:text-purple-200' :
-              'border-sky-100 bg-sky-50/80 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-100'
+              cropMode ? 'border-primary/20 bg-primary/5 text-primary-dark dark:border-primary-dark/60 dark:bg-primary-dark/50 dark:text-primary-hover' :
+              'border-sky-100 bg-sky-50/80 text-primary-dark dark:border-primary-dark/60 dark:bg-primary-dark/40 dark:text-sky-100'
             ]"
           >
             <!-- 左侧：声明 / 框选提示 / 错误信息 -->
             <div class="flex min-w-0 items-center gap-1.5 truncate">
               <template v-if="errorMessage">
-                <span class="shrink-0 text-red-500">⚠️</span>
+                <span class="shrink-0 text-red-500" aria-hidden="true">⚠</span>
                 <strong class="shrink-0 font-bold">提示：</strong>
                 <span class="truncate font-semibold">{{ errorMessage }}</span>
               </template>
               <template v-else-if="cropMode">
-                <span class="shrink-0 text-purple-600">✂️</span>
-                <span class="truncate font-bold text-purple-800 dark:text-purple-200">请在画面上按住左键拖拽框选区域</span>
+                <span class="shrink-0 text-primary">✂️</span>
+                <span class="truncate font-bold text-primary-dark dark:text-primary-hover">请在画面上按住左键拖拽框选区域</span>
               </template>
               <template v-else>
                 <span aria-hidden="true">▧</span>
                 <strong class="shrink-0 font-bold">远程页面截图</strong>
-                <span class="truncate text-sky-700 dark:text-sky-300">非实时截图，不是网页本体；点击、滚轮、键盘会转发到远程浏览器</span>
+                <span class="truncate text-primary-dark dark:text-sky-300">非实时截图，不是网页本体；点击、滚轮、键盘会转发到远程浏览器</span>
               </template>
             </div>
 
@@ -366,19 +366,19 @@
               <button
                 v-if="cropMode"
                 type="button"
-                class="rounded border border-purple-300 bg-white/90 px-2 py-0.5 font-bold text-purple-700 hover:bg-purple-50 dark:border-purple-700 dark:bg-purple-950/60 dark:text-purple-200"
+                class="rounded border border-primary/25 bg-white/90 px-2 py-0.5 font-bold text-primary-dark hover:bg-primary/5 dark:border-primary-dark dark:bg-primary-dark/60 dark:text-primary-hover"
                 @click="toggleCropMode"
               >
                 取消框选 (Esc)
               </button>
               <template v-else>
-                <span class="text-sky-600 dark:text-sky-300">
+                <span class="text-primary dark:text-sky-300">
                   {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? (currentAiAction?.action === 'solving_captcha' ? captchaStageLabel : '验证码中，刷新继续') : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
                 </span>
                 <button
                   v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
                   type="button"
-                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-white dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200"
+                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark hover:bg-white dark:border-primary-dark dark:bg-primary-dark/60 dark:text-sky-200"
                   @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
                 >
                   {{ autoRefreshPaused ? '恢复' : '暂停' }}
@@ -386,7 +386,7 @@
                 <button
                   v-if="controlOwner === 'human' || captchaDetected || autoRefreshPaused"
                   type="button"
-                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-white disabled:opacity-40 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200"
+                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark hover:bg-white disabled:opacity-40 dark:border-primary-dark dark:bg-primary-dark/60 dark:text-sky-200"
                   :disabled="isSyncing"
                   title="拉取一次最新画面（不恢复自动刷新）"
                   @click="requestSnapshot"
@@ -397,11 +397,11 @@
                   v-if="actionTrace.length"
                   type="button"
                   class="rounded border px-1.5 py-0.5 text-[10px] font-semibold"
-                  :class="actionTraceOpen ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-200' : 'border-indigo-200 bg-white/80 text-indigo-700 hover:bg-white dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'"
+                  :class="actionTraceOpen ? 'border-primary bg-primary/5 text-primary-dark dark:border-primary dark:bg-primary-dark/60 dark:text-primary-hover' : 'border-primary/20 bg-white/80 text-primary-dark hover:bg-white dark:border-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover'"
                   title="查看操作过程（AI 动作 / 人工操作 / 验证码解算）"
                   @click="actionTraceOpen = !actionTraceOpen"
                 >
-                  🧭 操作过程 {{ actionTrace.length }}
+                   操作过程 {{ actionTrace.length }}
                 </button>
               </template>
             </div>
@@ -447,16 +447,16 @@
 
             <input
               v-model="address"
-              class="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 disabled:bg-gray-100"
+              class="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 disabled:bg-gray-100"
               placeholder="输入网址，如 www.baidu.com"
               @keyup.enter="navigate"
             />
-            <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="navigate">打开</button>
+            <button class="rounded-md bg-primary px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-primary-dark" @click="navigate">打开</button>
             <button
               v-if="snapshot"
               type="button"
               class="shrink-0 rounded-md border px-2 py-1.5 text-[10px] font-medium transition-colors"
-              :class="cropMode ? 'border-purple-400 bg-purple-50 text-purple-700 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200' : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 hover:text-purple-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'"
+              :class="cropMode ? 'border-primary bg-primary/5 text-primary-dark dark:border-primary dark:bg-primary-dark/60 dark:text-primary-hover' : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 hover:text-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'"
               :title="cropMode ? '点击退出框选' : '框选画面区域进行 AI 视觉分析或截取复制'"
               @click="toggleCropMode"
             >
@@ -465,7 +465,7 @@
             <button
               v-if="snapshot"
               type="button"
-              class="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[10px] font-medium text-gray-700 hover:bg-gray-100 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              class="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[10px] font-medium text-gray-700 hover:bg-gray-100 hover:text-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
               :title="viewMode === 'fit' ? '当前为自适应缩放，点击切换 1:1 原图尺寸' : '当前为 1:1 原图，点击切换自适应窗口'"
               @click="viewMode = viewMode === 'fit' ? 'original' : 'fit'"
             >
@@ -498,18 +498,18 @@
                 </template>
                 <!-- 人工待命/选定/默认态 -->
                 <template v-else>
-                  <span class="shrink-0 text-emerald-600">🎯</span>
+                  <CursorArrowRaysIcon class="h-3 w-3 shrink-0 text-emerald-600" aria-hidden="true" />
                   <span class="shrink-0 font-bold">当前由人工操作</span>
                   <span v-if="captchaDetected" class="text-amber-600 dark:text-amber-400">（请完成安全验证）</span>
                   <span v-else-if="selectedElement" class="truncate text-emerald-800 dark:text-emerald-200">
-                    · 已选定 <strong class="text-cyan-700 dark:text-cyan-300">#{{ selectedElement.ref }}</strong>
+                    · 已选定 <strong class="text-primary-dark dark:text-cyan-300">#{{ selectedElement.ref }}</strong>
                     <span class="font-medium text-emerald-900 dark:text-emerald-100">{{ selectedElement.role || selectedElement.tag || '元素' }}</span>
                     <template v-if="selectedElement.name">"{{ selectedElement.name }}"</template>
-                    <span class="ml-1 font-medium text-emerald-600 dark:text-emerald-400">（💡 双击可执行点击/跳转）</span>
+                    <span class="ml-1 font-medium text-emerald-600 dark:text-emerald-400">（ 双击可执行点击/跳转）</span>
                   </span>
                   <span v-else-if="selectedPoint" class="truncate text-emerald-800 dark:text-emerald-200">
                     · 已选定坐标 ({{ Math.round(selectedPoint.x) }}, {{ Math.round(selectedPoint.y) }})
-                    <span class="ml-1 font-medium text-emerald-600 dark:text-emerald-400">（💡 双击可在此处点击）</span>
+                    <span class="ml-1 font-medium text-emerald-600 dark:text-emerald-400">（ 双击可在此处点击）</span>
                   </span>
                   <span v-else class="truncate text-emerald-700 dark:text-emerald-300">· {{ remoteFocusMessage || '直接点击/输入操作网页' }}</span>
                 </template>
@@ -518,8 +518,8 @@
                 <!-- AI 细化具体动作正在执行中 -->
                 <template v-if="currentAiAction">
                   <span class="relative flex h-2 w-2 shrink-0">
-                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
-                    <span class="relative inline-flex h-2 w-2 rounded-full bg-blue-600"></span>
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-primary"></span>
                   </span>
                   <span class="shrink-0 font-bold" :class="aiActionInfo.color">
                     {{ aiActionInfo.icon }} {{ aiActionInfo.label }}
@@ -528,8 +528,8 @@
                 </template>
                 <!-- AI 待命中 / 空闲就绪 -->
                 <template v-else>
-                  <span class="shrink-0 text-blue-600 dark:text-blue-400">🎯</span>
-                  <span class="shrink-0 font-bold text-blue-600 dark:text-blue-400">当前 AI 接管中</span>
+                  <CursorArrowRaysIcon class="h-3 w-3 shrink-0 text-primary dark:text-primary" aria-hidden="true" />
+                  <span class="shrink-0 font-bold text-primary dark:text-primary">当前 AI 接管中</span>
                   <span v-if="remoteFocusMessage" class="truncate text-gray-500 dark:text-gray-400">· {{ remoteFocusMessage }}</span>
                   <span v-else class="truncate text-gray-500 dark:text-gray-400">
                     · AI 待命中，点击截图任意位置即可<span class="font-medium text-emerald-600 dark:text-emerald-400">人工接管</span>
@@ -568,7 +568,7 @@
               class="absolute right-3.5 z-30 flex flex-col items-center gap-0.5 select-none bg-white/95 dark:bg-slate-900/95 hover:bg-white dark:hover:bg-slate-900 p-1.5 rounded-2xl backdrop-blur-md border border-gray-200/90 dark:border-gray-700/90 shadow-xl shadow-slate-900/10 hover:shadow-2xl transition-[opacity,transform,box-shadow] duration-150"
               :class="[
                 floatingScrollTop === null ? 'top-1/2 -translate-y-1/2' : '',
-                isDraggingScrollController ? 'opacity-100 ring-2 ring-blue-400/50 shadow-2xl scale-105 cursor-grabbing' : 'opacity-85 hover:opacity-100'
+                isDraggingScrollController ? 'opacity-100 ring-2 ring-primary/50 shadow-2xl scale-105 cursor-grabbing' : 'opacity-85 hover:opacity-100'
               ]"
               :style="floatingScrollTop !== null ? { top: `${floatingScrollTop}px` } : undefined"
               @click.stop
@@ -593,7 +593,7 @@
 
               <button
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-200 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-all"
+                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-primary/5 hover:text-primary active:scale-90 dark:text-gray-200 dark:hover:bg-primary-dark/50 dark:hover:text-primary-hover transition-all"
                 title="一键直达顶部"
                 aria-label="一键直达顶部"
                 @click.stop="manualScroll('top')"
@@ -604,7 +604,7 @@
               </button>
               <button
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-200 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-all"
+                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-primary/5 hover:text-primary active:scale-90 dark:text-gray-200 dark:hover:bg-primary-dark/50 dark:hover:text-primary-hover transition-all"
                 title="向上翻页"
                 aria-label="向上翻页"
                 @click.stop="manualScroll('up')"
@@ -616,7 +616,7 @@
               <div class="h-px w-4.5 bg-gray-200/90 dark:bg-gray-700/90"></div>
               <button
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-200 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-all"
+                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-primary/5 hover:text-primary active:scale-90 dark:text-gray-200 dark:hover:bg-primary-dark/50 dark:hover:text-primary-hover transition-all"
                 title="向下翻页"
                 aria-label="向下翻页"
                 @click.stop="manualScroll('down')"
@@ -627,7 +627,7 @@
               </button>
               <button
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-200 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-all"
+                class="flex h-7 w-7 items-center justify-center rounded-xl text-gray-700 hover:bg-primary/5 hover:text-primary active:scale-90 dark:text-gray-200 dark:hover:bg-primary-dark/50 dark:hover:text-primary-hover transition-all"
                 title="一键直达底部"
                 aria-label="一键直达底部"
                 @click.stop="manualScroll('bottom')"
@@ -741,7 +741,7 @@
                 </span>
                 <button
                   type="button"
-                  class="rounded p-0.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 active:scale-90 transition-all"
+                  class="rounded p-0.5 text-slate-400 hover:text-primary dark:hover:text-primary active:scale-90 transition-all"
                   :class="{ 'animate-spin': envLoading }"
                   title="手动重新检测服务端浏览器环境与版本"
                   aria-label="刷新环境检测"
@@ -764,7 +764,7 @@
                 alt="远程浏览器画面"
                 draggable="false"
                 :class="[
-                  cropMode ? 'cursor-crosshair select-none touch-none rounded border border-purple-400 bg-white shadow-md ring-2 ring-purple-400/40 dark:border-purple-600' :
+                  cropMode ? 'cursor-crosshair select-none touch-none rounded border border-primary bg-white shadow-md ring-2 ring-primary/40 dark:border-primary' :
                   isSyncing ? 'cursor-wait select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700' :
                   'cursor-crosshair select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700',
                   viewMode === 'fit' ? 'block w-full' : 'block w-[1280px] max-w-none'
@@ -790,7 +790,7 @@
                 <div v-if="isSolvingCaptcha" class="captcha-solve-scanline absolute inset-x-0 top-0 h-1/4" />
                 <div
                   class="absolute left-3 top-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg backdrop-blur-sm"
-                  :class="isSolvingCaptcha ? 'bg-indigo-600/90' : (captchaAwaitingHuman ? 'bg-amber-600/90' : 'bg-rose-600/90')"
+                  :class="isSolvingCaptcha ? 'bg-primary/90' : (captchaAwaitingHuman ? 'bg-amber-600/90' : 'bg-rose-600/90')"
                 >
                   <span class="relative flex h-2 w-2">
                     <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
@@ -828,7 +828,7 @@
                 class="absolute right-3 top-3 z-30 flex max-h-[70%] w-[min(440px,85%)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white/95 text-[11px] shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
               >
                 <div class="flex items-center justify-between border-b border-slate-100 px-2 py-1 font-bold text-slate-600 dark:border-slate-800 dark:text-slate-200">
-                  <span>🧭 操作过程（最近 {{ actionTrace.length }} 步）</span>
+                  <span> 操作过程（最近 {{ actionTrace.length }} 步）</span>
                   <span class="flex items-center gap-1">
                     <button
                       type="button"
@@ -849,8 +849,8 @@
                     class="flex gap-2 border-t border-slate-100 py-0.5 first:border-t-0 dark:border-slate-800"
                   >
                     <span class="shrink-0 font-mono text-[10px] text-slate-400">{{ entry.at }}</span>
-                    <span class="shrink-0" :title="ACTION_SOURCE_META[entry.source].label">{{ ACTION_SOURCE_META[entry.source].icon }}</span>
-                    <span class="shrink-0" :class="ACTION_SOURCE_META[entry.source].className">
+                    <span class="shrink-0" aria-hidden="true">{{ ACTION_SOURCE_META[entry.source].icon }}</span>
+                    <span class="shrink-0" :title="ACTION_SOURCE_META[entry.source].label" :class="ACTION_SOURCE_META[entry.source].className">
                       {{ entry.source === 'captcha' ? (CAPTCHA_STAGE_LABELS[entry.phase] || '•') : (entry.label || '•') }}
                     </span>
                     <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{{ entry.detail }}</span>
@@ -910,7 +910,7 @@
                 role="alert"
               >
                 <div class="flex items-start gap-2.5">
-                  <span class="text-lg leading-none">⚠️</span>
+                  <span class="text-lg leading-none"><ExclamationTriangleIcon class="h-4 w-4" aria-hidden="true" /></span>
                   <div class="min-w-0 flex-1">
                     <p class="text-xs font-bold text-rose-700 dark:text-rose-300">AI 无法完成验证码，请人工处理</p>
                     <p class="mt-1 text-[11px] leading-relaxed text-gray-600 dark:text-gray-300">{{ captchaFailureReason }}</p>
@@ -929,7 +929,7 @@
               <!-- 框选模式选区矩形与尺寸浮标 -->
               <div
                 v-if="activeCropRect"
-                class="pointer-events-none absolute border-2 border-dashed border-purple-500 bg-purple-500/20 shadow-md"
+                class="pointer-events-none absolute border-2 border-dashed border-primary bg-primary/20 shadow-md"
                 :style="{
                   left: `${activeCropRect.left}%`,
                   top: `${activeCropRect.top}%`,
@@ -937,7 +937,7 @@
                   height: `${activeCropRect.height}%`,
                 }"
               >
-                <span class="absolute -top-5 left-0 rounded bg-purple-700 px-1 py-0.5 font-mono text-[9px] font-bold text-white shadow-xs">
+                <span class="absolute -top-5 left-0 rounded bg-primary-dark px-1 py-0.5 font-mono text-[9px] font-bold text-white shadow-xs">
                   {{ Math.round(activeCropRect.pixelW) }} × {{ Math.round(activeCropRect.pixelH) }} px
                 </span>
               </div>
@@ -946,7 +946,7 @@
                 v-if="!cropMode"
                 v-for="r in ripples"
                 :key="r.id"
-                class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-500 bg-blue-400/40 shadow-sm animate-ping"
+                class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-primary/40 shadow-sm animate-ping"
                 :style="{ left: `${r.x}%`, top: `${r.y}%`, width: '26px', height: '26px' }"
               />
               <!-- 人工拖拽可视化：轨迹折线 + 起终点标记 + 实时位移 + 十字辅助线（截图是静态的，本地反馈很关键） -->
@@ -1014,12 +1014,12 @@
               <!-- 智能元素悬停探测与高亮 (Element Hover Inspector) -->
               <div
                 v-if="hoveredElement && hoveredElementStyle && !cropMode && !pointerDragging && (!selectedElement || selectedElement.ref !== hoveredElement.ref)"
-                class="pointer-events-none absolute z-10 rounded border border-cyan-400 bg-cyan-400/15 shadow-xs transition-all duration-75 ease-out dark:border-cyan-300 dark:bg-cyan-300/20"
+                class="pointer-events-none absolute z-10 rounded border border-primary bg-primary/15 shadow-xs transition-all duration-75 ease-out dark:border-cyan-300 dark:bg-cyan-300/20"
                 :style="hoveredElementStyle"
               >
                 <!-- 顶部小徽标：语义 ref + role/tag + 文本预览 -->
                 <div class="absolute -top-5 left-0 flex items-center gap-1 rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 shadow-md backdrop-blur-xs whitespace-nowrap">
-                  <span class="font-bold text-cyan-400">#{{ hoveredElement.ref }}</span>
+                  <span class="font-bold text-primary">#{{ hoveredElement.ref }}</span>
                   <span class="text-slate-400">·</span>
                   <span class="text-white">{{ hoveredElement.role || hoveredElement.tag || 'element' }}</span>
                   <template v-if="hoveredElement.name">
@@ -1032,9 +1032,9 @@
               <!-- 画面右下角：实时鼠标坐标与元素标签 (仅悬停元素时展示) -->
               <div v-if="cursorCoords && hoveredElement" class="pointer-events-none absolute bottom-3 right-3 z-20 select-none">
                 <span class="inline-flex max-w-xs items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/90 px-2 py-0.5 font-mono text-[9px] text-slate-200 shadow-md backdrop-blur-xs">
-                  <span class="shrink-0 text-slate-400">📍 ({{ cursorCoords.x }}, {{ cursorCoords.y }})</span>
+                  <span class="shrink-0 text-slate-400"> ({{ cursorCoords.x }}, {{ cursorCoords.y }})</span>
                   <span class="shrink-0 text-slate-500">|</span>
-                  <span class="shrink-0 font-bold text-cyan-400">[{{ hoveredElement.ref }}]</span>
+                  <span class="shrink-0 font-bold text-primary">[{{ hoveredElement.ref }}]</span>
                   <span class="shrink-0 text-emerald-400">{{ hoveredElement.role || hoveredElement.tag }}</span>
                 </span>
               </div>
@@ -1043,9 +1043,7 @@
             <div v-else-if="isEnvMissingError" class="flex h-full min-h-[360px] items-center justify-center p-6 text-xs select-none">
               <div class="w-full max-w-md rounded-2xl border border-amber-200/90 bg-white/95 p-5 shadow-xl shadow-amber-900/10 backdrop-blur-md dark:border-amber-700/80 dark:bg-gray-900/95">
                 <div class="flex items-center gap-2.5 border-b border-amber-100 pb-3 dark:border-gray-800">
-                  <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg dark:bg-amber-950/80">
-                    🛠️
-                  </div>
+                  <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg dark:bg-amber-950/80"><WrenchScrewdriverIcon class="h-5 w-5" aria-hidden="true" /></div>
                   <div>
                     <h3 class="text-xs font-bold text-gray-900 dark:text-gray-100">服务端浏览器环境未就绪</h3>
                     <p class="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">开启远程浏览器与网页自动化需在服务器安装相关组件（平台服务端依赖，请勿在用户沙箱内执行）</p>
@@ -1058,7 +1056,7 @@
                       <span>1. 安装 Python Playwright 依赖</span>
                       <button
                         type="button"
-                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/5 dark:text-primary dark:hover:bg-primary-dark/50"
                         @click="copyInstallCmd('pip install playwright')"
                       >
                         {{ copiedCmd === 'pip install playwright' ? '✓ 已复制' : '复制命令' }}
@@ -1074,7 +1072,7 @@
                       <span>2. 下载 Chromium 浏览器内核</span>
                       <button
                         type="button"
-                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/5 dark:text-primary dark:hover:bg-primary-dark/50"
                         @click="copyInstallCmd('playwright install chromium')"
                       >
                         {{ copiedCmd === 'playwright install chromium' ? '✓ 已复制' : '复制命令' }}
@@ -1086,7 +1084,7 @@
                   </div>
 
                   <div class="rounded-lg bg-amber-50/70 px-2.5 py-1.5 text-[10px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                    💡 Linux 生产环境若缺少系统底层依赖库，可补充执行：
+                     Linux 生产环境若缺少系统底层依赖库，可补充执行：
                     <code class="font-mono font-bold">playwright install-deps chromium</code>
                   </div>
 
@@ -1114,7 +1112,7 @@
                   </button>
                   <button
                     type="button"
-                    class="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-1.5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                    class="rounded-xl border border-primary/20 bg-primary/5 px-3.5 py-1.5 text-xs font-bold text-primary-dark shadow-sm hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover"
                     :disabled="browserInstallStatus === 'running'"
                     @click="installBrowserEnvironment"
                   >
@@ -1122,7 +1120,7 @@
                   </button>
                   <button
                     type="button"
-                    class="rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                    class="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-primary-dark active:scale-95 transition-all"
                     @click="emit('retry')"
                   >
                     已安装，重试连接
@@ -1131,8 +1129,8 @@
               </div>
             </div>
             <div v-else class="flex h-full min-h-56 items-center justify-center px-6 text-center text-xs text-gray-400">
-              <div class="w-full max-w-sm rounded-xl border border-sky-100 bg-white/80 p-5 shadow-sm dark:border-sky-900/60 dark:bg-gray-900/70">
-                <div class="mx-auto mb-4 h-2 w-32 animate-pulse rounded-full bg-sky-100 dark:bg-sky-900/60" />
+              <div class="w-full max-w-sm rounded-xl border border-sky-100 bg-white/80 p-5 shadow-sm dark:border-primary-dark/60 dark:bg-gray-900/70">
+                <div class="mx-auto mb-4 h-2 w-32 animate-pulse rounded-full bg-sky-100 dark:bg-primary-dark/60" />
                 <div class="mx-auto h-2 w-56 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
                 <div class="mx-auto mt-2 h-2 w-44 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
                 <div class="mt-4 font-semibold text-slate-600 dark:text-slate-300">{{ loadingStage }}</div>
@@ -1148,12 +1146,12 @@
             role="dialog"
             aria-label="人工输入"
           >
-            <div class="rounded-2xl border border-blue-300/90 bg-white/95 p-3.5 shadow-2xl shadow-blue-900/25 ring-4 ring-blue-500/15 backdrop-blur-md dark:border-blue-700/90 dark:bg-slate-900/95 dark:ring-blue-400/15">
+            <div class="rounded-2xl border border-primary/25 bg-white/95 p-3.5 shadow-2xl shadow-black/25 ring-4 ring-primary/15 backdrop-blur-md dark:border-primary-dark/90 dark:bg-slate-900/95 dark:ring-primary/15">
               <div class="flex items-center justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-800">
                 <div class="flex min-w-0 items-center gap-1.5">
-                  <span class="text-sm">✍️</span>
+                  <PencilSquareIcon class="h-4 w-4 text-gray-400" aria-hidden="true" />
                   <div class="text-xs font-bold text-gray-900 dark:text-gray-100">人工输入</div>
-                  <span v-if="selectedElement" class="truncate font-mono text-[10px] text-blue-600 dark:text-blue-400">
+                  <span v-if="selectedElement" class="truncate font-mono text-[10px] text-primary dark:text-primary">
                     [#{{ selectedElement.ref }}] {{ selectedElement.name ? `"${selectedElement.name}"` : selectedElement.role }}
                   </span>
                 </div>
@@ -1178,13 +1176,13 @@
                   v-model="manualText"
                   type="text"
                   autocomplete="off"
-                  class="min-w-0 flex-1 rounded-xl border border-blue-200 bg-blue-50/50 px-3 py-2 text-xs text-gray-800 outline-none transition-all focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-400/20 dark:border-blue-800 dark:bg-blue-950/30 dark:text-gray-100 dark:focus:bg-gray-900"
+                  class="min-w-0 flex-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-gray-800 outline-none transition-all focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20 dark:border-primary-dark dark:bg-primary-dark/30 dark:text-gray-100 dark:focus:bg-gray-900"
                   placeholder="输入文字，回车直接发送 (Esc 关闭)"
                   @keyup.enter="sendText"
                   @keydown.esc="showManualInput = false"
                 />
                 <button
-                  class="shrink-0 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                  class="shrink-0 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark active:scale-95 transition-all"
                   @click="sendText"
                 >
                   发送
@@ -1200,10 +1198,10 @@
             role="dialog"
             aria-label="区域截图与AI视觉分析"
           >
-            <div class="rounded-xl border border-purple-300 bg-white p-3.5 shadow-2xl shadow-purple-900/15 dark:border-purple-800 dark:bg-gray-900">
+            <div class="rounded-xl border border-primary/25 bg-white p-3.5 shadow-2xl shadow-black/40 dark:border-primary-dark dark:bg-gray-900">
               <div class="flex items-start justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-800">
                 <div class="flex items-center gap-1.5 text-xs font-bold text-gray-800 dark:text-gray-100">
-                  <span class="text-purple-600">✂️</span>
+                  <span class="text-primary">✂️</span>
                   <span>区域截图与 AI 视觉分析</span>
                 </div>
                 <button
@@ -1218,7 +1216,7 @@
               </div>
 
               <div class="mt-2.5 flex items-start gap-3">
-                <div class="relative shrink-0 overflow-hidden rounded-lg border border-purple-100 bg-slate-50 p-0.5 dark:border-purple-950 dark:bg-slate-950">
+                <div class="relative shrink-0 overflow-hidden rounded-lg border border-primary/10 bg-slate-50 p-0.5 dark:border-primary-dark dark:bg-slate-950">
                   <img :src="cropDataUrl" class="max-h-20 max-w-28 rounded object-contain" alt="选区截图" />
                 </div>
                 <div class="min-w-0 flex-1">
@@ -1226,14 +1224,14 @@
                   <div class="mt-2 flex flex-wrap gap-1.5">
                     <button
                       type="button"
-                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-purple-600"
+                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-primary/25 hover:bg-primary/5 hover:text-primary-dark dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-primary"
                       @click="copyCropImage"
                     >
                       {{ isCopied ? '✅ 已复制' : '📋 复制图片' }}
                     </button>
                     <button
                       type="button"
-                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-purple-600"
+                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-primary/25 hover:bg-primary/5 hover:text-primary-dark dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-primary"
                       @click="downloadCropImage"
                     >
                       ⬇️ 保存图片
@@ -1243,7 +1241,7 @@
                       class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
                       @click="reCrop"
                     >
-                      🔄 重新框选
+                       重新框选
                     </button>
                   </div>
                 </div>
@@ -1257,13 +1255,13 @@
                     v-model="cropQuestion"
                     type="text"
                     placeholder="向 AI 提问此画面内容，如：提取文字/分析图表"
-                    class="min-w-0 flex-1 rounded-md border border-purple-200 bg-purple-50/30 px-2.5 py-1.5 text-xs text-gray-800 outline-none focus:border-purple-400 dark:border-purple-900/60 dark:bg-purple-950/20 dark:text-gray-200"
+                    class="min-w-0 flex-1 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-xs text-gray-800 outline-none focus:border-primary dark:border-primary-dark/60 dark:bg-primary-dark/20 dark:text-gray-200"
                     @keyup.enter="askAiWithCrop"
                     @keydown.esc="cancelCrop"
                   />
                   <button
                     type="button"
-                    class="shrink-0 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 active:scale-95 disabled:opacity-50"
+                    class="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark active:scale-95 disabled:opacity-50"
                     :disabled="isAnalyzing"
                     @click="askAiWithCrop"
                   >
@@ -1277,14 +1275,14 @@
           <!-- 3. 底部常驻快捷键工具栏 (Bottom Quick Keys Bar) -->
           <footer class="flex h-8 shrink-0 items-center justify-between gap-1.5 border-t border-gray-200 bg-slate-50 px-2.5 dark:border-gray-800 dark:bg-slate-900/90">
             <div class="flex shrink-0 items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
-              <span class="font-bold">⌨️ 快捷键：</span>
+              <span class="font-bold"> 快捷键：</span>
             </div>
             <div class="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
               <button
                 v-for="item in quickKeys"
                 :key="item.key"
                 type="button"
-                class="shrink-0 rounded border border-gray-200/90 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-700 shadow-2xs hover:border-blue-300 hover:bg-blue-50/80 hover:text-blue-600 active:scale-95 active:bg-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-blue-500 dark:hover:bg-blue-950/50 dark:hover:text-blue-300"
+                class="shrink-0 rounded border border-gray-200/90 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-700 shadow-2xs hover:border-primary/25 hover:bg-primary/5 hover:text-primary active:scale-95 active:bg-primary/10 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-primary dark:hover:bg-primary-dark/50 dark:hover:text-primary-hover"
                 :title="item.tip"
                 :disabled="!snapshot || isSyncing"
                 @click="sendQuickKey(item.key, item.label)"
@@ -1300,6 +1298,18 @@
 </template>
 
 <script setup lang="ts">
+import { ExclamationTriangleIcon,
+  WrenchScrewdriverIcon,
+  GlobeAltIcon,
+  CursorArrowRaysIcon,
+  PencilSquareIcon,
+  ArrowPathIcon,
+  XMarkIcon,
+  NoSymbolIcon,
+  XCircleIcon,
+  ArrowRightOnRectangleIcon,
+  TrashIcon,
+} from "@heroicons/vue/24/outline";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 type ApprovalMode = 'guarded' | 'autopilot';
@@ -1415,7 +1425,7 @@ const aiActionInfo = computed(() => {
   return AI_ACTION_CONFIG[action] || {
     icon: '⚡',
     label: 'AI 正在操作中',
-    color: 'text-blue-600 dark:text-blue-400',
+    color: 'text-primary dark:text-primary',
   };
 });
 
@@ -1457,9 +1467,9 @@ const ACTION_SOURCE_META: Record<ActionTraceSource, { icon: string; label: strin
 const AI_ACTION_LABELS: Record<string, string> = {
   navigating: '🧭 打开页面',
   clicking: '🖱️ 点击元素',
-  filling: '⌨️ 填写输入框',
+  filling: ' 填写输入框',
   scrolling: '📜 滚动页面',
-  pressing: '⌨️ 发送按键',
+  pressing: ' 发送按键',
   selecting: '📋 选择选项',
   solving_captcha: '🧩 自动解算验证码',
   captcha_human_required: '🙋 验证码转人工',
@@ -1468,8 +1478,8 @@ const AI_ACTION_LABELS: Record<string, string> = {
 const HUMAN_ACTION_LABELS: Record<string, string> = {
   click: '🖱️ 点击',
   drag: '✋ 拖动',
-  key: '⌨️ 按键',
-  text: '⌨️ 输入',
+  key: ' 按键',
+  text: ' 输入',
   navigate: '🧭 导航',
   scroll: '📜 滚动',
   tab: '🗂️ 切换标签页',
@@ -1506,7 +1516,7 @@ const CAPTCHA_STAGE_LABELS: Record<string, string> = {
   recognized: '🎯 已识别目标',
   acting: '🖱️ 正在执行动作',
   dragged: '✅ 动作已执行',
-  verifying: '⏳ 正在校验',
+  verifying: ' 正在校验',
   still_captcha: '↻ 本轮未通过',
   retry: '🔁 准备重试',
   unrecognized: '❓ 识别失败',
@@ -1693,7 +1703,7 @@ const setHumanAction = (action: string, detail: string, keepDuration = 2500) => 
   // 人工操作同样留痕：与 AI 动作共用一条时间线，便于对照「谁做了什么」
   pushActionTrace({
     source: 'human',
-    label: HUMAN_ACTION_LABELS[action] || `🙋 ${action}`,
+    label: HUMAN_ACTION_LABELS[action] || String(action),
     detail,
   });
   // 用户已经开始人工处理验证：收起"AI 无法完成"的警示卡片，不要一直挡着画面
@@ -1867,13 +1877,13 @@ const fetchEnvironmentInfo = async (manual = false) => {
           const vMsg = data.chromium_version ? `Chromium v${data.chromium_version}` : 'Chromium 已就绪';
           const pMsg = data.playwright_version ? ` (Playwright ${data.playwright_version})` : '';
           setHumanAction('click', `环境就绪: ${vMsg}${pMsg}`);
-          remoteFocusMessage.value = `✅ 服务端浏览器环境就绪：${vMsg}${pMsg}`;
+          remoteFocusMessage.value = `服务端浏览器环境就绪：${vMsg}${pMsg}`;
           setTimeout(() => {
             if (remoteFocusMessage.value.includes('就绪')) remoteFocusMessage.value = '';
           }, 3000);
         } else {
           setHumanAction('click', `环境未就绪: ${data.error_detail || '缺少依赖'}`);
-          remoteFocusMessage.value = `⚠️ 服务端浏览器环境未就绪：${data.error_detail || '缺少依赖'}`;
+          remoteFocusMessage.value = `服务端浏览器环境未就绪：${data.error_detail || '缺少依赖'}`;
         }
       }
     }
@@ -2500,7 +2510,7 @@ const connect = async () => {
         }
       }
     } else if (payload.type === 'captcha_trace') {
-      // AI 解算过程：逐条累积，用户可点「🧭 操作过程」展开查看每一步
+      // AI 解算过程：逐条累积，用户可点「 操作过程」展开查看每一步
       pushActionTrace({
         source: 'captcha',
         at: payload.at,
@@ -2558,7 +2568,7 @@ const connect = async () => {
         // 追加进操作时间线：只覆盖 currentAiAction 会让历史动作全部丢失
         pushActionTrace({
           source: 'ai',
-          label: AI_ACTION_LABELS[String(payload.action)] || `🤖 ${payload.action}`,
+          label: AI_ACTION_LABELS[String(payload.action)] || String(payload.action),
           detail: String(payload.detail || ''),
         });
       } else {
@@ -3121,7 +3131,7 @@ const manualScroll = (direction: 'up' | 'down' | 'top' | 'bottom') => {
   setHumanAction('scroll', label);
   send({ type: 'scroll', direction, delta_y: deltaY });
   scheduleInteractionFinish();
-  setTemporaryMessage(`✅ 已${label}`, 1200);
+  setTemporaryMessage(`已${label}`, 1200);
 };
 
 // 悬浮滚动控制器拖拽状态与处理

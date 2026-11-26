@@ -25,7 +25,7 @@
           <input
             v-model="searchQuery"
             type="search"
-            class="w-48 rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-7 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+            class="w-48 rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-7 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
             placeholder="搜索报表名称、标签"
           />
           <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">⌕</span>
@@ -36,18 +36,18 @@
             :key="option.value"
             type="button"
             class="rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer"
-            :class="activeFilter === option.value ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-2xs dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300' : 'border-transparent bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'"
+            :class="activeFilter === option.value ? 'border-primary/20 bg-primary/5 text-primary-dark shadow-2xs dark:border-primary-dark/60 dark:bg-primary-dark/40 dark:text-primary-hover' : 'border-transparent bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'"
             @click="setFilter(option.value)"
           >
             {{ option.label }} {{ option.value === 'all' ? reports.length : (summary[option.value] || '') }}
           </button>
         </div>
 
-        <div v-if="!compact && manage" class="flex shrink-0 items-center rounded-lg border border-blue-100 bg-blue-50/70 p-0.5" aria-label="固化报表视图切换">
+        <div v-if="!compact && manage" class="flex shrink-0 items-center rounded-lg border border-primary/10 bg-primary/5 p-0.5" aria-label="固化报表视图切换">
           <button
             type="button"
             class="rounded-md px-2 py-1 text-xs font-semibold transition-colors"
-            :class="reportViewMode === 'card' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-blue-600'"
+            :class="reportViewMode === 'card' ? 'bg-white text-primary-dark shadow-sm' : 'text-gray-500 hover:text-primary'"
             :aria-pressed="reportViewMode === 'card'"
             aria-label="切换到卡片视图"
             title="切换到卡片视图"
@@ -58,13 +58,13 @@
           <button
             type="button"
             class="rounded-md px-2 py-1 text-xs font-semibold transition-colors"
-            :class="reportViewMode === 'list' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-blue-600'"
+            :class="reportViewMode === 'list' ? 'bg-white text-primary-dark shadow-sm' : 'text-gray-500 hover:text-primary'"
             :aria-pressed="reportViewMode === 'list'"
             aria-label="切换到列表视图"
             title="切换到列表视图"
             @click="setReportViewMode('list')"
           >
-            ☷ 列表
+             列表
           </button>
         </div>
 
@@ -72,7 +72,7 @@
         <button
           v-if="!compact"
           type="button"
-          class="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm shadow-blue-500/20 transition-all cursor-pointer"
+          class="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-lg shadow-sm shadow-primary/20 transition-all cursor-pointer"
           @click="emit('create-report')"
         >
           <span class="inline-flex items-center gap-1.5">
@@ -116,11 +116,11 @@
         v-for="report in pagedReports"
         :key="report.id"
         type="button"
-        class="min-h-[116px] rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 group cursor-pointer"
+        class="min-h-[116px] rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 group cursor-pointer"
         @click="emit('open-report', report)"
       >
         <div class="flex items-start justify-between gap-2">
-          <strong class="line-clamp-2 text-sm text-gray-900 dark:text-gray-100 group-hover:text-blue-600 transition-colors">
+          <strong class="line-clamp-2 text-sm text-gray-900 dark:text-gray-100 group-hover:text-primary transition-colors">
             {{ report.title }}
           </strong>
           <span
@@ -128,7 +128,7 @@
             class="shrink-0 text-amber-500 text-xs font-bold"
             title="已置顶"
           >
-            📌
+            
           </span>
         </div>
         <div class="mt-1 text-xs text-gray-400">
@@ -145,8 +145,8 @@
     <div v-if="!compact && filteredReports.length > pageSize" class="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:bg-gray-900">
       <span>共 {{ filteredReports.length }} 个报表 · 第 {{ currentPage }} / {{ pageCount }} 页</span>
       <div class="flex items-center gap-1.5">
-        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage <= 1" @click="currentPage -= 1">上一页</button>
-        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage >= pageCount" @click="currentPage += 1">下一页</button>
+        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-primary/25 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage <= 1" @click="currentPage -= 1">上一页</button>
+        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-primary/25 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage >= pageCount" @click="currentPage += 1">下一页</button>
       </div>
     </div>
     <div

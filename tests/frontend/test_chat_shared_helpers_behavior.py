@@ -312,7 +312,7 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert 'if (item.subagent || item.status === "error" || item.category === "tool_resolution") return false;' in timeline
     assert "🛠️" not in timeline
     assert ".thought-status-dot" in timeline
-    assert "shrink-0 truncate rounded-full border border-purple-100 bg-purple-50" in (
+    assert "shrink-0 truncate rounded-full border border-primary/10 bg-primary/5" in (
         ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue"
     ).read_text(encoding="utf-8")
 

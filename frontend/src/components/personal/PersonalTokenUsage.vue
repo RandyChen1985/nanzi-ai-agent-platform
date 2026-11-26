@@ -9,8 +9,8 @@
           type="button"
           class="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors"
           :class="activePreset === preset.key
-            ? 'bg-blue-600 text-white border-blue-600'
-            : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'"
+            ? 'bg-primary text-white border-primary'
+            : 'bg-white text-gray-600 border-gray-200 hover:border-primary/25 hover:text-primary'"
           @click="applyPreset(preset.key)"
         >
           {{ preset.label }}
@@ -22,7 +22,7 @@
           <input
             v-model="customStart"
             type="date"
-            class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+            class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary outline-none"
             @change="applyCustomRange"
           />
         </div>
@@ -31,7 +31,7 @@
           <input
             v-model="customEnd"
             type="date"
-            class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+            class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary outline-none"
             @change="applyCustomRange"
           />
         </div>
@@ -186,7 +186,7 @@
             >
               <td class="px-4 py-2.5 text-gray-900 font-medium">{{ row.date }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums text-gray-600">{{ formatNumber(row.calls) }}</td>
-              <td class="px-4 py-2.5 text-right tabular-nums text-sky-700" :title="formatTokenFull(row.prompt_tokens)">{{ formatTokenCompact(row.prompt_tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-primary-dark" :title="formatTokenFull(row.prompt_tokens)">{{ formatTokenCompact(row.prompt_tokens) }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums text-rose-700" :title="formatTokenFull(row.completion_tokens)">{{ formatTokenCompact(row.completion_tokens) }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-900" :title="formatTokenFull(row.total_tokens)">{{ formatTokenCompact(row.total_tokens) }}</td>
             </tr>
@@ -356,7 +356,7 @@ const quotaCardClass = computed(() => {
   if (!quotaStatus.value?.limit_tokens) return 'border-gray-100 bg-gray-50/80'
   if (quotaUsagePercent.value >= 100) return 'border-rose-200 bg-rose-50/80'
   if (quotaUsagePercent.value >= 80) return 'border-amber-200 bg-amber-50/80'
-  return 'border-blue-100 bg-blue-50/60'
+  return 'border-primary/10 bg-primary/5'
 })
 
 const quotaRemainingClass = computed(() => {
@@ -369,7 +369,7 @@ const quotaRemainingClass = computed(() => {
 const quotaProgressClass = computed(() => {
   if (quotaUsagePercent.value >= 100) return 'bg-rose-500'
   if (quotaUsagePercent.value >= 80) return 'bg-amber-500'
-  return 'bg-blue-500'
+  return 'bg-primary'
 })
 
 const formatDateInput = (date: Date) => {

@@ -28,8 +28,8 @@ def test_selector_exposes_visibility_badges():
     # 三档徽标与标签文案，和知识库管理页、权限配置页保持一致
     assert "授权可见" in page and "TEAM 级" in page and "个人私有" in page
     assert "scopeBadge(ds)" in page
-    assert "bg-blue-50 text-blue-600" in page      # 授权可见
-    assert "bg-violet-50 text-violet-600" in page  # TEAM 级
+    assert "bg-primary/5 text-primary" in page      # 授权可见
+    assert "bg-primary/5 text-primary" in page  # TEAM 级
     assert "bg-amber-50 text-amber-600" in page    # 个人私有
 
 

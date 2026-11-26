@@ -7,7 +7,7 @@
     >
       <span class="truncate text-[11.5px] text-gray-700" :title="row.name">{{ row.name }}</span>
       <div class="h-[7px] overflow-hidden rounded-full bg-slate-100">
-        <div class="h-full rounded-full bg-gradient-to-r from-blue-300 to-blue-500" :style="{ width: `${row.percent}%` }"></div>
+        <div class="h-full rounded-full bg-gradient-to-r from-primary/25 to-primary" :style="{ width: `${row.percent}%` }"></div>
       </div>
       <span class="text-right text-[11.5px] text-gray-400 tabular-nums">{{ row.label }}</span>
     </div>

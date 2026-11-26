@@ -564,7 +564,7 @@ export function handleModelFallbackEvent<T extends AgentStreamMessage>(
   const fallbackModel = String(data.fallback_model || "unknown");
   const notice = String(
     data.content ||
-      `> ⚠️ 主模型 \`${primaryModel}\` 调用失败，本次回答由 fallback 模型 \`${fallbackModel}\` 生成。\n\n`,
+      `> 主模型 \`${primaryModel}\` 调用失败，本次回答由 fallback 模型 \`${fallbackModel}\` 生成。\n\n`,
   );
   if (!notice || msg.fallbackNotice === notice.trim()) return;
 

@@ -5,9 +5,9 @@
     :disabled="disabled || loading"
     :aria-busy="loading"
     :class="[
-      modelValue ? 'bg-blue-600' : 'bg-gray-200',
+      modelValue ? 'bg-primary' : 'bg-gray-200',
       disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
-      'relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2'
+      'relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2'
     ]"
     role="switch"
     :aria-checked="modelValue"
@@ -23,7 +23,7 @@
     <svg
       v-if="loading"
       class="absolute inset-0 m-auto h-4 w-4 animate-spin"
-      :class="modelValue ? 'text-white' : 'text-blue-600'"
+      :class="modelValue ? 'text-white' : 'text-primary'"
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"

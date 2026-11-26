@@ -33,7 +33,7 @@ function toggle() {
     :class="
       props.tone === 'pending'
         ? 'border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20'
-        : 'border-sky-200/80 bg-sky-50/50 dark:border-sky-900/50 dark:bg-sky-950/20'
+        : 'border-sky-200/80 bg-sky-50/50 dark:border-primary-dark/50 dark:bg-primary-dark/20'
     "
     :data-question-body-block="props.tone === 'pending' ? 'pending' : 'progress'"
   >
@@ -49,7 +49,7 @@ function toggle() {
         :class="
           props.tone === 'pending'
             ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
-            : 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300'
+            : 'bg-sky-100 text-primary-dark dark:bg-primary-dark/50 dark:text-sky-300'
         "
       >{{ props.label }}</span>
       <svg

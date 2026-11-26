@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MagnifyingGlassIcon } from "@heroicons/vue/24/outline";
 import { ref } from "vue";
 import { copyToClipboard } from "@/utils/clipboard";
 import type { StreamErrorAIStatus } from "@/utils/streamErrorPresentation";
@@ -34,7 +35,7 @@ const handleCopy = async (rawError: string) => {
   >
     <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-medium transition-colors hover:text-primary focus:outline-none [&::-webkit-details-marker]:hidden">
       <span class="inline-flex items-center gap-1.5">
-        <span aria-hidden="true">🔎</span>
+        <MagnifyingGlassIcon class="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
         查看技术详情
       </span>
       <span class="text-[10px] text-gray-400 dark:text-gray-500">可复制</span>

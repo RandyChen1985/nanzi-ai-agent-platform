@@ -7,7 +7,7 @@
       aria-hidden="true"
     >
       <div
-        class="h-full w-1/3 rounded-full bg-blue-500"
+        class="h-full w-1/3 rounded-full bg-primary"
         :class="refreshing ? 'animate-pulse' : ''"
       />
     </div>
@@ -17,7 +17,7 @@
         <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900 dark:text-gray-100">我的工作台</h1>
         <button
           type="button"
-          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-primary/5 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-primary"
           :disabled="busy"
           :aria-busy="busy"
           :aria-label="
@@ -146,7 +146,7 @@
               class="rounded-xl border border-gray-200/80 bg-white px-6 py-8 text-center shadow-xs dark:border-gray-800 dark:bg-gray-900/40"
             >
               <span
-                class="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+                class="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
                 aria-hidden="true"
               >
                 <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -178,7 +178,7 @@
                 </button>
                 <button
                   type="button"
-                  class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] font-semibold text-gray-700 hover:border-blue-200 hover:text-blue-600 active:scale-95 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                  class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] font-semibold text-gray-700 hover:border-primary/20 hover:text-primary active:scale-95 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                   @click="openChat"
                 >
                   打开智能助手

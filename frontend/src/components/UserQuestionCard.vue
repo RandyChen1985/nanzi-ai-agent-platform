@@ -137,12 +137,12 @@ async function cancel() {
 <template>
   <!-- UserQuestionCard is an AI-initiated question, not a business confirmation. -->
   <section
-    class="mt-2.5 w-full min-w-0 max-w-[42rem] lg:max-w-[48rem] 2xl:max-w-[52rem] rounded-xl border border-violet-200/90 bg-violet-50/60 p-2.5 sm:p-3 text-xs text-violet-950 shadow-sm dark:border-violet-900/40 dark:bg-violet-950/20 dark:text-violet-100 transition-all"
+    class="mt-2.5 w-full min-w-0 max-w-[42rem] lg:max-w-[48rem] 2xl:max-w-[52rem] rounded-xl border border-gray-200 border-l-[3px] border-l-primary bg-white p-2.5 sm:p-3 text-xs text-gray-900 shadow-sm dark:border-gray-700 dark:border-l-primary dark:bg-gray-900/90 dark:text-gray-100 transition-all"
     role="group"
     :aria-label="props.summaryRendered ? '需要你的补充' : payload.question || 'AI 提问'"
   >
     <div class="flex items-start gap-2 sm:gap-2.5">
-      <div class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+      <div class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary">
         <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 9.75h7.5m-7.5 3h4.5m-8.25 7.5 2.16-4.32A8.25 8.25 0 1 1 12 20.25c-1.8 0-3.46-.58-4.8-1.57Z" />
         </svg>
@@ -155,17 +155,17 @@ async function cancel() {
           @click="toggleExpand"
         >
           <div class="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
-            <span class="font-bold text-violet-900 dark:text-violet-100 text-xs shrink-0">需要你的补充</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100 text-xs shrink-0">需要你的补充</span>
             <!-- 子智能体发起的提问：标清来源，否则用户以为父智能体在问 -->
             <span
               v-if="sourceLabel"
-              class="shrink-0 rounded-full border border-violet-300/70 bg-violet-100/80 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-800 dark:bg-violet-900/40 dark:text-violet-300"
+              class="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
               title="由子智能体发起，回答后会接着它的进度继续"
             >来自：{{ sourceLabel }}</span>
             <!-- Collapsed summary preview -->
             <span
               v-if="!expanded && payload.question && !props.summaryRendered"
-              class="min-w-0 flex-1 truncate text-[11px] text-violet-700/70 dark:text-violet-300/70 font-normal"
+              class="min-w-0 flex-1 truncate text-[11px] text-gray-500 dark:text-gray-400 font-normal"
             >
               {{ payload.question }}
             </span>
@@ -174,16 +174,16 @@ async function cancel() {
             <span
               class="rounded-full px-2 py-0.5 text-[10px] font-medium leading-none"
               :class="{
-                'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300': payload.status === 'pending',
-                'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': payload.status === 'submitted',
-                'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300': payload.status === 'cancelled',
+                'bg-primary/10 text-primary dark:bg-primary/20 dark:text-blue-300': payload.status === 'pending',
+                'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': payload.status === 'submitted',
+                'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300': payload.status === 'cancelled',
                 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': payload.status === 'stale',
               }"
             >{{ statusLabel }}</span>
             <!-- Fold / Unfold Arrow -->
             <button
               type="button"
-              class="flex h-5 w-5 items-center justify-center rounded text-violet-500 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-200 transition-colors"
+              class="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               :aria-label="expanded ? '收起提问' : '展开提问'"
               @click.stop="toggleExpand"
             >
@@ -204,10 +204,10 @@ async function cancel() {
         <div v-show="expanded" class="mt-2 space-y-2">
           <!-- Question & Context：正文已用「任务进度 / 待你确认」小节展示过时不再重复一遍 -->
           <div v-if="!props.summaryRendered">
-            <p class="break-words text-xs sm:text-[13px] font-semibold text-violet-950 dark:text-violet-100 leading-snug">
+            <p class="break-words text-xs sm:text-[13px] font-semibold text-gray-900 dark:text-gray-100 leading-snug">
               {{ payload.question }}
             </p>
-            <p v-if="payload.context" class="mt-0.5 break-words text-[11px] text-violet-800/80 dark:text-violet-200/80 leading-normal">
+            <p v-if="payload.context" class="mt-0.5 break-words text-[11px] text-gray-500 dark:text-gray-400 leading-normal">
               {{ payload.context }}
             </p>
           </div>
@@ -222,8 +222,8 @@ async function cancel() {
               :class="option.disabled
                 ? 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50/70 opacity-60 dark:border-gray-800 dark:bg-gray-950/20'
                 : selectedOptionIds.includes(option.id)
-                  ? 'border-violet-500 bg-white dark:bg-violet-950/40 shadow-xs ring-1 ring-violet-400/40'
-                  : 'border-violet-100/90 bg-white/75 hover:bg-white hover:border-violet-300 dark:border-violet-900/30 dark:bg-gray-950/30 dark:hover:bg-gray-950/50 dark:hover:border-violet-800'"
+                  ? 'border-primary bg-primary/[0.04] dark:bg-primary/15 shadow-xs ring-1 ring-primary/25'
+                  : 'border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900/50 dark:hover:bg-gray-800/80 dark:hover:border-gray-600'"
               :disabled="locked || option.disabled"
               :title="option.disabled ? (option.description || '当前不可选') : undefined"
               @click="toggleOption(option.id)"
@@ -234,8 +234,8 @@ async function cancel() {
                 :class="[
                   payload.is_multi_select ? 'rounded-[3px]' : 'rounded-full',
                   !option.disabled && selectedOptionIds.includes(option.id)
-                    ? 'border-violet-600 bg-violet-600 dark:border-violet-500 dark:bg-violet-500'
-                    : 'border-violet-300 bg-transparent group-hover/opt:border-violet-400 dark:border-violet-700'
+                    ? 'border-primary bg-primary'
+                    : 'border-gray-300 bg-transparent group-hover/opt:border-primary/60 dark:border-gray-600'
                 ]"
               >
                 <!-- Tick for multi, dot for single -->
@@ -258,7 +258,7 @@ async function cancel() {
                 <span
                   class="block text-xs font-medium transition-colors"
                   :class="selectedOptionIds.includes(option.id)
-                    ? 'text-violet-950 font-semibold dark:text-violet-100'
+                    ? 'text-gray-900 font-semibold dark:text-white'
                     : 'text-gray-800 dark:text-gray-200'"
                 >
                   {{ option.label }}
@@ -278,7 +278,7 @@ async function cancel() {
             v-if="payload.allow_custom_input"
             v-model="customInput"
             rows="1"
-            class="w-full rounded-lg border border-violet-200/80 bg-white/90 px-2.5 py-1.5 text-xs text-gray-800 outline-none transition-all placeholder:text-gray-400 focus:border-violet-500 focus:bg-white focus:ring-1 focus:ring-violet-400 disabled:cursor-not-allowed disabled:bg-gray-50 dark:border-violet-900/50 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-violet-500"
+            class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-800 outline-none transition-all placeholder:text-gray-400 focus:border-primary focus:bg-white focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-primary"
             :disabled="locked"
             placeholder="也可以补充说明（可选）"
           />
@@ -287,7 +287,7 @@ async function cancel() {
           <div v-if="payload.status === 'pending'" class="flex items-center gap-2 pt-0.5">
             <button
               type="button"
-              class="inline-flex items-center rounded-md bg-violet-600 px-3 py-1 text-xs font-semibold text-white shadow-xs hover:bg-violet-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
+              class="inline-flex items-center rounded-md bg-primary px-3 py-1 text-xs font-semibold text-white shadow-xs hover:bg-primary-dark active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
               :disabled="locked || isSubmitting || (!selectedOptionIds.length && !customInput.trim())"
               @click="submit"
             >
@@ -295,7 +295,7 @@ async function cancel() {
             </button>
             <button
               type="button"
-              class="inline-flex items-center rounded-md border border-violet-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-800 dark:bg-gray-900/40 dark:text-violet-200 dark:hover:bg-violet-900/40 transition-all"
+              class="inline-flex items-center rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300 dark:hover:bg-gray-800 transition-all"
               :disabled="locked || isSubmitting"
               @click="cancel"
             >

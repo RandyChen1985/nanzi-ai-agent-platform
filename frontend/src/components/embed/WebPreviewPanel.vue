@@ -72,7 +72,7 @@
 
           <header class="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/20">
             <div class="flex min-w-0 items-center gap-2">
-              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300" aria-hidden="true">🌐</span>
+              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary-dark/40 dark:text-primary-hover" aria-hidden="true"><GlobeAltIcon class="h-4 w-4" aria-hidden="true" /></span>
               <div class="min-w-0">
                 <h2 class="truncate text-sm font-bold text-gray-900 dark:text-gray-100">网页预览</h2>
                 <p class="truncate text-[10px] text-gray-400">直接加载网页，不启用后端浏览器自动化</p>
@@ -84,7 +84,7 @@
                 :href="safeUrl"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5 dark:text-primary-hover dark:hover:bg-primary-dark/40"
                 @click="handleOpenInNewTab"
               >
                 <span>在新窗口打开</span>
@@ -97,7 +97,7 @@
               <button
                 v-if="!isMobile && !pinned"
                 type="button"
-                class="rounded-md px-2 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-300"
+                class="rounded-md px-2 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-primary dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-primary-hover"
                 :title="isMaximized ? '退出最大化' : '最大化查看网页'"
                 :aria-label="isMaximized ? '退出最大化' : '最大化查看网页'"
                 @click="isMaximized = !isMaximized"
@@ -107,8 +107,8 @@
               <button
                 v-if="!isMobile"
                 type="button"
-                class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-300"
-                :class="pinned ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300' : ''"
+                class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800 dark:hover:text-primary-hover"
+                :class="pinned ? 'bg-primary/5 text-primary dark:bg-primary/10 dark:text-primary-hover' : ''"
                 :title="pinButtonTitle"
                 :aria-label="pinned ? '取消钉住' : '钉住侧栏'"
                 @click="pinned = !pinned"
@@ -136,7 +136,7 @@
             <span v-else class="min-w-0 flex-1 text-xs text-gray-400">没有可预览的 HTTP(S) 地址</span>
             <span
               v-if="safeUrl && probing"
-              class="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
+              class="shrink-0 rounded-full bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary dark:bg-primary-dark/40 dark:text-primary-hover"
               title="正在由后端实测目标站点的响应头；实测期间先按可内嵌展示，避免误拦"
             >
               实测内嵌策略中…
@@ -145,7 +145,7 @@
               <span>缩放</span>
               <select
                 v-model="previewZoom"
-                class="rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-gray-600 outline-none hover:border-blue-300 focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                class="rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-gray-600 outline-none hover:border-primary/25 focus:border-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
                 aria-label="网页缩放比例"
                 title="调整网页显示比例，解决固定宽度网页的横向溢出"
                 @change="savePreviewZoom"
@@ -156,7 +156,7 @@
               <button
                 v-if="previewZoom !== 'auto'"
                 type="button"
-                class="rounded-md px-1.5 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                class="rounded-md px-1.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/5 dark:text-primary-hover dark:hover:bg-primary-dark/40"
                 title="恢复为铺满窗口的自动适配比例"
                 @click="setAutoZoom"
               >
@@ -166,7 +166,7 @@
             <button
               v-if="safeUrl"
               type="button"
-              class="shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-white hover:text-blue-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-300"
+              class="shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-white hover:text-primary dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-primary-hover"
               title="重新加载网页"
               @click="reload"
             >
@@ -218,7 +218,7 @@
                     :href="safeUrl"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 active:scale-[0.99] dark:bg-blue-500 dark:hover:bg-blue-400"
+                    class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-hover active:scale-[0.99] dark:bg-primary dark:hover:bg-primary"
                     @click="handleOpenInNewTab"
                   >
                     <span>在新标签页打开网页</span>
@@ -237,7 +237,7 @@
                   </button>
                   <button
                     type="button"
-                    class="text-[11px] font-semibold text-blue-600 transition hover:text-blue-500 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-blue-300 dark:hover:text-blue-200"
+                    class="text-[11px] font-semibold text-primary transition hover:text-primary-dark disabled:cursor-not-allowed disabled:text-gray-400 dark:text-primary-hover dark:hover:text-primary-hover"
                     :disabled="probing"
                     title="忽略缓存，重新由后端实测目标站点的响应头"
                     @click="recheckEmbed"
@@ -262,12 +262,12 @@
                 />
               </div>
               <div class="flex shrink-0 items-center justify-between border-t border-gray-100 bg-gray-50/80 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
-                <span class="truncate">💡 若页面显示空白或拒绝连接，说明目标网站限制了内嵌</span>
+                <span class="truncate">若页面显示空白或拒绝连接，说明目标网站限制了内嵌</span>
                 <a
                   :href="safeUrl"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="shrink-0 font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  class="shrink-0 font-medium text-primary hover:underline dark:text-primary"
                   @click="handleOpenInNewTab"
                 >
                   在新窗口打开 ↗
@@ -285,6 +285,7 @@
 </template>
 
 <script setup lang="ts">
+import { GlobeAltIcon } from "@heroicons/vue/24/outline";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
 import {

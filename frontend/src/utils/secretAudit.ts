@@ -32,16 +32,16 @@ export const SECRET_ACTION_LABEL: Record<string, string> = {
 export const SECRET_ACTION_FALLBACK_STYLE = 'bg-white text-gray-600 ring-gray-200'
 
 export const SECRET_ACTION_STYLE: Record<string, string> = {
-  create: 'bg-blue-50 text-blue-700 ring-blue-100',
+  create: 'bg-primary/5 text-primary-dark ring-primary/10',
   update: 'bg-slate-100 text-slate-600 ring-slate-200',
   rotate: 'bg-amber-50 text-amber-700 ring-amber-100',
   // 删除不可恢复，颜色之外再加粗，扫列表时第一眼就能挑出来
   delete: 'bg-rose-50 text-rose-700 ring-rose-200 font-semibold',
   disable: 'bg-gray-100 text-gray-600 ring-gray-200',
   enable: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
-  grant: 'bg-violet-50 text-violet-700 ring-violet-100',
+  grant: 'bg-primary/5 text-primary-dark ring-primary/10',
   revoke: 'bg-orange-50 text-orange-700 ring-orange-100',
-  bind: 'bg-teal-50 text-teal-700 ring-teal-100',
+  bind: 'bg-teal-50 text-teal-700 dark:text-teal-300 ring-teal-100',
   unbind: 'bg-orange-50 text-orange-600 ring-orange-100',
 }
 

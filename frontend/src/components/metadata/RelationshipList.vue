@@ -582,10 +582,10 @@ const initOrUpdateGraph = () => {
                   <div class="text-[10px] text-gray-400 mt-1 font-mono">${meta.datasetName}</div>`;
         } else if (params.dataType === "edge") {
           const rel = params.data.relData;
-          return `<div class="font-bold text-xs text-purple-600">${formatRelationshipJoinTypeLabel(rel.join_type)}</div>
+          return `<div class="font-bold text-xs text-primary">${formatRelationshipJoinTypeLabel(rel.join_type)}</div>
                   <div class="text-xs font-mono text-gray-800 mt-1 bg-gray-100 p-1.5 rounded">${rel.join_condition}</div>
                   ${rel.description ? `<div class="text-xs text-gray-500 mt-1">${rel.description}</div>` : ""}
-                  <div class="text-[10px] text-blue-500 mt-1.5">点击此连线可直接编辑</div>`;
+                  <div class="text-[10px] text-primary mt-1.5">点击此连线可直接编辑</div>`;
         }
         return "";
       },
@@ -661,7 +661,7 @@ onUnmounted(() => {
             :checked="isAllRelsSelected"
             :indeterminate="isSomeRelsSelected"
             @change="toggleSelectAllRels"
-            class="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500 cursor-pointer"
+            class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/30 cursor-pointer"
           />
           <span>全选</span>
         </label>
@@ -674,7 +674,7 @@ onUnmounted(() => {
           <input 
             v-model="searchQuery" 
             type="search"
-            class="block w-full pl-9 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 transition-all focus:bg-white" 
+            class="block w-full pl-9 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary transition-all focus:bg-white" 
             placeholder="搜索源表/目标表/字段/描述..."
           >
         </div>
@@ -691,7 +691,7 @@ onUnmounted(() => {
           <button 
             type="button"
             @click="setViewMode('cards')"
-            :class="[viewMode === 'cards' ? 'bg-white text-purple-700 font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
+            :class="[viewMode === 'cards' ? 'bg-white text-primary font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
             title="主表聚合卡片视图"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
@@ -700,7 +700,7 @@ onUnmounted(() => {
           <button 
             type="button"
             @click="setViewMode('list')"
-            :class="[viewMode === 'list' ? 'bg-white text-purple-700 font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
+            :class="[viewMode === 'list' ? 'bg-white text-primary font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
             title="结构化详细列表"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -709,7 +709,7 @@ onUnmounted(() => {
           <button 
             type="button"
             @click="setViewMode('graph')"
-            :class="[viewMode === 'graph' ? 'bg-white text-purple-700 font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
+            :class="[viewMode === 'graph' ? 'bg-white text-primary font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
             title="内置交互式 ER 拓扑图谱"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
@@ -718,7 +718,7 @@ onUnmounted(() => {
         </div>
 
         <div v-if="selectedRelIds.length > 0 && hasPermission('element:metadata:edit')" class="flex items-center gap-2">
-          <span class="text-xs bg-purple-50 text-purple-700 px-2.5 py-1 rounded-full font-bold border border-purple-200">
+          <span class="text-xs bg-primary/10 text-primary px-2.5 py-1 rounded-full font-bold border border-primary/25">
             已选 {{ selectedRelIds.length }} 项
           </span>
           <button 
@@ -733,7 +733,7 @@ onUnmounted(() => {
         <button
           v-if="hasPermission('element:metadata:edit')"
           @click="showSmartRelModal = true"
-          class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
+          class="bg-primary hover:bg-primary-dark text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
           title="基于字段语义与既有关联，由 AI 智能推断可能的 FK / Join 关系"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
@@ -742,7 +742,7 @@ onUnmounted(() => {
         <button
           v-if="hasPermission('element:metadata:edit')"
           @click="openCreate()"
-          class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
+          class="bg-primary hover:bg-primary-dark text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           新建关系
@@ -761,26 +761,26 @@ onUnmounted(() => {
 
     <!-- Loading State -->
     <div v-if="loading" class="flex justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
     </div>
 
     <!-- Empty State -->
     <div
       v-else-if="relationships.length === 0"
-      class="text-center py-12 bg-purple-50/40 rounded-xl border border-dashed border-purple-200"
+      class="text-center py-12 bg-primary/10 rounded-xl border border-dashed border-primary/25"
     >
-      <div class="w-12 h-12 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mx-auto mb-3">
+      <div class="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
       </div>
-      <p class="text-purple-900 font-bold text-base">暂无定义的实体关系</p>
-      <p class="text-xs text-purple-600/80 mt-1 max-w-md mx-auto">
+      <p class="text-primary font-bold text-base">暂无定义的实体关系</p>
+      <p class="text-xs text-primary/80 mt-1 max-w-md mx-auto">
         定义数据表之间的 Join 路径与主外键逻辑，让 AI 智能体掌握跨表分析与多维关联。
       </p>
       <div class="flex items-center justify-center gap-3">
         <button 
           v-if="hasPermission('element:metadata:edit')"
           @click="showSmartRelModal = true"
-          class="mt-4 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all inline-flex items-center gap-1.5"
+          class="mt-4 px-4 py-1.5 bg-primary text-white rounded-lg text-xs font-bold shadow-sm hover:bg-primary-dark transition-all inline-flex items-center gap-1.5"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
           智能发现关系
@@ -796,9 +796,9 @@ onUnmounted(() => {
         class="bg-white rounded-xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all overflow-hidden"
       >
         <!-- Group Header (Source Table) -->
-        <div class="px-5 py-3.5 bg-gradient-to-r from-purple-50/60 via-indigo-50/40 to-white border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+        <div class="px-5 py-3.5 bg-gray-50/70 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg bg-white border border-purple-100 shadow-2xs flex items-center justify-center text-purple-600 font-mono font-bold text-sm">
+            <div class="w-8 h-8 rounded-lg bg-white border border-primary/25 shadow-2xs flex items-center justify-center text-primary font-mono font-bold text-sm">
               <CircleStackIcon class="w-4 h-4" />
             </div>
             <div>
@@ -814,13 +814,13 @@ onUnmounted(() => {
           </div>
 
           <div class="flex items-center gap-2">
-            <span class="text-xs bg-purple-100/70 text-purple-700 px-2.5 py-0.5 rounded-full font-bold">
+            <span class="text-xs bg-primary/10 text-primary px-2.5 py-0.5 rounded-full font-bold">
               {{ group.relationships.length }} 个分支
             </span>
             <button 
               v-if="hasPermission('element:metadata:edit')"
               @click="openCreate(group.tableId)"
-              class="text-xs text-purple-600 hover:text-purple-800 bg-white hover:bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1"
+              class="text-xs text-primary hover:text-primary-dark bg-white hover:bg-primary/20 border border-primary/25 px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1"
               title="为此表添加新的关联分支"
             >
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -834,7 +834,7 @@ onUnmounted(() => {
           <div 
             v-for="r in group.relationships" 
             :key="r.id"
-            :class="['p-3.5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white', r.id && selectedRelIds.includes(r.id) ? 'border-purple-400 ring-2 ring-purple-100 shadow-sm' : 'border-gray-100 hover:border-purple-200 hover:shadow-xs']"
+            :class="['p-3.5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white', r.id && selectedRelIds.includes(r.id) ? 'border-primary ring-2 ring-primary/20 shadow-sm' : 'border-gray-100 hover:border-primary/40 hover:shadow-xs']"
           >
             <!-- Left: Checkbox + Field flow -->
             <div class="flex items-center gap-3 flex-1 min-w-0">
@@ -843,15 +843,15 @@ onUnmounted(() => {
                   type="checkbox" 
                   :checked="selectedRelIds.includes(r.id)"
                   @change="toggleSelectRel(r.id)"
-                  class="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500 cursor-pointer"
+                  class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/30 cursor-pointer"
                 />
               </div>
 
               <!-- Flow Visual -->
               <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <!-- Source Field -->
-                <div class="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-800 font-mono text-xs font-bold flex items-center gap-1.5 shrink-0">
-                  <KeyIcon class="w-3 h-3 text-purple-400" />
+                <div class="px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/25 text-primary font-mono text-xs font-bold flex items-center gap-1.5 shrink-0">
+                  <KeyIcon class="w-3 h-3 text-primary" />
                   <span>{{ parseJoinFields(r.join_condition).sourceField || '字段' }}</span>
                 </div>
 
@@ -861,7 +861,7 @@ onUnmounted(() => {
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200/80 whitespace-nowrap">
                     {{ formatRelationshipJoinTypeLabel(r.join_type) }}
                   </span>
-                  <svg class="w-4 h-4 text-purple-500 -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                  <svg class="w-4 h-4 text-primary -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                 </div>
 
                 <!-- Target Table & Field -->
@@ -872,15 +872,15 @@ onUnmounted(() => {
                     ({{ getTableMeta(r.target_table_id).term }})
                   </span>
                   <span class="text-emerald-600 font-bold">.</span>
-                  <span class="text-emerald-900 font-black">{{ parseJoinFields(r.join_condition).targetField || 'id' }}</span>
-                  <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-0.2 text-[9px] font-bold bg-amber-200/80 text-amber-800 rounded">
+                  <span class="text-emerald-900 font-bold">{{ parseJoinFields(r.join_condition).targetField || 'id' }}</span>
+                  <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-px text-[9px] font-bold bg-amber-200/80 text-amber-800 rounded">
                     跨库: {{ getTableMeta(r.target_table_id).datasetName }}
                   </span>
                 </div>
 
                 <!-- Description / SQL Tag -->
                 <div v-if="r.description" class="text-xs text-gray-400 truncate max-w-xs ml-2 hidden lg:inline" :title="r.description">
-                  📝 {{ r.description }}
+                  {{ r.description }}
                 </div>
               </div>
             </div>
@@ -889,7 +889,7 @@ onUnmounted(() => {
             <div class="flex items-center gap-2 shrink-0 self-end md:self-center">
               <button 
                 @click="openEdit(r)"
-                class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                class="p-1.5 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
                 title="编辑关系"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -920,7 +920,7 @@ onUnmounted(() => {
                   :checked="isAllRelsSelected"
                   :indeterminate="isSomeRelsSelected"
                   @change="toggleSelectAllRels"
-                  class="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500 cursor-pointer"
+                  class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/30 cursor-pointer"
                 />
               </th>
               <th class="py-3 px-4">源表 (Left)</th>
@@ -935,19 +935,19 @@ onUnmounted(() => {
             <tr 
               v-for="r in filteredRelationships" 
               :key="r.id"
-              :class="['hover:bg-purple-50/30 transition-colors', r.id && selectedRelIds.includes(r.id) ? 'bg-purple-50/50' : '']"
+              :class="['hover:bg-primary/5 transition-colors', r.id && selectedRelIds.includes(r.id) ? 'bg-primary/10' : '']"
             >
               <td v-if="hasPermission('element:metadata:edit')" class="py-3 px-3 text-center" @click.stop>
                 <input 
                   type="checkbox" 
                   :checked="selectedRelIds.includes(r.id!)"
                   @change="toggleSelectRel(r.id!)"
-                  class="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500 cursor-pointer"
+                  class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/30 cursor-pointer"
                 />
               </td>
               <td class="py-2.5 px-4 font-mono">
                 <div class="flex items-start gap-1.5">
-                  <CircleStackIcon class="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                  <CircleStackIcon class="w-4 h-4 text-primary shrink-0 mt-0.5" />
                   <div class="min-w-0">
                     <div class="font-bold text-gray-900 leading-snug">
                       {{ getTableMeta(r.source_table_id).physical_name }}
@@ -959,7 +959,7 @@ onUnmounted(() => {
                 </div>
               </td>
               <td class="py-2.5 px-3 text-center">
-                <span class="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded text-[11px] font-bold">
+                <span class="px-2 py-0.5 bg-primary/10 text-primary border border-primary/25 rounded text-[11px] font-bold">
                   {{ formatRelationshipJoinTypeLabel(r.join_type) }}
                 </span>
               </td>
@@ -971,7 +971,7 @@ onUnmounted(() => {
                       <span class="font-bold text-gray-900 leading-snug">
                         {{ getTableMeta(r.target_table_id).physical_name }}
                       </span>
-                      <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-0.2 text-[9px] font-sans font-bold bg-amber-100 text-amber-700 rounded border border-amber-200 shrink-0">
+                      <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-px text-[9px] font-sans font-bold bg-amber-100 text-amber-700 rounded border border-amber-200 shrink-0">
                         跨库
                       </span>
                     </div>
@@ -997,7 +997,7 @@ onUnmounted(() => {
                 <div class="flex items-center justify-end gap-1.5">
                   <button 
                     @click="openEdit(r)"
-                    class="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                    class="p-1 text-gray-400 hover:text-primary hover:bg-primary/5 rounded transition-colors"
                     title="编辑关系"
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -1022,7 +1022,7 @@ onUnmounted(() => {
     <div v-else-if="viewMode === 'graph'" class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
       <div class="flex items-center justify-between text-xs text-gray-500 px-1 border-b pb-2">
         <div class="flex items-center gap-4">
-          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block"></span> 事实表 (fact_*)</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-primary inline-block"></span> 事实表 (fact_*)</span>
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> 维度表 (dim_*)</span>
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> 跨库关联表</span>
         </div>
@@ -1042,7 +1042,7 @@ onUnmounted(() => {
           class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 animate-fade-in-up"
         >
           <div
-            class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50"
+            class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/10"
           >
             <h3 class="font-bold text-gray-900">
               {{ editingId ? "编辑实体关系" : "新建实体关系" }}
@@ -1141,7 +1141,7 @@ onUnmounted(() => {
                     type="radio"
                     v-model="form.join_type"
                     value="left"
-                    class="text-purple-600 focus:ring-purple-500"
+                    class="text-primary focus:ring-primary/30"
                   />
                   <span class="text-sm">Left Join · One to Many (1:N)</span>
                 </label>
@@ -1150,7 +1150,7 @@ onUnmounted(() => {
                     type="radio"
                     v-model="form.join_type"
                     value="inner"
-                    class="text-purple-600 focus:ring-purple-500"
+                    class="text-primary focus:ring-primary/30"
                   />
                   <span class="text-sm">Inner Join</span>
                 </label>
@@ -1159,7 +1159,7 @@ onUnmounted(() => {
                     type="radio"
                     v-model="form.join_type"
                     value="one_to_one"
-                    class="text-purple-600 focus:ring-purple-500"
+                    class="text-primary focus:ring-primary/30"
                   />
                   <span class="text-sm">One to One</span>
                 </label>
@@ -1175,7 +1175,7 @@ onUnmounted(() => {
               >
               <input
                 v-model="form.join_condition"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary/30 focus:outline-none"
                 placeholder="e.g. t1.user_id = t2.id"
               />
               <p class="text-xs text-gray-400 mt-1">使用表别名或完整表名均可。</p>
@@ -1188,7 +1188,7 @@ onUnmounted(() => {
               <textarea
                 v-model="form.description"
                 rows="2"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 focus:outline-none"
               ></textarea>
             </div>
           </div>
@@ -1202,7 +1202,7 @@ onUnmounted(() => {
             <button
               @click="handleSave"
               :disabled="saving"
-              class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50"
+              class="px-6 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50"
             >
               保存
             </button>
@@ -1326,17 +1326,5 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out;
-}
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+
 </style>

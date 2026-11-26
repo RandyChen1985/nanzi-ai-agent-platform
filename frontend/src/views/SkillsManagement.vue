@@ -176,12 +176,13 @@ const { hasPermission } = useUser()
 const canManagePlatformSkills = computed(() => hasPermission('element:skills:admin'))
 
 /**
- * 是否可以使用「平台技能 / 待审核 / 已发布」这三个平台管理视图。
+ * 「待审核 / 已发布」两个平台**管理分区**的准入。
  *
- * 个人技能页（`personalOnly`，个人中心与嵌入式个人资源面板）下 tab bar 整体是
- * `v-if="!personalOnly"`，平台侧视图只靠 `canManagePlatformSkills` 渲染；越界切过去
- * 的结果是技能列表（`showSkillList`）与目标面板一起消失，页面看起来「坏了」。
- * 因此所有切到平台视图的入口都必须先过这道闸。
+ * 语义已收窄：平台技能列表与详情抽屉对所有登录用户可见（没有写权限时只读），
+ * 不再由这道闸决定；只有这两块管理分区仍要求 `element:skills:admin`。
+ * 个人技能页（`personalOnly`）下 tab bar 整体是 `v-if="!personalOnly"`，分区根本不渲染，
+ * 越界切过去的结果是技能列表（`showSkillList`）与目标面板一起消失，页面看起来「坏了」，
+ * 因此所有切到管理分区的入口都必须先过这道闸。
  */
 const canAccessPlatformWorkspace = computed(() => !props.personalOnly && canManagePlatformSkills.value)
 
@@ -190,17 +191,22 @@ const handleSkillBannerAction = (type: 'create' | 'review' | 'global') => {
     openCreateModal()
     return
   }
-  // 守卫：个人技能页 / 无平台技能管理权限时不得切到不可见的平台视图，给出可见反馈而非静默失效
-  if (!canAccessPlatformWorkspace.value) {
-    showToast('「待审核 / 平台技能」仅平台技能管理员可用，个人技能页不提供该入口', 'warning')
-    return
-  }
-  if (type === 'review') {
-    activeWorkspaceTab.value = 'review'
-  } else if (type === 'global') {
+  // 「平台技能」对登录用户开放（没有写权限时只读），因此这一入口只受个人技能页限制
+  if (type === 'global') {
+    if (props.personalOnly) {
+      showToast('个人技能页不提供「平台技能」入口', 'warning')
+      return
+    }
     activeWorkspaceTab.value = 'global'
     activeScope.value = 'global'
+    return
   }
+  // 「待审核」仍是平台管理分区：个人技能页 / 无平台技能管理权限时给出可见反馈而非静默失效
+  if (!canAccessPlatformWorkspace.value) {
+    showToast('「待审核」仅平台技能管理员可用，个人技能页不提供该入口', 'warning')
+    return
+  }
+  activeWorkspaceTab.value = 'review'
 }
 
 const confirmState = ref<{
@@ -258,9 +264,9 @@ watch(personalMenuCollapsed, (collapsed) => {
 const shareDialogSkill = ref<Skill | null>(null)
 const shareMenuCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
 
-/** 首屏落点：只有能用平台管理视图的用户才落到「平台技能」，否则一律落到「我的技能」。 */
+/** 首屏落点：能进工作台就落到「平台技能」（无写权限时只读浏览），个人技能页落到「我的技能」。 */
 const resolveInitialWorkspaceTab = (): 'global' | 'personal' =>
-  canAccessPlatformWorkspace.value ? 'global' : 'personal'
+  !props.personalOnly ? 'global' : 'personal'
 const initialWorkspaceTab = resolveInitialWorkspaceTab()
 const activeScope = ref<'global' | 'personal'>(initialWorkspaceTab)
 const activeWorkspaceTab = ref<WorkspaceTab>(initialWorkspaceTab)
@@ -270,18 +276,17 @@ const loading = ref(false)
 const showSkillList = computed(() => activeWorkspaceTab.value === 'global' || activeWorkspaceTab.value === 'personal')
 
 /**
- * 兜底：权限或 `personalOnly` 变化后，若当前停在已不可见的平台视图上，立即退回「我的技能」。
+ * 兜底：权限或 `personalOnly` 变化后，若当前停在已不可见的管理分区上，回落到「平台技能」。
  *
  * `hasPermission` 依赖用户信息异步注入，`canManagePlatformSkills` 可能在挂载后才确定；
  * 少了这道兜底，用户会停在一个既不渲染列表、也不渲染目标面板的空页面上。
+ * 注意只回落到 `global`：平台列表对登录用户始终可读，把 `activeScope` 改成 `personal`
+ * 会让只读用户被踢出「平台技能」。
  */
 watch(canAccessPlatformWorkspace, (available) => {
   if (available) return
-  if (activeWorkspaceTab.value !== 'personal') {
-    activeWorkspaceTab.value = 'personal'
-  }
-  if (activeScope.value !== 'personal') {
-    activeScope.value = 'personal'
+  if (activeWorkspaceTab.value === 'review' || activeWorkspaceTab.value === 'publications') {
+    activeWorkspaceTab.value = 'global'
   }
 })
 
@@ -335,7 +340,8 @@ const closeBindingsModal = () => {
 }
 
 const fetchSkillBindings = async () => {
-  if (props.personalOnly) return
+  // 显式绑定反查仍是 admin-only 接口（`GET /bindings`），无写权限时连请求都不发，避免 403 弹错
+  if (props.personalOnly || !canManagePlatformSkills.value) return
   try {
     const res = await axios.get('/api/portal/skills/bindings')
     if (res.data?.status === 'success') {
@@ -472,6 +478,16 @@ const activeSkillScope = ref<'global' | 'personal'>('global')
 const activeSkillName = ref('')
 const activeSkillDesc = ref('')
 const fileTree = ref<FileNode[]>([])
+
+/**
+ * 当前打开的技能是否只读：平台技能且没有 `element:skills:admin`。
+ *
+ * 平台技能列表与详情对登录用户开放，但写能力（编辑、保存、新建文件、上传、删除、右键菜单）
+ * 只属于管理员；个人技能页（`personalOnly`）与个人技能侧恒为可写，行为不受影响。
+ */
+const platformSkillReadonly = computed(
+  () => !props.personalOnly && activeSkillScope.value !== 'personal' && !canManagePlatformSkills.value,
+)
 const selectedFilePath = ref('SKILL.md') // 当前选中的文件相对路径，默认 SKILL.md
 const editingContent = ref('')
 const originalContent = ref('')
@@ -1135,7 +1151,7 @@ const publicationBadgeLabel = (skill: Skill): string => {
 }
 
 const publicationBadgeClass = (status?: PublicationStatus): string => {
-  if (status === 'PUBLISHED') return 'bg-blue-100 text-blue-700'
+  if (status === 'PUBLISHED') return 'bg-primary/10 text-primary-dark'
   if (status === 'REJECTED') return 'bg-red-100 text-red-700'
   if (status === 'WITHDRAWN') return 'bg-gray-100 text-gray-600'
   if (status === 'REVOKED') return 'bg-orange-100 text-orange-700'
@@ -1207,6 +1223,17 @@ const copyEditorContent = async () => {
 
 // 打开创建弹窗
 const openCreateModal = () => {
+  // 只读平台视图下没有平台写权限：自动落到「我的技能」再打开弹窗。
+  // 引导入口（流程横幅第 1 步、帮助弹窗「新建技能 →」）对所有视图可见，
+  // 若仍按当前 scope 建平台技能，用户会填完表单才在提交时撞 403。
+  if (
+    !props.personalOnly
+    && !canManagePlatformSkills.value
+    && activeScope.value === 'global'
+  ) {
+    activeWorkspaceTab.value = 'personal'
+    activeScope.value = 'personal'
+  }
   newSkill.value = { id: '', name: '', description: '', group: '' }
   showCreateModal.value = true
 }
@@ -1508,7 +1535,10 @@ const selectFileForEdit = async (path: string) => {
 
   const doSelect = async () => {
     selectedFilePath.value = path
-    editorMode.value = path.toLowerCase().endsWith('.md') ? 'preview' : 'edit'
+    // 只读模式恒为预览：没有写权限时不该切到 textarea
+    editorMode.value = platformSkillReadonly.value
+      ? 'preview'
+      : path.toLowerCase().endsWith('.md') ? 'preview' : 'edit'
     if (path === 'SKILL.md') {
       await fetchSkillDetail(activeSkillId.value)
     } else {
@@ -1651,6 +1681,8 @@ const syncLineNumberScroll = () => {
 }
 
 const handleEditorKeydown = (e: KeyboardEvent) => {
+  // 只读兜底：⌘S 不该在预览态触发一次注定 403 的保存
+  if (platformSkillReadonly.value) return
   if ((e.metaKey || e.ctrlKey) && e.key === 's') {
     e.preventDefault()
     if (hasUnsavedChanges.value && !saving.value) {
@@ -1685,6 +1717,8 @@ const renderedMarkdown = computed(() => {
 
 // 保存编辑的文件内容
 const saveFileContent = async () => {
+  // 只读兜底：写接口仍要求 element:skills:admin，别让按钮/快捷键之外的路由打出 403
+  if (platformSkillReadonly.value) return
   saving.value = true
   try {
     const apiPrefix = resolveSkillApiPrefix(activeSkillId.value)
@@ -1969,6 +2003,8 @@ const closeContextMenu = () => {
 }
 
 const handleContextMenu = (data: { event: MouseEvent, node: any }) => {
+  // 只读兜底：文件树里的右键菜单全是写入口（新建/上传/删除），没有写权限就不弹
+  if (platformSkillReadonly.value) return
   contextMenu.value.show = true
   contextMenu.value.x = data.event.clientX
   contextMenu.value.y = data.event.clientY
@@ -1976,6 +2012,8 @@ const handleContextMenu = (data: { event: MouseEvent, node: any }) => {
 }
 
 const handleEmptyAreaContextMenu = (e: MouseEvent) => {
+  // 只读兜底：空白区右键同样是新建 / 上传入口
+  if (platformSkillReadonly.value) return
   contextMenu.value.show = true
   contextMenu.value.x = e.clientX
   contextMenu.value.y = e.clientY
@@ -2103,8 +2141,12 @@ const submitImportSkill = async () => {
 }
 
 onMounted(() => {
-  if (!props.personalOnly && canManagePlatformSkills.value) {
+  // 平台技能列表对登录用户可读（没有写权限时只读），因此只按 personalOnly 决定是否加载
+  if (!props.personalOnly) {
     fetchSkills()
+  }
+  // 绑定反查 / 审核队列 / 已发布列表仍是 admin-only 接口，无写权限时不发请求
+  if (!props.personalOnly && canManagePlatformSkills.value) {
     fetchSkillBindings()
     fetchPublicationQueue(true)
     // 静默预取已发布列表：只为了让「已发布」tab 的数量角标在进入前就是准确的
@@ -2206,35 +2248,34 @@ onUnmounted(() => {
       />
     </div>
 
-    <!-- Scope Tab 切换：只有平台管理员才有多个一级视图，普通用户直接看下面的二级 tab -->
+    <!-- Scope Tab 切换：平台技能对登录用户可见（无写权限时只读），待审核 / 已发布仍只给管理员 -->
     <div
-      v-if="!personalOnly && canManagePlatformSkills"
+      v-if="!personalOnly"
       class="flex items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       <button
-        v-if="canManagePlatformSkills"
         id="tab-global-skills"
         @click="activeWorkspaceTab = 'global'; activeScope = 'global'"
         class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
-        :class="activeWorkspaceTab === 'global' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'global' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
         </svg>
         平台技能
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'global' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'">{{ skills.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'global' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'">{{ skills.length }}</span>
       </button>
       <button
         id="tab-personal-skills"
         @click="activeWorkspaceTab = 'personal'; activeScope = 'personal'"
         class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
-        :class="activeWorkspaceTab === 'personal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'personal' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
         我的技能
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'personal' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">{{ personalSkills.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'personal' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'">{{ personalSkills.length }}</span>
       </button>
       <button
         v-if="canManagePlatformSkills"
@@ -2242,13 +2283,13 @@ onUnmounted(() => {
         type="button"
         @click="openPublicationReview"
         class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
-        :class="activeWorkspaceTab === 'review' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'review' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.5-2.5A8.5 8.5 0 1112 3.5a8.5 8.5 0 018.5 8.5z" />
         </svg>
         待审核
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'review' ? 'bg-indigo-100 text-indigo-700' : publicationQueue.length ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'">{{ publicationQueue.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'review' ? 'bg-primary/10 text-primary' : publicationQueue.length ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'">{{ publicationQueue.length }}</span>
       </button>
       <button
         v-if="canManagePlatformSkills"
@@ -2256,29 +2297,18 @@ onUnmounted(() => {
         type="button"
         @click="openPublications"
         class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
-        :class="activeWorkspaceTab === 'publications' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'publications' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
         </svg>
         已发布
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'publications' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'">{{ publications.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'publications' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'">{{ publications.length }}</span>
       </button>
     </div>
 
-    <!-- 普通用户只有一个「我的技能」：把二级视图提到顶部，内容区全宽 -->
-    <SkillPersonalMenu
-      v-if="!personalOnly && !canManagePlatformSkills && activeWorkspaceTab === 'personal'"
-      variant="tabs"
-      class="mb-3"
-      :active="personalMenu"
-      :received-count="shareMenuCounts.received_pending"
-      :sent-pending-count="shareMenuCounts.sent_pending"
-      @select="personalMenu = $event"
-    />
-
     <!-- 已发布 / 下架管理面板：一条记录 = 一个已上线的版本，下架即回收其可见性 -->
-    <div v-if="activeWorkspaceTab === 'publications' && canAccessPlatformWorkspace" class="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+    <div v-if="activeWorkspaceTab === 'publications' && canAccessPlatformWorkspace" class="rounded-xl border border-gray-200 bg-white p-5 shadow-xs">
       <div class="mb-4 flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
         <div>
           <h2 class="text-lg font-bold text-gray-900">已发布 / 下架管理</h2>
@@ -2316,14 +2346,14 @@ onUnmounted(() => {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-200 text-sm">
-            <tr v-for="item in publications" :key="item.version_id" class="transition-colors hover:bg-purple-50/20">
+            <tr v-for="item in publications" :key="item.version_id" class="transition-colors hover:bg-primary/5">
               <td class="px-4 py-3">
                 <div class="font-bold text-gray-900">{{ item.name || item.skill_id }}</div>
                 <div class="mt-0.5 max-w-2xl text-xs text-gray-500 line-clamp-2" :title="item.description">{{ item.description || '暂无描述' }}</div>
                 <div class="mt-0.5 font-mono text-[10px] text-gray-400">来源个人技能 {{ item.skill_id }}</div>
               </td>
               <td class="px-4 py-3 text-center whitespace-nowrap">
-                <span class="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">v{{ item.version_number ?? '—' }}</span>
+                <span class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary-dark">v{{ item.version_number ?? '—' }}</span>
                 <div class="mt-1 text-[10px] font-semibold text-emerald-600">已发布</div>
               </td>
               <td class="px-4 py-3 text-center font-mono text-xs text-gray-500">{{ item.platform_skill_id || '—' }}</td>
@@ -2345,7 +2375,7 @@ onUnmounted(() => {
     </div>
 
     <!-- 管理员发布审核面板 -->
-    <div v-if="activeWorkspaceTab === 'review' && canAccessPlatformWorkspace" class="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
+    <div v-if="activeWorkspaceTab === 'review' && canAccessPlatformWorkspace" class="rounded-2xl border border-primary/20 bg-white p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
         <div>
           <h2 class="text-lg font-bold text-gray-900">发布审核</h2>
@@ -2367,7 +2397,7 @@ onUnmounted(() => {
             :key="item.version_id"
             type="button"
             class="flex w-full items-start justify-between rounded-xl border px-3 py-3 text-left transition-colors"
-            :class="activePublicationReview?.version_id === item.version_id ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-indigo-200 hover:bg-gray-50'"
+            :class="activePublicationReview?.version_id === item.version_id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/20 hover:bg-gray-50'"
             @click="openPublicationReviewDetail(item.version_id)"
           >
             <span class="min-w-0">
@@ -2384,7 +2414,7 @@ onUnmounted(() => {
               <h3 class="truncate text-base font-bold text-gray-900">{{ activePublicationReview.name }}</h3>
               <p class="mt-1 text-xs text-gray-500">{{ activePublicationReview.description || '暂无描述' }}</p>
             </div>
-            <span class="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">平台候选 v{{ activePublicationReview.version_number }}</span>
+            <span class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary-dark">平台候选 v{{ activePublicationReview.version_number }}</span>
           </div>
           <div class="mt-3 flex flex-wrap gap-2 text-[10px] text-gray-500">
             <span class="rounded bg-white px-2 py-1">文件 {{ activePublicationReview.file_count || 0 }}</span>
@@ -2418,12 +2448,12 @@ onUnmounted(() => {
           <textarea
             v-model="publicationReviewComment"
             rows="3"
-            class="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            class="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
             placeholder="驳回时填写原因；通过时可留空"
           />
           <div class="mt-3 flex justify-end gap-2">
             <button type="button" class="rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50" :disabled="publicationReviewAction" @click="rejectPublicationReview">驳回</button>
-            <button type="button" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="publicationReviewAction" @click="approvePublicationReview">通过并发布</button>
+            <button type="button" class="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary-dark disabled:opacity-50" :disabled="publicationReviewAction" @click="approvePublicationReview">通过并发布</button>
           </div>
         </div>
         <div v-else class="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-400">
@@ -2432,8 +2462,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 我的技能：左侧二级菜单 + 右侧内容（窄屏折叠为顶部胶囊 Tab） -->
-    <div v-if="activeWorkspaceTab === 'personal' && canManagePlatformSkills" class="mb-3 md:hidden">
+    <!-- 我的技能：左侧二级菜单 + 右侧内容（窄屏折叠为顶部胶囊 Tab）。
+         一级 Tab 行对登录用户都渲染后，能进「我的技能」的人都有二级菜单；
+         `personalOnly`（个人中心 / 嵌入式个人资源面板）保持原样：那里只有管理员才渲染。 -->
+    <div
+      v-if="activeWorkspaceTab === 'personal' && (canManagePlatformSkills || !personalOnly)"
+      class="mb-3 md:hidden"
+    >
       <SkillPersonalMenu
         variant="chips"
         :active="personalMenu"
@@ -2445,7 +2480,7 @@ onUnmounted(() => {
 
     <div class="flex flex-col gap-4 md:flex-row md:items-start">
       <SkillPersonalMenu
-        v-if="activeWorkspaceTab === 'personal' && canManagePlatformSkills"
+        v-if="activeWorkspaceTab === 'personal' && (canManagePlatformSkills || !personalOnly)"
         variant="aside"
         :active="personalMenu"
         :received-count="shareMenuCounts.received_pending"
@@ -2477,7 +2512,7 @@ onUnmounted(() => {
                 v-model="searchQuery"
                 type="search"
                 placeholder="搜索技能名称、ID 或描述..."
-                class="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
 
@@ -2492,7 +2527,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-                    :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
                     title="按名称排序"
                     @click="skillSortBy = 'name'"
                   >
@@ -2501,7 +2536,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-                    :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
                     title="按更新时间排序"
                     @click="skillSortBy = 'time'"
                   >
@@ -2523,7 +2558,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                    :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
                     title="卡片视图"
                     @click="viewMode = 'card'"
                   >
@@ -2534,7 +2569,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                    :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
                     title="列表视图"
                     @click="viewMode = 'list'"
                   >
@@ -2557,23 +2592,28 @@ onUnmounted(() => {
                 </button>
               </div>
 
-              <div class="relative shrink-0" @click.stop>
+              <!-- 只读平台视图（无 element:skills:admin）不渲染任何创建入口：整块分裂按钮 + 下拉一起隐藏 -->
+              <div
+                v-if="activeScope === 'personal' || canManagePlatformSkills"
+                class="relative shrink-0"
+                @click.stop
+              >
                 <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
                   <button
                     type="button"
-                    class="flex shrink-0 items-center justify-center gap-2 whitespace-nowrap px-3 py-2 text-sm font-medium text-white transition-all active:scale-[0.98] sm:px-4"
-                    :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+                    class="flex shrink-0 items-center justify-center gap-2 whitespace-nowrap bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark active:scale-[0.98] sm:px-4"
+                    :title="activeScope === 'personal' ? '将在「我的技能」中创建个人技能' : '将在「平台技能」中创建平台技能'"
                     @click="openCreateModal"
                   >
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
                     新建<span class="hidden sm:inline">技能</span>
+                    <span class="hidden rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-medium lg:inline">{{ activeScope === 'personal' ? '个人' : '平台' }}</span>
                   </button>
                   <button
                     type="button"
-                    class="border-l px-2 text-white transition-colors"
-                    :class="activeScope === 'personal' ? 'border-emerald-500 bg-emerald-600 hover:bg-emerald-700' : 'border-blue-500 bg-blue-600 hover:bg-blue-700'"
+                    class="border-l border-white/20 bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
                     title="更多创建方式"
                     @click="showCreateMenu = !showCreateMenu"
                   >
@@ -2625,7 +2665,7 @@ onUnmounted(() => {
     <template v-if="showSkillList">
     <!-- 技能列表网格 -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
-      <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
       <p class="text-sm text-gray-500 mt-4 font-medium">智能检索系统文件夹中...</p>
     </div>
 
@@ -2638,7 +2678,7 @@ onUnmounted(() => {
         <p class="text-xs text-gray-400 mt-1">试试其他关键词，或清除搜索后浏览全部</p>
         <button
           @click="clearSearch"
-          class="mt-5 px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+          class="mt-5 px-4 py-2 text-sm font-medium text-primary border border-primary/20 rounded-lg hover:bg-primary/5 transition-colors"
         >
           清除搜索
         </button>
@@ -2651,22 +2691,28 @@ onUnmounted(() => {
           <template v-if="activeScope === 'personal'">
             个人技能仅对自己可见，可新建或导入到「我的技能」目录
           </template>
-          <template v-else>
+          <template v-else-if="canManagePlatformSkills">
             您可以新建一个技能，或导入 Zip/Tar 压缩包
           </template>
+          <template v-else>
+            当前账号仅可浏览平台技能
+          </template>
         </p>
-        <div class="mt-5 flex items-center gap-3">
+        <div
+          v-if="activeScope === 'personal' || canManagePlatformSkills"
+          class="mt-5 flex items-center gap-3"
+        >
           <button
             @click="openCreateModal"
             class="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
-            :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+            :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
           >
             新建技能
           </button>
           <button
             @click="openImportModal"
             class="px-4 py-2 text-sm font-medium border rounded-lg transition-colors"
-            :class="activeScope === 'personal' ? 'text-emerald-600 border-emerald-200 hover:bg-emerald-50' : 'text-blue-600 border-blue-200 hover:bg-blue-50'"
+            :class="activeScope === 'personal' ? 'text-emerald-600 border-emerald-200 hover:bg-emerald-50' : 'text-primary border-primary/20 hover:bg-primary/5'"
           >
             导入技能
           </button>
@@ -2690,19 +2736,18 @@ onUnmounted(() => {
         @keydown.enter.prevent="openSkillDetail(skill.id)"
         @keydown.space.prevent="openSkillDetail(skill.id)"
         @click="openSkillDetail(skill.id)"
-        class="group relative flex flex-col cursor-pointer rounded-xl border border-gray-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-lg"
+        class="group relative flex flex-col cursor-pointer rounded-xl border border-gray-200 bg-white transition-all duration-150 hover:border-gray-300 hover:shadow-md"
         :class="[
-          personalOnly ? 'p-6' : 'rounded-lg p-5',
+          personalOnly ? 'p-6' : 'p-5',
           !isSkillEnabled(skill.enabled) ? 'opacity-65 saturate-50 bg-gray-50/50' : '',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2',
         ]"
       >
         <!-- 卡片顶部 -->
         <div class="flex items-start justify-between gap-3">
           <div class="flex min-w-0 items-center space-x-3">
             <div
-              class="flex h-10 w-10 items-center justify-center rounded-xl transition-transform group-hover:scale-110"
-              :class="skill.scope === 'personal' ? 'bg-gradient-to-br from-emerald-500/10 to-teal-500/10 text-emerald-600' : 'bg-gradient-to-br from-blue-500/10 to-indigo-500/10 text-blue-600'"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
             >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -2710,7 +2755,7 @@ onUnmounted(() => {
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <h3 class="truncate font-bold text-gray-800 transition-colors group-hover:text-blue-600">
+                <h3 class="truncate font-bold text-gray-800 transition-colors group-hover:text-primary">
                   {{ skill.name }}
                 </h3>
                 <!-- Scope 徽章：个人中心全是个人技能，不再重复标「个人」 -->
@@ -2720,7 +2765,7 @@ onUnmounted(() => {
                 >个人</span>
                 <span
                   v-else-if="skill.scope !== 'personal'"
-                  class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700"
+                  class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-primary-dark"
                 >平台</span>
                 <span
                   v-if="!isSkillEnabled(skill.enabled)"
@@ -2739,7 +2784,7 @@ onUnmounted(() => {
               </p>
               <p
                 v-if="skill.shared_from"
-                class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-blue-600"
+                class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-primary"
                 :title="`来源技能：${skill.shared_from.source_skill_id}`"
               >
                 <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2750,7 +2795,12 @@ onUnmounted(() => {
             </div>
           </div>
           
-          <div class="flex shrink-0 items-center space-x-2" @click.stop>
+          <!-- 启停开关与「⋯」都是写入口：只读平台视图（无 element:skills:admin）整块不渲染 -->
+          <div
+            v-if="skill.scope === 'personal' || canManagePlatformSkills"
+            class="flex shrink-0 items-center space-x-2"
+            @click.stop
+          >
             <!-- Switch 开关 -->
             <label class="relative inline-flex cursor-pointer items-center" title="启用/禁用此技能（禁用后对话不再自动匹配）">
               <input 
@@ -2759,7 +2809,7 @@ onUnmounted(() => {
                 @change="toggleSkillStatus(skill)"
                 class="peer sr-only"
               >
-              <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
+              <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-primary peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
 
             <!-- 操作收进「⋯」：桌面 hover 显示，移动端常驻；菜单 fixed 定位避免被卡片裁切 -->
@@ -2790,7 +2840,7 @@ onUnmounted(() => {
           <button
             v-if="skill.group"
             type="button"
-            class="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+            class="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary-dark transition-colors hover:bg-primary/10"
             :title="`只看「${skill.group}」分组`"
             @click.stop="skillGroupFilter = String(skill.group)"
           >
@@ -2806,7 +2856,7 @@ onUnmounted(() => {
             <button
               v-if="!isSkillSubmissionPending(skill)"
               type="button"
-              class="rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
+              class="rounded-lg border border-primary/20 px-2 py-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/5"
               @click.stop="submitSkillPublication(skill)"
             >
               {{ skillPublicationActionLabel(skill.publication_status) }}
@@ -2835,12 +2885,12 @@ onUnmounted(() => {
           <span v-else class="text-[11px] text-gray-400">更新</span>
           <div class="flex shrink-0 items-center gap-2">
             <button
-              v-if="!personalOnly && skill.scope !== 'personal'"
+              v-if="!personalOnly && skill.scope !== 'personal' && canManagePlatformSkills"
               type="button"
               @click.stop="openBindingsModal(skill)"
               class="rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors"
               :class="getBindingEntry(skill.id).count > 0
-                ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                ? 'bg-primary/5 text-primary-dark hover:bg-primary/10'
                 : 'bg-gray-50 text-gray-400 hover:bg-gray-100'"
               :title="`显式绑定 ${getBindingEntry(skill.id).count} 个智能体`"
             >
@@ -2860,7 +2910,7 @@ onUnmounted(() => {
             <tr>
               <th class="px-6 py-4">技能名称与描述</th>
               <th class="px-6 py-4 text-center">物理映射路径</th>
-              <th v-if="!personalOnly && activeScope === 'global'" class="px-6 py-4 text-center">绑定</th>
+              <th v-if="!personalOnly && activeScope === 'global' && canManagePlatformSkills" class="px-6 py-4 text-center">绑定</th>
               <th class="px-6 py-4 text-center">更新时间</th>
               <th class="px-6 py-4 text-center">状态</th>
               <th class="px-6 py-4 text-center">操作</th>
@@ -2871,18 +2921,18 @@ onUnmounted(() => {
               v-for="skill in sortedSkills" 
               :key="skill.id"
               @click="openSkillDetail(skill.id)"
-              class="hover:bg-blue-50/20 cursor-pointer transition-colors group"
+              class="hover:bg-primary/5 cursor-pointer transition-colors group"
               :class="{ 'opacity-65 saturate-50 bg-gray-50/30': !isSkillEnabled(skill.enabled) }"
             >
               <td class="px-6 py-4">
                 <div class="flex items-start space-x-3">
-                  <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-50 text-blue-600 group-hover:scale-105 transition-transform flex-shrink-0 mt-0.5">
+                  <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/5 text-primary group-hover:scale-105 transition-transform flex-shrink-0 mt-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                     </svg>
                   </div>
                   <div class="space-y-0.5">
-                    <div class="font-bold text-gray-900 group-hover:text-blue-600 transition-colors flex items-center gap-2 flex-wrap">
+                    <div class="font-bold text-gray-900 group-hover:text-primary transition-colors flex items-center gap-2 flex-wrap">
                       <span>{{ skill.name }}</span>
                       <span
                         v-if="skill.scope === 'personal' && !personalOnly"
@@ -2890,7 +2940,7 @@ onUnmounted(() => {
                       >个人</span>
                       <span
                         v-else-if="skill.scope !== 'personal'"
-                        class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-blue-100 text-blue-700"
+                        class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-primary/10 text-primary-dark"
                       >平台</span>
                       <span
                         v-if="!isSkillEnabled(skill.enabled)"
@@ -2908,7 +2958,7 @@ onUnmounted(() => {
                 {{ skill.path }}
               </td>
               <td
-                v-if="!personalOnly && activeScope === 'global'"
+                v-if="!personalOnly && activeScope === 'global' && canManagePlatformSkills"
                 class="px-6 py-4 text-center whitespace-nowrap"
                 @click.stop
               >
@@ -2917,7 +2967,7 @@ onUnmounted(() => {
                   @click="openBindingsModal(skill)"
                   class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors"
                   :class="getBindingEntry(skill.id).count > 0
-                    ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                    ? 'bg-primary/5 text-primary-dark hover:bg-primary/10'
                     : 'bg-gray-50 text-gray-400 hover:bg-gray-100'"
                   :title="`显式绑定 ${getBindingEntry(skill.id).count} 个智能体`"
                 >
@@ -2929,14 +2979,18 @@ onUnmounted(() => {
               </td>
               <td class="px-6 py-4 text-center whitespace-nowrap" @click.stop>
                 <div class="flex flex-col items-center gap-1">
-                  <label class="relative inline-flex items-center cursor-pointer" title="启用/禁用此技能（禁用后对话不再自动匹配）">
+                  <label
+                    v-if="skill.scope === 'personal' || canManagePlatformSkills"
+                    class="relative inline-flex items-center cursor-pointer"
+                    title="启用/禁用此技能（禁用后对话不再自动匹配）"
+                  >
                     <input 
                       type="checkbox" 
                       :checked="isSkillEnabled(skill.enabled)"
                       @change="toggleSkillStatus(skill)"
                       class="sr-only peer"
                     >
-                    <div class="w-7 h-4 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+                    <div class="w-7 h-4 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
                   </label>
                   <span
                     class="text-[10px] font-medium"
@@ -2958,18 +3012,19 @@ onUnmounted(() => {
                     v-if="skill.scope === 'personal'"
                     type="button"
                     @click="openShareDialog(skill)"
-                    class="rounded-lg border border-blue-200 px-2 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:bg-blue-50 whitespace-nowrap shrink-0"
+                    class="rounded-lg border border-primary/20 px-2 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/5 whitespace-nowrap shrink-0"
                     title="分享给同事（对方接受后会复制一份到他的个人技能）"
                   >
                     分享
                   </button>
                   <button 
                     @click="openSkillDetail(skill.id)"
-                    class="px-3 py-1.5 text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                    class="px-3 py-1.5 text-xs font-semibold border border-primary/20 text-primary hover:bg-primary/5 hover:border-primary/25 rounded-lg transition-colors whitespace-nowrap shrink-0"
                   >
-                    配置
+                    {{ skill.scope === 'personal' || canManagePlatformSkills ? '配置' : '查看' }}
                   </button>
                   <button 
+                    v-if="skill.scope === 'personal' || canManagePlatformSkills"
                     @click="deleteSkill(skill.id)"
                     class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
                     title="注销并彻底删除技能目录"
@@ -3079,7 +3134,7 @@ onUnmounted(() => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">脚本编写与沙箱调试</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3119,7 +3174,7 @@ onUnmounted(() => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">平台发布与版本隔离</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3128,14 +3183,14 @@ onUnmounted(() => {
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
                          <button
-                            v-if="canAccessPlatformWorkspace"
+                            v-if="!personalOnly"
                             type="button"
                             @click="showHelpModal = false; handleSkillBannerAction('global')"
-                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             平台技能 &rarr;
                          </button>
-                         <span v-else class="text-[11px] text-gray-400">仅平台技能管理员可访问「平台技能」</span>
+                         <span v-else class="text-[11px] text-gray-400">个人技能页不提供该入口</span>
                       </div>
                    </div>
 
@@ -3143,7 +3198,7 @@ onUnmounted(() => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">5</span>
                             <h4 class="font-bold text-gray-900 text-sm">智能体绑定与动态激活</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3155,7 +3210,7 @@ onUnmounted(() => {
                             v-if="canAccessPlatformWorkspace"
                             type="button"
                             @click="showHelpModal = false; router.push('/dashboard/agent-management')"
-                            class="text-xs text-teal-600 hover:text-teal-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往智能体中心 &rarr;
                          </button>
@@ -3172,7 +3227,7 @@ onUnmounted(() => {
                  
                    <!-- SKILL.md 结构 -->
                    <div class="p-4 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-2 text-xs">
-                      <span class="font-bold text-emerald-900 text-sm">📄 SKILL.md YAML Frontmatter 规范</span>
+                      <span class="font-bold text-emerald-900 text-sm">SKILL.md YAML Frontmatter 规范</span>
                       <pre class="bg-slate-900 text-slate-100 p-3 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">---
   name: doc-reviewer
   description: 专门审查 Markdown 与技术文档的格式与结构守则。当用户需要校对文档或生成规范报告时调用。
@@ -3184,9 +3239,9 @@ onUnmounted(() => {
 
                    <!-- 安装方式详细说明：保留旧版 CLI、Git、压缩包安装信息，同时沿用当前 schema Tab。 -->
                    <div class="space-y-4 text-xs">
-                      <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-900/30 dark:bg-blue-950/10">
-                         <h5 class="flex items-center gap-2 font-bold text-blue-900 dark:text-blue-200">
-                            <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
+                      <section class="rounded-xl border border-primary/10 bg-primary/5 p-4 dark:border-primary-dark/30 dark:bg-primary-dark/10">
+                         <h5 class="flex items-center gap-2 font-bold text-primary-dark dark:text-primary-hover">
+                            <span class="h-3 w-1.5 rounded-full bg-primary"></span>
                             <span>什么是 Skills 技能</span>
                          </h5>
                          <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
@@ -3197,7 +3252,7 @@ onUnmounted(() => {
                       <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
                          <div class="flex items-start justify-between gap-3">
                             <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
-                               <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
+                               <span class="h-3 w-1.5 rounded-full bg-primary"></span>
                                <span>平台全局技能安装 (npx CLI)</span>
                             </h5>
                             <button
@@ -3209,7 +3264,7 @@ onUnmounted(() => {
                             </button>
                          </div>
                          <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                            平台会扫描运行环境中的全局技能目录：本地默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">~/.agents/skills</code>，Docker 环境默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">/app/data/skills</code>。请在与平台共享该目录的宿主机环境中执行安装命令。
+                            平台会扫描运行环境中的全局技能目录：本地默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-primary dark:bg-gray-900 dark:text-primary-hover">~/.agents/skills</code>，Docker 环境默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-primary dark:bg-gray-900 dark:text-primary-hover">/app/data/skills</code>。请在与平台共享该目录的宿主机环境中执行安装命令。
                          </p>
                          <div class="mt-3 rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-200 shadow-inner sm:text-xs">
                             <div class="overflow-x-auto whitespace-nowrap select-all leading-relaxed">
@@ -3226,7 +3281,7 @@ onUnmounted(() => {
 
                       <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
                          <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
-                            <span class="h-3 w-1.5 rounded-full bg-indigo-500"></span>
+                            <span class="h-3 w-1.5 rounded-full bg-primary"></span>
                             <span>个人专属技能克隆 (Git clone)</span>
                          </h5>
                          <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
@@ -3249,7 +3304,7 @@ onUnmounted(() => {
                             在技能工作台选择对应的「平台技能」或「我的技能」作用域，点击「导入技能 (Zip/Tar)」上传压缩文件，系统会自动解压并读取技能元数据。
                          </p>
                          <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                            <strong class="text-amber-700 dark:text-amber-300">导入限制：</strong>压缩包根目录，或仅包裹一层的子目录中，必须包含核心指令定义文件 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">SKILL.md</code>；缺少该文件时，系统会拒绝导入并清理已解压内容。
+                            <strong class="text-amber-700 dark:text-amber-300">导入限制：</strong>压缩包根目录，或仅包裹一层的子目录中，必须包含核心指令定义文件 <code class="rounded bg-white px-1 py-0.5 font-mono text-primary dark:bg-gray-900 dark:text-primary-hover">SKILL.md</code>；缺少该文件时，系统会拒绝导入并清理已解压内容。
                          </p>
                          <h6 class="mt-3 font-bold text-gray-800 dark:text-gray-200">覆盖模式与安全策略</h6>
                          <p class="mt-1 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
@@ -3274,9 +3329,9 @@ onUnmounted(() => {
                         href="https://www.skills.sh/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="market-link inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-center text-xs font-bold shadow-md shadow-blue-500/20 transition-all active:scale-95"
+                        class="market-link inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-center text-xs font-bold shadow-md shadow-primary/20 transition-all active:scale-95"
                       >
-                         <span>💡 前往官方 Skills 开放市场</span>
+                         <span>前往官方 Skills 开放市场</span>
                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" />
                          </svg>
@@ -3324,7 +3379,7 @@ onUnmounted(() => {
           class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200"
         >
           <h2 id="skill-create-title" class="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
-            <svg class="w-5 h-5" :class="activeScope === 'personal' ? 'text-emerald-500' : 'text-blue-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5" :class="activeScope === 'personal' ? 'text-emerald-500' : 'text-primary'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
             </svg>
             初始化智能体技能
@@ -3342,7 +3397,7 @@ onUnmounted(() => {
                 type="text" 
                 placeholder="例如: search-helper" 
                 class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-primary'"
               />
               <span class="text-[10px] text-gray-400 mt-1 block">物理目录名，创建后不可修改</span>
             </div>
@@ -3356,7 +3411,7 @@ onUnmounted(() => {
                 type="text" 
                 placeholder="例如: 全局网页搜索辅助" 
                 class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-primary'"
               />
             </div>
 
@@ -3369,7 +3424,7 @@ onUnmounted(() => {
                 rows="2"
                 placeholder="描述此技能的核心能力或针对的典型任务约束..." 
                 class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-primary'"
               ></textarea>
             </div>
 
@@ -3384,7 +3439,7 @@ onUnmounted(() => {
                 maxlength="64"
                 placeholder="如 天气出行（留空 = 未分组）"
                 class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-primary'"
               />
               <span class="text-[10px] text-gray-400 mt-1 block">
                 单选，只用于技能列表的分组页签与筛选。会写进 SKILL.md 的 frontmatter（group: …），
@@ -3404,7 +3459,7 @@ onUnmounted(() => {
               @click="createSkill"
               :disabled="creating"
               class="px-4 py-2 disabled:opacity-50 text-white rounded-xl transition-colors text-sm font-medium"
-              :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+              :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
             >
               {{ creating ? '创建中...' : (activeScope === 'personal' ? '创建到我的技能' : '创建到平台技能') }}
             </button>
@@ -3436,7 +3491,7 @@ onUnmounted(() => {
           <!-- 抽屉头部 -->
           <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
             <div class="flex items-center space-x-3 min-w-0">
-              <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+              <div class="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
@@ -3462,7 +3517,7 @@ onUnmounted(() => {
             <!-- 左侧：在线编辑器 -->
             <div class="flex-[1.8] h-[60vh] lg:h-auto flex flex-col border-b lg:border-b-0 lg:border-r border-gray-200 p-3 sm:p-5 bg-white dark:bg-gray-800 overflow-hidden min-h-0">
               <div v-if="fetchingDetail" class="flex-1 flex flex-col items-center justify-center py-20">
-                <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
                 <p class="text-xs text-gray-400 mt-3 font-medium">载入文件内容...</p>
               </div>
 
@@ -3480,7 +3535,8 @@ onUnmounted(() => {
                   </div>
 
                   <div class="skill-editor-actions">
-                    <div v-if="isMarkdownFile" class="skill-editor-mode-toggle">
+                    <!-- 只读平台技能不提供「编辑/预览」切换：强制预览 -->
+                    <div v-if="isMarkdownFile && !platformSkillReadonly" class="skill-editor-mode-toggle">
                       <button
                         type="button"
                         @click="editorMode = 'edit'"
@@ -3505,6 +3561,7 @@ onUnmounted(() => {
                     </div>
 
                     <button
+                      v-if="!platformSkillReadonly"
                       type="button"
                       @click="saveFileContent"
                       :disabled="saving || !hasUnsavedChanges"
@@ -3533,7 +3590,7 @@ onUnmounted(() => {
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                   </button>
 
-                  <div v-if="editorMode === 'edit'" class="skill-editor-code-pane flex-1 flex overflow-hidden min-h-0">
+                  <div v-if="editorMode === 'edit' && !platformSkillReadonly" class="skill-editor-code-pane flex-1 flex overflow-hidden min-h-0">
                     <div ref="lineNumbersRef" class="skill-editor-gutter overflow-hidden select-none">
                       <div v-for="n in lineCount" :key="n" class="skill-editor-line-num">{{ n }}</div>
                     </div>
@@ -3616,16 +3673,18 @@ onUnmounted(() => {
                     </button>
                   </div>
                   <button
+                    v-if="!platformSkillReadonly"
                     type="button"
                     @click="createAssetFromDrawer"
                     class="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-800"
                     title="在当前定位目录下新建文件"
                   >新建文件</button>
                   <button
+                    v-if="!platformSkillReadonly"
                     type="button"
                     :disabled="uploading"
                     @click="uploadFromDrawer"
-                    class="shrink-0 whitespace-nowrap rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-semibold text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="shrink-0 whitespace-nowrap rounded-lg border border-primary/20 bg-white px-2 py-1 text-[10px] font-semibold text-primary shadow-sm transition-colors hover:border-primary/25 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60"
                     :title="uploading ? '正在上传…' : '上传脚本文件到当前定位目录'"
                   >{{ uploading ? '上传中…' : '上传脚本' }}</button>
                 </div>
@@ -3667,6 +3726,7 @@ onUnmounted(() => {
                   :sort-order="fileTreeSortOrder"
                   :selected-path="selectedFilePath"
                   :selected-directory-path="selectedDirectoryPath"
+                  :readonly="activeSkillScope !== 'personal' && !canManagePlatformSkills"
                   @select-file="selectFileForEdit"
                   @select-directory="selectDirectory"
                   @delete-file="deleteSkillFile"
@@ -3682,7 +3742,7 @@ onUnmounted(() => {
                     <span class="text-[10px] text-gray-400 truncate">{{ activeSkillId }}</span>
                   </div>
                   <div class="flex items-center gap-2 text-[10px] font-mono text-slate-500">
-                    <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">30天 {{ activeSkill30DayTotal }}</span>
+                    <span class="px-1.5 py-0.5 rounded bg-primary/5 text-primary font-bold">30天 {{ activeSkill30DayTotal }}</span>
                     <span class="px-1.5 py-0.5 rounded bg-slate-50 text-slate-500">累计 {{ activeSkillAllTimeTotal }}</span>
                   </div>
                 </div>
@@ -3749,7 +3809,7 @@ onUnmounted(() => {
           v-model="createAssetName"
           type="text"
           :placeholder="createAssetType === 'file' ? '例如: guide.md' : '例如: references'"
-          class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono"
+          class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary focus:outline-none text-sm font-mono"
           @keyup.enter="createSkillAsset"
         />
         <p class="mt-1.5 text-[10px] text-gray-400">请输入单级名称，不支持 /、\ 或隐藏名称。</p>
@@ -3764,7 +3824,7 @@ onUnmounted(() => {
           <button
             @click="createSkillAsset"
             :disabled="creatingAsset"
-            class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
+            class="px-3 py-1.5 text-xs font-bold text-white bg-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg"
           >
             {{ creatingAsset ? '创建中...' : '确认创建' }}
           </button>
@@ -3788,7 +3848,7 @@ onUnmounted(() => {
         >
         <div class="flex items-center justify-between mb-2">
           <h2 id="skill-import-title" class="text-base font-bold text-gray-800 flex items-center gap-1.5">
-            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             导入智能体技能压缩包
@@ -3816,8 +3876,8 @@ onUnmounted(() => {
           class="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
           :class="[
             importDragActive 
-              ? 'border-blue-500 bg-blue-50/50' 
-              : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+              ? 'border-primary bg-primary/5' 
+              : 'border-gray-300 hover:border-primary hover:bg-gray-50'
           ]"
         >
           <input
@@ -3837,12 +3897,12 @@ onUnmounted(() => {
           </template>
         
           <template v-else>
-            <svg class="w-10 h-10 text-blue-500 mb-3 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-10 h-10 text-primary mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <span class="text-xs text-gray-800 font-bold truncate max-w-full px-4">{{ importFile.name }}</span>
             <span class="text-[10px] text-gray-500 mt-1">{{ (importFile.size / 1024 / 1024).toFixed(2) }} MB</span>
-            <span class="text-[10px] text-blue-600 mt-2 hover:underline">重新选择文件</span>
+            <span class="text-[10px] text-primary mt-2 hover:underline">重新选择文件</span>
           </template>
         </div>
 
@@ -3852,7 +3912,7 @@ onUnmounted(() => {
             type="checkbox"
             id="import-overwrite-checkbox"
             v-model="importOverwrite"
-            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+            class="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary cursor-pointer"
           />
           <label for="import-overwrite-checkbox" class="text-xs font-semibold text-gray-700 cursor-pointer">
             覆盖已存在的同名技能 (Overwrite Existing)
@@ -3871,7 +3931,7 @@ onUnmounted(() => {
           <button
             @click="submitImportSkill"
             :disabled="importingSkill || !importFile"
-            class="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+            class="px-4 py-2 text-xs font-bold text-white bg-primary hover:bg-primary-dark disabled:opacity-50 disabled:hover:bg-primary rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
           >
             <span v-if="importingSkill" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
             {{ importingSkill ? '正在导入解压...' : '确认导入' }}
@@ -3975,7 +4035,7 @@ onUnmounted(() => {
         >
         <div class="flex items-center justify-between border-b border-gray-100 pb-4 mb-4 select-none shrink-0">
           <h2 id="skill-stats-title" class="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
             技能激活与调用统计
@@ -3988,7 +4048,7 @@ onUnmounted(() => {
         </div>
 
         <div v-if="loadingStats" class="flex flex-col items-center justify-center py-20 flex-1">
-          <div class="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
           <p class="text-sm text-gray-500 mt-4 font-medium">正在拉取统计数据...</p>
         </div>
         <div v-else-if="!hasStatsData" class="flex flex-col items-center justify-center py-20 flex-1 text-gray-400 select-none">
@@ -4004,14 +4064,14 @@ onUnmounted(() => {
             <button 
               @click="switchTab('distribution')"
               class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
-              :class="activeTab === 'distribution' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
+              :class="activeTab === 'distribution' ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'"
             >
               总量占比与分布
             </button>
             <button 
               @click="switchTab('trend')"
               class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
-              :class="activeTab === 'trend' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
+              :class="activeTab === 'trend' ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'"
             >
               近30天激活趋势
             </button>
@@ -4021,7 +4081,7 @@ onUnmounted(() => {
             <!-- 分布图 -->
             <div v-show="activeTab === 'distribution'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
               <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
-                <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+                <span class="w-2 h-2 bg-primary rounded-full"></span>
                 技能总调用占比与分布
               </h3>
               <div ref="distributionChartRef" class="w-full flex-1 min-h-[320px]"></div>
@@ -4029,7 +4089,7 @@ onUnmounted(() => {
             <!-- 趋势图 -->
             <div v-show="activeTab === 'trend'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
               <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
-                <span class="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                <span class="w-2 h-2 bg-primary rounded-full"></span>
                 近30天激活趋势变化
               </h3>
               <div ref="trendChartRef" class="w-full flex-1 min-h-[320px]"></div>
@@ -4079,9 +4139,9 @@ onUnmounted(() => {
     @cancel="cancelRevokePublication"
   />
 
-  <!-- 右键菜单 -->
+  <!-- 右键菜单：全部是写入口，只读平台技能（无 element:skills:admin）整块不渲染 -->
   <div
-    v-if="contextMenu.show"
+    v-if="contextMenu.show && (activeSkillScope === 'personal' || canManagePlatformSkills)"
     :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
     class="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 text-xs text-gray-700 select-none animate-fade-in"
   >
@@ -4089,7 +4149,7 @@ onUnmounted(() => {
     <template v-if="contextMenu.node?.is_dir">
       <button
         @click="handleMenuAction('new-file')"
-        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors text-blue-600 font-medium"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors text-primary font-medium"
       >
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -4119,7 +4179,7 @@ onUnmounted(() => {
         @click="handleMenuAction('upload-archive')"
         class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors"
       >
-        <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
         </svg>
         上传压缩包 (Zip/Tar)
@@ -4186,6 +4246,7 @@ onUnmounted(() => {
       分享给同事
     </button>
     <button
+      v-if="activeScope === 'personal' || canManagePlatformSkills"
       type="button"
       role="menuitem"
       class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
@@ -4197,6 +4258,7 @@ onUnmounted(() => {
       导出 zip
     </button>
     <button
+      v-if="activeScope === 'personal' || canManagePlatformSkills"
       type="button"
       role="menuitem"
       class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
@@ -4208,6 +4270,7 @@ onUnmounted(() => {
       重命名
     </button>
     <button
+      v-if="activeScope === 'personal' || canManagePlatformSkills"
       type="button"
       role="menuitem"
       class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
@@ -4218,8 +4281,12 @@ onUnmounted(() => {
       </svg>
       设置分组
     </button>
-    <div class="my-1 border-t border-gray-100"></div>
+    <div
+      v-if="activeScope === 'personal' || canManagePlatformSkills"
+      class="my-1 border-t border-gray-100"
+    ></div>
     <button
+      v-if="activeScope === 'personal' || canManagePlatformSkills"
       type="button"
       role="menuitem"
       class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50"
@@ -4261,7 +4328,7 @@ onUnmounted(() => {
           maxlength="64"
           placeholder="如 天气出行（留空 = 未分组）"
           class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2"
-          :class="groupDialog.skill.scope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+          :class="groupDialog.skill.scope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-primary'"
           @keydown.enter.prevent="saveSkillGroup"
           @keydown.esc.prevent="!savingGroup && (groupDialog = null)"
         />
@@ -4277,7 +4344,7 @@ onUnmounted(() => {
           >取消</button>
           <button
             type="button"
-            class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+            class="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
             :disabled="savingGroup"
             @click="saveSkillGroup"
           >{{ savingGroup ? '保存中…' : '保存' }}</button>
@@ -4313,19 +4380,6 @@ onUnmounted(() => {
 
 .animate-slide-in {
   animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out forwards;
 }
 
 /* 仅编辑器内部隐藏焦点环；此前是全局 textarea:focus，会压掉其它输入框的 focus:ring */
@@ -4619,13 +4673,13 @@ onUnmounted(() => {
   color: #d97706;
 }
 
-/* 生态市场外链按钮特殊强制渐变背景以防止被第三方库覆盖 */
+/* 生态市场外链按钮统一使用品牌主色 */
 .market-link {
-  background: linear-gradient(135deg, #2563eb, #4f46e5) !important;
+  background: var(--color-primary, #1677ff) !important;
   color: #ffffff !important;
 }
 .market-link:hover {
-  background: linear-gradient(135deg, #1d4ed8, #4338ca) !important;
+  background: var(--color-primary-dark, #0958d9) !important;
   color: #ffffff !important;
 }
 

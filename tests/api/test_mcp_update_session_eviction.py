@@ -36,8 +36,11 @@ async def test_update_evicts_cached_session_before_resync():
         scope="global",
     )
     db = MagicMock()
+    # 取服务 → 取旧会话记录 → 三个工具计数 → 待确认变更数（返回体里也要带）
     db.execute = AsyncMock(
-        side_effect=[_one(server), _one(None), _scalar(0), _scalar(0), _scalar(0)]
+        side_effect=[
+            _one(server), _one(None), _scalar(0), _scalar(0), _scalar(0), _scalar(0),
+        ]
     )
     db.commit = AsyncMock()
 

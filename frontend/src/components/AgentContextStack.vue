@@ -37,7 +37,7 @@ const clearEntity = (key: string) => {
         </svg>
         当前上下文 (Context)
       </h3>
-      <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded font-bold">MEMORY</span>
+      <span class="px-1.5 py-0.5 bg-primary/10 text-primary-dark text-[10px] rounded font-bold">MEMORY</span>
     </div>
     
     <div class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
@@ -52,7 +52,7 @@ const clearEntity = (key: string) => {
         <div v-for="entity in entities" :key="entity.key" class="group relative bg-white border border-gray-200 rounded-lg p-3 hover:border-primary/30 hover:shadow-sm transition-all duration-200">
           <div class="flex items-start justify-between">
             <div class="flex items-center space-x-2">
-              <span class="text-lg">{{ entity.icon }}</span>
+              <span class="text-lg" aria-hidden="true">{{ entity.icon }}</span>
               <div class="min-w-0">
                 <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-1">{{ entity.label }}</p>
                 <p class="text-sm font-semibold text-gray-800 truncate">{{ entity.value }}</p>
@@ -74,7 +74,7 @@ const clearEntity = (key: string) => {
     
     <div class="p-4 bg-gray-50 border-t border-gray-100">
       <p class="text-[10px] text-gray-400 leading-relaxed">
-        💡 智能体会根据对话自动更新上下文。如果查询结果不符合预期，尝试清除特定实体后再提问。
+         智能体会根据对话自动更新上下文。如果查询结果不符合预期，尝试清除特定实体后再提问。
       </p>
     </div>
   </div>

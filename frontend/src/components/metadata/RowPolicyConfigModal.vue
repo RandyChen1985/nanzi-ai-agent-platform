@@ -641,7 +641,7 @@ watch(
                  <h4 class="text-sm font-bold text-gray-900">启用精细化权限校验</h4>
                  <p class="text-xs text-gray-500 mt-0.5">
                    开启后，系统将强制执行下方定义的 SQL 过滤规则。
-                   <button @click.prevent="showPermHelpModal = true" class="text-blue-600 hover:text-blue-700 hover:underline font-medium ml-1">帮助指引</button>
+                   <button @click.prevent="showPermHelpModal = true" class="text-primary hover:text-primary-dark hover:underline font-medium ml-1">帮助指引</button>
                  </p>
                </div>
                <label class="relative inline-flex items-center cursor-pointer">
@@ -791,12 +791,12 @@ watch(
                   </div>
                 
                   <!-- Validation Section -->
-                  <div class="bg-blue-50 rounded-xl border border-blue-200 p-4">
-                    <h6 class="text-sm font-bold text-blue-700 mb-3">规则校验</h6>
+                  <div class="bg-primary/5 rounded-xl border border-primary/20 p-4">
+                    <h6 class="text-sm font-bold text-primary-dark mb-3">规则校验</h6>
                     <div class="space-y-3">
                       <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-700">校验当前配置</span>
-                        <button @click="validateRules" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
+                        <button @click="validateRules" class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
                           <MagnifyingGlassIcon class="w-4 h-4 inline-block mr-1" /> 校验规则
                         </button>
                       </div>
@@ -816,7 +816,7 @@ watch(
                           <div class="text-xs text-gray-500 mb-1">详细信息:</div>
                           <div class="space-y-1">
                             <div v-for="(detail, idx) in validationResult.details" :key="idx" class="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
-                              <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-blue-600'">
+                              <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-primary'">
                                 <ExclamationTriangleIcon v-if="detail.type === 'error' || detail.type === 'warning'" class="w-4 h-4" />
                                 <InformationCircleIcon v-else class="w-4 h-4" />
                               </span>
@@ -1102,7 +1102,7 @@ watch(
                            </div>
                         </div>
                         <div class="pt-2 flex justify-center">
-                           <button @click="visualRules.default_policy.push({condition: ''}); visualRules = {...visualRules}" class="text-[10px] text-blue-600 font-bold flex items-center gap-1.5 hover:bg-blue-50 px-4 py-2 rounded-lg transition-all border border-blue-100 bg-white shadow-sm">
+                           <button @click="visualRules.default_policy.push({condition: ''}); visualRules = {...visualRules}" class="text-[10px] text-primary font-bold flex items-center gap-1.5 hover:bg-primary/5 px-4 py-2 rounded-lg transition-all border border-primary/10 bg-white shadow-sm">
                               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                               追加一组策略 (OR)
                            </button>
@@ -1118,7 +1118,7 @@ watch(
                <div v-if="activePolicyTab === 'json'" class="space-y-4 min-h-[350px]">
                   <div class="flex items-center justify-between">
                     <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">JSON 配置视图 (只读)</h5>
-                    <button @click="copyJSON()" class="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 font-bold">
+                    <button @click="copyJSON()" class="text-[10px] bg-primary/5 hover:bg-primary/10 text-primary px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 font-bold">
                       <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                       复制 JSON
                     </button>
@@ -1162,9 +1162,9 @@ watch(
       <div v-if="showPermHelpModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showPermHelpModal = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center border border-blue-200">
+               <div class="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                </div>
                <div>
@@ -1181,50 +1181,50 @@ watch(
           <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
              <section class="space-y-2">
                <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 <span class="w-1 h-4 bg-primary rounded-full"></span>
                  匹配优先级
                </h3>
                <p class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-100 ml-0.5">
                  系统按以下顺序解析规则，匹配到即停止：<br>
-                 <b class="text-blue-600">1. 用户例外 (user_overrides)</b> &gt; 
-                 <b class="text-blue-600">2. 角色策略 (role_policies)</b> &gt; 
-                 <b class="text-blue-600">3. 默认策略 (default_policy)</b>
+                 <b class="text-primary">1. 用户例外 (user_overrides)</b> &gt; 
+                 <b class="text-primary">2. 角色策略 (role_policies)</b> &gt; 
+                 <b class="text-primary">3. 默认策略 (default_policy)</b>
                </p>
              </section>
 
              <section class="space-y-2">
                <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 <span class="w-1 h-4 bg-primary rounded-full"></span>
                  支持的动态变量
                </h3>
                <div class="grid grid-cols-2 gap-2 text-[10px]">
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.id}</span> 用户唯一ID</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.user_name}</span> 登录账号</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.real_name}</span> 真实姓名</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.dept_code}</span> 部门代码</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.org_path}</span> 组织全路径</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.role}</span> 系统角色</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.id}</span> 用户唯一ID</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.user_name}</span> 登录账号</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.real_name}</span> 真实姓名</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.dept_code}</span> 部门代码</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.org_path}</span> 组织全路径</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-primary font-bold">{user.role}</span> 系统角色</div>
                </div>
                <p class="text-[10px] text-gray-500 mt-2">以上 6 项为<strong>内置用户属性</strong>，所有用户均可用。</p>
              </section>
 
              <section class="space-y-2">
                <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-violet-500 rounded-full"></span>
+                 <span class="w-1 h-4 bg-primary rounded-full"></span>
                  extra_data 扩展字段
                </h3>
                <p class="text-[10px] text-gray-600 leading-relaxed">
-                 来自用户 <code class="text-violet-600 bg-violet-50 px-1 rounded">extra_data</code> JSON 的键，运行时摊平为
-                 <code class="font-mono text-violet-600">{user.键名}</code>。下拉列表从平台用户聚合展示，并标注「扩展」与内置变量区分。
+                 来自用户 <code class="text-primary bg-primary/5 px-1 rounded">extra_data</code> JSON 的键，运行时摊平为
+                 <code class="font-mono text-primary">{user.键名}</code>。下拉列表从平台用户聚合展示，并标注「扩展」与内置变量区分。
                </p>
                <div v-if="EXTRA_DATA_USER_VARIABLES.length" class="grid grid-cols-1 gap-1.5 text-[10px] max-h-32 overflow-y-auto">
                  <div
                    v-for="v in EXTRA_DATA_USER_VARIABLES"
                    :key="v.value"
-                   class="p-2 bg-violet-50 rounded border border-violet-100 font-mono flex items-center justify-between gap-2"
+                   class="p-2 bg-primary/5 rounded border border-primary/10 font-mono flex items-center justify-between gap-2"
                  >
-                   <span><span class="text-violet-700 font-bold">{{ v.value }}</span> {{ v.label }}</span>
-                   <span class="text-[8px] px-1 py-0.5 rounded bg-violet-100 text-violet-600 font-bold shrink-0">扩展</span>
+                   <span><span class="text-primary-dark font-bold">{{ v.value }}</span> {{ v.label }}</span>
+                   <span class="text-[8px] px-1 py-0.5 rounded bg-primary/10 text-primary font-bold shrink-0">扩展</span>
                  </div>
                </div>
                <p v-else class="text-[10px] text-gray-400">当前暂无 extra_data 扩展字段，可在用户管理或第三方用户同步中配置。</p>
@@ -1232,7 +1232,7 @@ watch(
 
              <section class="space-y-4">
                <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 <span class="w-1 h-4 bg-primary rounded-full"></span>
                  配置示例
                </h3>
              
@@ -1283,7 +1283,7 @@ watch(
 
           <!-- Footer -->
           <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-            <button @click="showPermHelpModal = false" class="px-8 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all text-sm">
+            <button @click="showPermHelpModal = false" class="px-8 py-2 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark shadow-lg shadow-primary/10 transition-all text-sm">
               明白了
             </button>
           </div>

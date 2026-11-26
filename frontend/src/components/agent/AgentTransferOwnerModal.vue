@@ -168,7 +168,7 @@ const submit = async () => {
                 v-model="search"
                 type="search"
                 placeholder="搜索用户名或姓名"
-                class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 @input="onSearchInput"
                 @keyup.enter="loadUsers"
               />
@@ -188,7 +188,7 @@ const submit = async () => {
                 :key="user.user_name"
                 type="button"
                 class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 cursor-pointer"
-                :class="selected?.user_name === user.user_name ? 'bg-blue-50' : ''"
+                :class="selected?.user_name === user.user_name ? 'bg-primary/5' : ''"
                 @click="choose(user)"
               >
                 <span class="min-w-0">
@@ -203,7 +203,7 @@ const submit = async () => {
                 </span>
                 <svg
                   v-else-if="selected?.user_name === user.user_name"
-                  class="h-4 w-4 shrink-0 text-blue-600"
+                  class="h-4 w-4 shrink-0 text-primary"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -226,7 +226,7 @@ const submit = async () => {
               rows="2"
               maxlength="200"
               placeholder="例如：原负责人已离职，转交给运维组"
-              class="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             ></textarea>
           </div>
 
@@ -243,7 +243,7 @@ const submit = async () => {
           </button>
           <button
             type="button"
-            class="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-dark cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="!canSubmit"
             @click="submit"
           >

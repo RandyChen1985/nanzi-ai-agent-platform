@@ -16,6 +16,11 @@ const props = defineProps<{
   selectedDirectoryPath?: string
   sortBy?: 'name' | 'time'
   sortOrder?: 'asc' | 'desc'
+  /**
+   * 只读：平台技能在没有 `element:skills:admin` 时只能浏览。
+   * 只读时不渲染行内删除按钮，也不派发右键菜单事件（右键菜单全是写入口）。
+   */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -103,7 +108,7 @@ const getFileIcon = (name: string, isDir: boolean) => {
       <div v-if="node.is_dir">
         <div 
           @click="selectAndToggleDir(node.path)"
-          @contextmenu.prevent="emit('context-menu', { event: $event, node })"
+          @contextmenu.prevent="props.readonly ? undefined : emit('context-menu', { event: $event, node })"
           class="flex items-center justify-between py-1.5 px-2 rounded-lg cursor-pointer group transition-all"
           :class="selectedDirectoryPath === node.path ? 'bg-amber-50 ring-1 ring-amber-200' : 'hover:bg-gray-100'"
         >
@@ -128,6 +133,7 @@ const getFileIcon = (name: string, isDir: boolean) => {
           </div>
           
           <button 
+            v-if="!props.readonly"
             @click.stop="emit('delete-file', node.path)"
             class="opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:bg-red-50 rounded transition-all flex-shrink-0"
             title="删除文件夹"
@@ -139,13 +145,14 @@ const getFileIcon = (name: string, isDir: boolean) => {
         </div>
         
         <transition name="fade">
-          <div v-show="!isCollapsed(node.path)" class="pl-4 border-l border-gray-150 ml-3.5 mt-0.5 space-y-0.5">
+          <div v-show="!isCollapsed(node.path)" class="pl-4 border-l border-gray-200 ml-3.5 mt-0.5 space-y-0.5">
             <SkillFileTree 
               :tree-data="node.children || []" 
               :selected-path="selectedPath"
               :selected-directory-path="selectedDirectoryPath"
               :sort-by="sortBy"
               :sort-order="sortOrder"
+              :readonly="readonly"
               @select-file="(path) => emit('select-file', path)"
               @select-directory="(path) => emit('select-directory', path)"
               @delete-file="(path) => emit('delete-file', path)"
@@ -159,11 +166,11 @@ const getFileIcon = (name: string, isDir: boolean) => {
       <div v-else>
         <div 
           @click="emit('select-file', node.path)"
-          @contextmenu.prevent="emit('context-menu', { event: $event, node })"
+          @contextmenu.prevent="props.readonly ? undefined : emit('context-menu', { event: $event, node })"
           class="flex items-center justify-between py-1.5 px-2 rounded-lg cursor-pointer group transition-all"
           :class="[
             selectedPath === node.path 
-              ? 'bg-blue-50 text-blue-600 font-semibold border-l-2 border-blue-500 pl-1.5' 
+              ? 'bg-primary/5 text-primary font-semibold border-l-2 border-primary pl-1.5' 
               : 'hover:bg-gray-100 text-gray-600'
           ]"
         >
@@ -171,16 +178,16 @@ const getFileIcon = (name: string, isDir: boolean) => {
             <svg v-if="getFileIcon(node.name, false) === 'md'" class="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <svg v-else-if="getFileIcon(node.name, false) === 'py'" class="w-4 h-4 text-sky-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+            <svg v-else-if="getFileIcon(node.name, false) === 'py'" class="w-4 h-4 text-primary flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
               <path d="M11.93 2.02c-1.39 0-2.65.11-3.66.27-2.63.4-3.15 1.57-3.15 3.51v1.94h6.91V8.3H5.12c-1.95 0-3.11.53-3.51 3.16-.43 2.76-.41 4.54.02 7.15.35 2.18 1.48 3.13 3.49 3.13h1.94v-2.73c0-2 1.15-3.41 3.13-3.41h3.76c1.92 0 3.13-1.12 3.13-3.13V5.64c0-1.93-1.07-3.15-3.13-3.5-1-.16-2.27-.27-3.66-.27v.15zm-3.08 2.21c.54 0 .97.43.97.98a.98.98 0 01-.97.97.98.98 0 01-.98-.97c0-.55.44-.98.98-.98zm6.7 5.7c-1.92 0-3.13 1.11-3.13 3.12v2.73H5.51v.57c0 1.93 1.07 3.15 3.13 3.5 1 .16 2.27.27 3.66.27 1.39 0 2.65-.11 3.66-.27 2.63-.4 3.15-1.57 3.15-3.51v-1.94h-6.91v-.57h6.91c1.95 0 3.11-.53 3.51-3.16.43-2.76.41-4.54-.02-7.15-.35-2.18-1.48-3.13-3.49-3.13h-1.94v2.73c0 2-1.15 3.41-3.13 3.41h-3.76zm3.08 5.7c.54 0 .97.43.97.98a.98.98 0 01-.97.97.98.98 0 01-.98-.97c0-.55.44-.98.98-.98z"/>
             </svg>
             <svg v-else-if="getFileIcon(node.name, false) === 'js'" class="w-4 h-4 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
               <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A1 1 0 0112 2.586L15.414 6A1 1 0 0116 6.586V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
             </svg>
-            <svg v-else-if="getFileIcon(node.name, false) === 'json'" class="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-else-if="getFileIcon(node.name, false) === 'json'" class="w-4 h-4 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
             </svg>
-            <svg v-else-if="getFileIcon(node.name, false) === 'sh'" class="w-4 h-4 text-pink-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-else-if="getFileIcon(node.name, false) === 'sh'" class="w-4 h-4 text-teal-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
             <svg v-else class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -195,7 +202,7 @@ const getFileIcon = (name: string, isDir: boolean) => {
           </div>
           
           <button 
-            v-if="node.name.toLowerCase() !== 'skill.md'"
+            v-if="!props.readonly && node.name.toLowerCase() !== 'skill.md'"
             @click.stop="emit('delete-file', node.path)"
             class="opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:bg-red-50 rounded transition-all flex-shrink-0"
             title="删除文件"

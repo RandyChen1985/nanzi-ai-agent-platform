@@ -331,7 +331,7 @@
           :class="[
             GRID_COLS,
             'cursor-pointer hover:bg-blue-50/40',
-            activeId === doc.id ? 'bg-blue-50/60' : '',
+            activeId === doc.id ? 'bg-primary/5' : '',
           ]"
           :draggable="canArrangeDocs"
           @click="emit('open-doc', doc)"
@@ -454,7 +454,7 @@
           :key="doc.id"
           type="button"
           class="group flex h-[104px] flex-col rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-primary/40 hover:shadow-sm"
-          :class="activeId === doc.id ? 'border-primary/50 bg-blue-50/40' : ''"
+          :class="activeId === doc.id ? 'border-primary/50 bg-primary/5' : ''"
           @click="emit('open-doc', doc)"
         >
           <div class="flex min-w-0 items-start gap-2">
@@ -816,10 +816,10 @@ interface FileKind {
 // 索引访问会带 undefined，模板里 fileKindOf(doc).className 就要到处加兜底
 const FILE_KINDS = {
   pdf: { label: 'PDF', className: 'bg-red-50 text-red-600' },
-  doc: { label: 'DOC', className: 'bg-blue-50 text-blue-600' },
+  doc: { label: 'DOC', className: 'bg-primary/5 text-primary' },
   xls: { label: 'XLS', className: 'bg-emerald-50 text-emerald-600' },
   ppt: { label: 'PPT', className: 'bg-orange-50 text-orange-600' },
-  img: { label: 'IMG', className: 'bg-sky-50 text-sky-600' },
+  img: { label: 'IMG', className: 'bg-sky-50 text-primary' },
   other: { label: 'FILE', className: 'bg-gray-100 text-gray-500' },
 } as const
 

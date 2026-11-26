@@ -61,7 +61,7 @@ def test_workbench_page_lays_out_main_column_and_sidebar_without_zero_cards():
 
     # 顶栏刷新按钮的口径保持不变
     assert "workbench-refresh-btn" in page
-    assert "hover:bg-blue-50 hover:text-blue-600" in page
+    assert "hover:bg-primary/5 hover:text-primary" in page
     assert ">刷新<" in page or "'刷新'" in page
 
     # 数据源异常要能被看见

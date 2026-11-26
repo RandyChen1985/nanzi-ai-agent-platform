@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_metadata_flow_guide_banner_contract():
     banner = _source("frontend/src/components/metadata/MetadataFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     datasets_view = _source("frontend/src/views/MetadataDatasets.vue")
 
     # 1. 验证 4 步流程及对应标题与说明
@@ -23,8 +24,8 @@ def test_metadata_flow_guide_banner_contract():
     assert "emit('close')" in banner
     assert "emit('dismiss')" in banner
     assert "emit('action'" in banner
-    assert "不再提示" in banner
-    assert "收起" in banner or "展开流程" in banner
+    assert "不再提示" in strip
+    assert "收起" in strip or "展开流程" in strip
 
     # 3. 验证在主视图中的引入与挂载
     assert "MetadataFlowGuideBanner" in datasets_view

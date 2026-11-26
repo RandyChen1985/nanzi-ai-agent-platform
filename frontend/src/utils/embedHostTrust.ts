@@ -79,7 +79,7 @@ export const evaluateHostMessageTrust = (
  * 不用 `"*"`：`INIT_SUCCESS` 带用户标识，通配会让「任何嵌了本页的站点」都读得到。
  * 顺序：命中 referrer 的白名单项 → 白名单首项 → referrer → `"*"`。
  *
- * ⚠️ 最后一档必须是 `"*"`，**不能**回落到本页自身 origin。父窗口通常是跨域的，
+ *  最后一档必须是 `"*"`，**不能**回落到本页自身 origin。父窗口通常是跨域的，
  * 而 `document.referrer` 在宿主设置 `Referrer-Policy: no-referrer`（或部分刷新/沙箱
  * 场景）下为空——此时若把 targetOrigin 填成本页 origin，浏览器会**静默丢弃**整条消息，
  * 表现为 `NANZI_WIDGET_READY` 送不出去、宿主永远不发 INIT_CONFIG、挂件停在骨架屏。

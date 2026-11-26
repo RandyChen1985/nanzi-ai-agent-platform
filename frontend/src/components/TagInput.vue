@@ -7,12 +7,12 @@
     <span
       v-for="(tag, index) in modelValue"
       :key="`${tag}-${index}`"
-      class="inline-flex max-w-full items-center gap-1 rounded-lg border border-blue-100 bg-blue-50/70 px-2 py-0.5 text-xs font-medium text-blue-700"
+      class="inline-flex max-w-full items-center gap-1 rounded-lg border border-primary/10 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary-dark"
     >
       <span class="truncate">{{ tag }}</span>
       <button
         type="button"
-        class="shrink-0 text-blue-400 transition-colors hover:text-blue-700"
+        class="shrink-0 text-primary transition-colors hover:text-primary-dark"
         :aria-label="`移除标签 ${tag}`"
         @click.stop="removeTag(index)"
       >

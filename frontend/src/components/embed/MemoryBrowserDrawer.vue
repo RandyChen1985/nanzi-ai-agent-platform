@@ -317,10 +317,10 @@ onUnmounted(() => {
             </div>
 
             <div
-              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
+              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
-                <CpuChipIcon class="h-5 w-5 flex-shrink-0 text-violet-500" aria-hidden="true" />
+                <CpuChipIcon class="h-5 w-5 flex-shrink-0 text-primary" aria-hidden="true" />
                 <span class="truncate">选择记忆记录</span>
                 <span
                   v-if="attachedCount > 0"
@@ -330,7 +330,7 @@ onUnmounted(() => {
                 </span>
                 <span
                   v-if="pinned"
-                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
+                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-primary bg-primary/5 border border-primary/10 dark:text-primary-hover dark:bg-primary/10 dark:border-primary/20"
                 >
                   已钉住
                 </span>
@@ -349,8 +349,8 @@ onUnmounted(() => {
                 </label>
                 <button
                   type="button"
-                  class="hidden sm:inline-flex text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
-                  :class="{ 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10': pinned }"
+                  class="hidden sm:inline-flex text-gray-400 hover:text-primary dark:hover:text-primary p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  :class="{ 'text-primary dark:text-primary bg-primary/5 dark:bg-blue-500/10': pinned }"
                   :title="pinButtonTitle"
                   :aria-label="pinned ? '取消钉住' : '钉住侧栏'"
                   @click="pinned = !pinned"
@@ -386,7 +386,7 @@ onUnmounted(() => {
                 </button>
                 <button
                   type="button"
-                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="关闭 (Esc)"
                   aria-label="关闭记忆浏览"
                   @click="closeDrawer"
@@ -431,7 +431,7 @@ onUnmounted(() => {
                 </div>
 
                 <div v-else-if="filteredMemoryList.length === 0" class="text-center py-12">
-                  <CpuChipIcon class="h-9 w-9 text-violet-300 opacity-60" aria-hidden="true" />
+                  <CpuChipIcon class="h-9 w-9 text-primary/40 opacity-60" aria-hidden="true" />
                   <p class="text-xs text-gray-400 mt-2 font-bold">暂无可用的记忆记录</p>
                   <p class="text-[10px] text-gray-400/70 mt-1">与 AI 对话后系统会自动生成记忆摘要</p>
                 </div>
@@ -442,7 +442,7 @@ onUnmounted(() => {
                   class="group p-3 border rounded-xl cursor-pointer transition-all flex items-start space-x-3"
                   :class="attachedIdSet.has(memory.conversation_id)
                     ? 'bg-gray-50 dark:bg-gray-800/80 border-gray-200 dark:border-gray-700 opacity-80'
-                    : 'bg-white dark:bg-gray-800 border-gray-150 dark:border-gray-700/60 hover:border-primary/30 hover:shadow-sm'"
+                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700/60 hover:border-primary/30 hover:shadow-sm'"
                   @dblclick="mountMemory(memory)"
                 >
                   <div
@@ -505,7 +505,7 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div class="shrink-0 p-3 sm:p-4 border-t border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 text-center">
+            <div class="shrink-0 p-3 sm:p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 text-center">
               <span class="text-[10px] text-gray-400 font-bold">双击卡片或点击「加载记忆」按钮可引入至输入框</span>
             </div>
           </div>
@@ -521,7 +521,7 @@ onUnmounted(() => {
       <div class="bg-white/95 dark:bg-gray-800/95 border border-gray-200/50 dark:border-gray-700/50 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50 flex-shrink-0">
           <div class="flex items-center space-x-2">
-            <CpuChipIcon class="h-5 w-5 text-violet-500" aria-hidden="true" />
+            <CpuChipIcon class="h-5 w-5 text-primary" aria-hidden="true" />
             <h3 class="text-base font-bold text-gray-800 dark:text-gray-100">记忆详情</h3>
           </div>
           <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" @click="showMemoryDetailModal = false">

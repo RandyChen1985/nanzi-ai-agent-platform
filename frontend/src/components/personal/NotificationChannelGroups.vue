@@ -9,7 +9,7 @@
         class="border rounded-xl p-4 transition-all duration-200"
         :class="[
           group.is_default && group.is_enabled
-            ? 'border-blue-200 bg-gradient-to-b from-blue-50/40 to-white shadow-sm'
+            ? 'border-primary/20 bg-gradient-to-b from-primary/5 to-white shadow-sm'
             : 'border-gray-200 bg-white',
           group.is_enabled ? '' : 'opacity-60 bg-gray-50',
         ]"
@@ -19,7 +19,7 @@
           <span
             class="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] font-bold font-mono cursor-pointer select-all border"
             :class="group.id
-              ? 'text-gray-600 bg-gray-100 border-gray-200 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200'
+              ? 'text-gray-600 bg-gray-100 border-gray-200 hover:text-primary hover:bg-primary/5 hover:border-primary/20'
               : 'text-gray-400 bg-gray-50 border-dashed border-gray-200'"
             :title="group.id ? '点击复制群 ID：发送消息时用它指定群' : '保存后生成群 ID'"
             @click="copyGroupId(group)"
@@ -30,16 +30,16 @@
             type="text"
             maxlength="64"
             placeholder="群名称，如：运维告警群"
-            class="min-w-[120px] flex-none text-sm font-semibold text-gray-800 px-2 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            class="min-w-[120px] flex-none text-sm font-semibold text-gray-800 px-2 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
 
           <span
             v-if="group.is_default && group.is_enabled"
-            class="shrink-0 px-1.5 py-0.5 text-[9.5px] font-black text-white bg-blue-600 rounded"
+            class="shrink-0 px-1.5 py-0.5 text-[9.5px] font-bold text-white bg-primary rounded"
           >默认</span>
           <span
             v-if="!group.is_enabled"
-            class="shrink-0 px-1.5 py-0.5 text-[9.5px] font-black text-gray-500 bg-gray-100 rounded"
+            class="shrink-0 px-1.5 py-0.5 text-[9.5px] font-bold text-gray-500 bg-gray-100 rounded"
           >已停用</span>
 
           <span class="flex-1" />
@@ -65,28 +65,28 @@
               class="sr-only peer"
               @change="onToggleEnabled(group)"
             >
-            <div class="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-4 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+            <div class="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-4 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
           </label>
         </div>
 
         <!-- 第二行：Webhook / 加签 -->
         <div class="mt-3 flex flex-wrap gap-3">
           <div class="flex-1 min-w-[220px]">
-            <label class="block text-[10px] font-black uppercase tracking-wide text-gray-400 mb-1">Webhook 地址</label>
+            <label class="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">Webhook 地址</label>
             <input
               v-model="group.webhook_url"
               type="text"
               :placeholder="webhookPlaceholder"
-              class="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder-gray-300"
+              class="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder-gray-300"
             />
           </div>
           <div v-if="supportsSecret" class="flex-1 min-w-[180px]">
-            <label class="block text-[10px] font-black uppercase tracking-wide text-gray-400 mb-1">加签密钥（可选）</label>
+            <label class="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">加签密钥（可选）</label>
             <input
               v-model="group.secret"
               type="password"
               placeholder="SEC..."
-              class="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder-gray-300"
+              class="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder-gray-300"
             />
           </div>
         </div>
@@ -103,7 +103,7 @@
               :name="`default-${channelType}`"
               :checked="group.is_default"
               :disabled="!group.is_enabled"
-              class="accent-blue-600"
+              class="accent-primary"
               @change="setDefault(index)"
             >
             设为默认
@@ -123,7 +123,7 @@
       <div class="flex items-center gap-3">
         <button
           type="button"
-          class="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-1.5 text-xs font-medium text-primary bg-primary/5 hover:bg-primary/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="groups.length >= maxGroups"
           :title="groups.length >= maxGroups ? `每个渠道最多 ${maxGroups} 个群` : ''"
           @click="addGroup"
@@ -136,7 +136,7 @@
         <span v-if="dirty" class="text-[11px] text-amber-600">有未保存的改动</span>
         <button
           type="button"
-          class="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+          class="px-4 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-dark rounded-lg transition-colors disabled:opacity-50 shadow-sm"
           :disabled="saving || !dirty || !!saveBlockedReason"
           :title="saveBlockedReason"
           @click="save"

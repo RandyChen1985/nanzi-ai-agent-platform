@@ -300,14 +300,14 @@ onUnmounted(() => {
                 <svg class="h-5 w-5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">{{ activeTab === 'files' ? '我的产出' : '可复用结果' }}</h3>
+                <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{{ activeTab === 'files' ? '我的产出' : '可复用结果' }}</h3>
                 <span v-if="activeTab === 'files' && total > 0" class="text-[10px] text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0">
                   {{ total }}
                 </span>
               </div>
               <button
                 type="button"
-                class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                 title="关闭 (Esc)"
                 aria-label="关闭产出物"
                 @click="closeDrawer"
@@ -440,11 +440,11 @@ onUnmounted(() => {
                     >
                       <span
                         :class="[
-                          'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center border mt-0.5 text-lg',
+                          'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center border mt-0.5 text-[9px] font-semibold tracking-tight leading-none',
                           fileVisuals[it.id]?.iconBg || 'bg-gray-100 dark:bg-gray-800',
                         ]"
                       >
-                        {{ fileVisuals[it.id]?.icon || '📎' }}
+                        {{ fileVisuals[it.id]?.icon || 'FILE' }}
                       </span>
                       <span class="flex-1 min-w-0">
                         <span class="block text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">

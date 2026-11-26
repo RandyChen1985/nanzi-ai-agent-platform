@@ -550,7 +550,7 @@ function save() {
             <div class="min-w-0">
               <select
                 v-model="draft.key_source"
-                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <optgroup v-for="group in keyOptions" :key="group.label" :label="group.label">
                   <option v-for="opt in group.options" :key="opt.value" :value="opt.value">
@@ -576,7 +576,7 @@ function save() {
               >
                 <input
                   type="checkbox"
-                  class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  class="rounded border-gray-300 text-primary focus:ring-primary"
                   :checked="draft.transforms.includes(t.value)"
                   @change="toggleTransform(t.value, ($event.target as HTMLInputElement).checked)"
                 />
@@ -593,7 +593,7 @@ function save() {
                 <span class="w-4 shrink-0 text-[11px] text-gray-400">{{ index }}</span>
                 <input
                   v-model="draft.templates[index - 1]"
-                  class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
                   placeholder="{value}"
                 />
                 <button
@@ -608,7 +608,7 @@ function save() {
               <button
                 v-if="draft.templates.length < 3"
                 type="button"
-                class="text-[11px] font-medium text-indigo-600 hover:text-indigo-700"
+                class="text-[11px] font-medium text-primary hover:text-primary-dark"
                 @click="addTemplate"
               >
                 + 再加一条（最多 3 条，按顺序尝试，第一条命中的生效）
@@ -625,7 +625,7 @@ function save() {
             <div class="flex flex-wrap items-center gap-2">
               <select
                 v-model="draft.target"
-                class="rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option v-for="t in TARGETS" :key="t.value" :value="t.value">{{ t.label }}</option>
               </select>
@@ -635,11 +635,11 @@ function save() {
                 v-model="draft.target_field"
                 type="text"
                 placeholder="凭据里的字段名，如 username"
-                class="w-44 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-44 rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               />
               <select
                 v-model="draft.match"
-                class="rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option value="exact_ci">不区分大小写（推荐）</option>
                 <option value="exact">区分大小写</option>
@@ -663,7 +663,7 @@ function save() {
               <select
                 v-if="showValueTemplate"
                 v-model="draft.value_template"
-                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option value="">不限定（字段只能手填）</option>
                 <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
@@ -679,7 +679,7 @@ function save() {
               <select
                 v-if="showValuePath && templateFields"
                 v-model="draft.value_path"
-                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option value="">整段（结构化凭据会被拒绝）</option>
                 <option v-for="f in templateFields" :key="f.value" :value="f.value">
@@ -689,7 +689,7 @@ function save() {
               <input
                 v-else-if="showValuePath"
                 v-model="draft.value_path"
-                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
                 placeholder="字段名，如 password；留空 = 整段"
               />
               <p v-if="showValuePath" class="text-[11px] leading-relaxed text-gray-500">
@@ -707,7 +707,7 @@ function save() {
             <div class="min-w-0">
               <select
                 v-model="draft.on_miss"
-                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option value="fail">直接报错，这次调用失败</option>
                 <option value="fallback_fixed">回退到同一层级的固定凭据</option>
@@ -745,7 +745,7 @@ function save() {
                 <label class="text-[11px] text-gray-500">入参 {{ argName || '?' }} =</label>
                 <input
                   v-model="sampleValue"
-                  class="w-40 rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="w-40 rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
                   placeholder="填一个样例值"
                   @keyup.enter="runPreview"
                 />
@@ -753,7 +753,7 @@ function save() {
               <span v-else class="text-[11px] text-gray-400">用的是你的账号信息，不需要填样例</span>
               <button
                 type="button"
-                class="rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                class="rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-primary-dark disabled:opacity-50"
                 :disabled="busy"
                 @click="runPreview"
               >
@@ -829,7 +829,7 @@ function save() {
           </button>
           <button
             type="button"
-            class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+            class="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
             @click="save"
           >
             保存规则

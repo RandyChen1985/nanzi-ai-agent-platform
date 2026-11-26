@@ -56,7 +56,7 @@ watch(
             class="rounded-lg px-3.5 py-1.5 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
             :class="state.danger
               ? 'bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-400'
-              : 'bg-indigo-600 hover:bg-indigo-700 focus-visible:ring-indigo-400'"
+              : 'bg-primary hover:bg-primary-dark focus-visible:ring-primary'"
             @click="settle(true)"
           >{{ state.confirmText }}</button>
         </div>

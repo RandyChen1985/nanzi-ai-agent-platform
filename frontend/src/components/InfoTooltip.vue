@@ -8,7 +8,7 @@
   >
     <button
       type="button"
-      class="inline-flex items-center justify-center rounded-full text-current opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+      class="inline-flex items-center justify-center rounded-full text-current opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       :aria-label="label"
       :aria-expanded="visible"
       @click.stop="pinned = !pinned"

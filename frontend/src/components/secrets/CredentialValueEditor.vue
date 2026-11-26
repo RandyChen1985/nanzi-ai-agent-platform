@@ -841,7 +841,7 @@ defineExpose({ recognize })
 </script>
 
 <template>
-  <div class="rounded-xl border border-blue-100 bg-[#f7fbff] p-3">
+  <div class="rounded-xl border border-primary/10 bg-[#f7fbff] p-3">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <span class="text-xs font-medium text-gray-700">
         凭据值 <span class="text-rose-500">*</span>
@@ -854,13 +854,13 @@ defineExpose({ recognize })
         <button
           type="button"
           class="rounded-md px-2.5 py-1 text-[11px]"
-          :class="format === 'text' ? 'bg-white font-semibold text-blue-700 shadow-sm' : 'text-gray-600'"
+          :class="format === 'text' ? 'bg-white font-semibold text-primary-dark shadow-sm' : 'text-gray-600'"
           @click="switchFormat('text')"
         >自由输入</button>
         <button
           type="button"
           class="rounded-md px-2.5 py-1 text-[11px]"
-          :class="format === 'json' ? 'bg-white font-semibold text-blue-700 shadow-sm' : 'text-gray-600'"
+          :class="format === 'json' ? 'bg-white font-semibold text-primary-dark shadow-sm' : 'text-gray-600'"
           @click="switchFormat('json')"
         >结构化（模板）</button>
       </div>
@@ -884,7 +884,7 @@ defineExpose({ recognize })
         v-model="value"
         rows="4"
         spellcheck="false"
-        class="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed focus:border-blue-500 focus:outline-none"
+        class="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed focus:border-primary focus:outline-none"
         :class="{ 'masked-value': !revealPlain }"
         placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
       />
@@ -900,7 +900,7 @@ defineExpose({ recognize })
         <div class="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-2.5 py-2">
           <input
             v-model="pickerQuery"
-            class="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-blue-400"
+            class="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-primary"
             placeholder="搜模板：smtp / 邮件 / sftp / 数据库 / webhook …"
           />
           <span class="shrink-0 text-[10px] text-gray-400">{{ filteredTemplates.length }} 个</span>
@@ -912,7 +912,7 @@ defineExpose({ recognize })
             type="button"
             class="rounded-full border px-2 py-0.5 text-[10.5px]"
             :class="pickerGroup === group
-              ? 'border-blue-600 bg-blue-600 font-semibold text-white'
+              ? 'border-primary bg-primary font-semibold text-white'
               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'"
             @click="pickerGroup = group"
           >{{ group }}</button>
@@ -922,8 +922,8 @@ defineExpose({ recognize })
             v-for="item in filteredTemplates"
             :key="item.id"
             type="button"
-            class="rounded-lg border p-2 text-left transition hover:border-blue-200 hover:bg-blue-50/60"
-            :class="template === item.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'"
+            class="rounded-lg border p-2 text-left transition hover:border-primary/20 hover:bg-primary/5"
+            :class="template === item.id ? 'border-primary bg-primary/5' : 'border-gray-200 bg-white'"
             @click="chooseTemplate(item.id)"
           >
             <span class="flex items-center gap-1.5">
@@ -939,7 +939,7 @@ defineExpose({ recognize })
       <!-- 已选模板 -->
       <template v-else>
         <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5">
-          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs text-blue-700">{{ tpl.icon }}</span>
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/5 text-xs text-primary-dark">{{ tpl.icon }}</span>
           <span class="min-w-0 flex-1">
             <span class="block truncate text-[11.5px] font-semibold text-gray-900">{{ tpl.name }}</span>
             <span class="block truncate text-[10.5px] text-gray-500">{{ tpl.desc }}</span>
@@ -961,13 +961,13 @@ defineExpose({ recognize })
               <button
                 type="button"
                 class="rounded px-2 py-0.5 text-[10.5px] font-medium"
-                :class="rawView === 'kv' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                :class="rawView === 'kv' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
                 @click="switchRawView('kv')"
               >键值对</button>
               <button
                 type="button"
                 class="rounded px-2 py-0.5 text-[10.5px] font-medium"
-                :class="rawView === 'json' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                :class="rawView === 'json' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
                 @click="switchRawView('json')"
               >写 JSON</button>
             </div>
@@ -987,12 +987,12 @@ defineExpose({ recognize })
                     placeholder="字段名"
                     spellcheck="false"
                     class="w-24 shrink-0 rounded-md border px-1.5 py-1 font-mono text-[11px] font-semibold focus:outline-none"
-                    :class="rawRowErrors[index] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                    :class="rawRowErrors[index] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                     @input="pushRawOut"
                   />
                   <select
                     v-model="row.type"
-                    class="w-16 shrink-0 rounded-md border border-gray-300 px-1 py-1 text-[10.5px] focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                    class="w-16 shrink-0 rounded-md border border-gray-300 px-1 py-1 text-[10.5px] focus:border-primary focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                     @change="onRawTypeChange(row)"
                   >
                     <option value="text">文本</option>
@@ -1006,7 +1006,7 @@ defineExpose({ recognize })
                       :type="row.secret && !rawRevealed[index] ? 'password' : 'text'"
                       :placeholder="row.type === 'json' ? '{\u0022a\u00221} 或 [1,2]' : '值'"
                       spellcheck="false"
-                      class="min-w-0 flex-1 rounded-md border border-gray-300 px-1.5 py-1 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
+                      class="min-w-0 flex-1 rounded-md border border-gray-300 px-1.5 py-1 font-mono text-[11px] focus:border-primary focus:outline-none"
                       :class="row.type === 'number' ? 'text-right' : ''"
                       @input="pushRawOut"
                     />
@@ -1021,7 +1021,7 @@ defineExpose({ recognize })
                     class="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] text-gray-500"
                     title="勾上后值打码显示，且不进列表摘要。密码/密钥一定要勾。"
                   >
-                    <input v-model="row.secret" type="checkbox" class="h-3 w-3 accent-blue-600" />
+                    <input v-model="row.secret" type="checkbox" class="h-3 w-3 accent-primary" />
                     敏感
                   </label>
                   <button
@@ -1038,7 +1038,7 @@ defineExpose({ recognize })
             </div>
             <button
               type="button"
-              class="mt-1.5 w-full rounded-md border border-dashed border-gray-300 py-1 text-[10.5px] text-gray-500 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+              class="mt-1.5 w-full rounded-md border border-dashed border-gray-300 py-1 text-[10.5px] text-gray-500 hover:border-primary hover:bg-primary/5 hover:text-primary"
               @click="addRawRow"
             >+ 添加字段</button>
             <p v-if="lockStructure" class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
@@ -1061,7 +1061,7 @@ defineExpose({ recognize })
               rows="8"
               spellcheck="false"
               class="w-full resize-y rounded-md border px-2 py-1.5 font-mono text-xs leading-relaxed focus:outline-none"
-              :class="errors.__raw ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+              :class="errors.__raw ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
             />
             <p class="mt-1 text-[10.5px] text-gray-400">
               嵌套对象和数组建议在这里写；切回键值对时会尽量保留结构。
@@ -1088,7 +1088,7 @@ defineExpose({ recognize })
               <select
                 v-if="field.type === 'select'"
                 class="w-full rounded-md border px-2 py-1.5 text-xs focus:outline-none"
-                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                 :value="String(values[field.key] ?? '')"
                 @change="setField(field, ($event.target as HTMLSelectElement).value)"
               >
@@ -1099,7 +1099,7 @@ defineExpose({ recognize })
                 <button
                   type="button"
                   class="relative h-[19px] w-[34px] shrink-0 rounded-full transition-colors"
-                  :class="values[field.key] ? 'bg-blue-600' : 'bg-gray-300'"
+                  :class="values[field.key] ? 'bg-primary' : 'bg-gray-300'"
                   @click="toggleSwitch(field)"
                 >
                   <span
@@ -1115,7 +1115,7 @@ defineExpose({ recognize })
                 rows="4"
                 spellcheck="false"
                 class="w-full resize-y rounded-md border px-2 py-1.5 font-mono text-xs leading-relaxed focus:outline-none"
-                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                 :value="String(values[field.key] ?? '')"
                 :placeholder="field.secret ? '整段粘贴，包含首尾的 BEGIN / END 行' : ''"
                 @input="setField(field, ($event.target as HTMLTextAreaElement).value)"
@@ -1125,7 +1125,7 @@ defineExpose({ recognize })
                 <input
                   :type="revealed[field.key] ? 'text' : 'password'"
                   class="w-full rounded-md border px-2 py-1.5 pr-11 font-mono text-xs focus:outline-none"
-                  :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                  :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                   autocomplete="off"
                   :value="String(values[field.key] ?? '')"
                   :placeholder="fieldPlaceholder(field)"
@@ -1156,7 +1156,7 @@ defineExpose({ recognize })
           <button
             v-if="advancedFields.length"
             type="button"
-            class="mt-2 text-[11px] text-blue-700 hover:underline"
+            class="mt-2 text-[11px] text-primary-dark hover:underline"
             @click="advancedOpen = !advancedOpen"
           >
             {{ advancedOpen ? '收起' : '展开' }} {{ advancedFields.length }} 个高级字段
@@ -1173,7 +1173,7 @@ defineExpose({ recognize })
               <select
                 v-if="field.type === 'select'"
                 class="w-full rounded-md border px-2 py-1.5 text-xs focus:outline-none"
-                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                 :value="String(values[field.key] ?? '')"
                 @change="setField(field, ($event.target as HTMLSelectElement).value)"
               >
@@ -1184,7 +1184,7 @@ defineExpose({ recognize })
                 <button
                   type="button"
                   class="relative h-[19px] w-[34px] shrink-0 rounded-full transition-colors"
-                  :class="values[field.key] ? 'bg-blue-600' : 'bg-gray-300'"
+                  :class="values[field.key] ? 'bg-primary' : 'bg-gray-300'"
                   @click="toggleSwitch(field)"
                 >
                   <span
@@ -1200,7 +1200,7 @@ defineExpose({ recognize })
                 rows="3"
                 spellcheck="false"
                 class="w-full resize-y rounded-md border px-2 py-1.5 font-mono text-xs focus:outline-none"
-                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                 :value="String(values[field.key] ?? '')"
                 @input="setField(field, ($event.target as HTMLTextAreaElement).value)"
               />
@@ -1209,7 +1209,7 @@ defineExpose({ recognize })
                 <input
                   :type="revealed[field.key] ? 'text' : 'password'"
                   class="w-full rounded-md border px-2 py-1.5 pr-11 font-mono text-xs focus:outline-none"
-                  :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                  :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                   autocomplete="off"
                   :value="String(values[field.key] ?? '')"
                   :placeholder="fieldPlaceholder(field)"
@@ -1226,7 +1226,7 @@ defineExpose({ recognize })
                 v-else
                 :type="field.type === 'number' ? 'number' : 'text'"
                 class="w-full rounded-md border px-2 py-1.5 text-xs focus:outline-none"
-                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                :class="errors[field.key] ? 'border-rose-500' : 'border-gray-300 focus:border-primary'"
                 :value="String(values[field.key] ?? '')"
                 :placeholder="fieldPlaceholder(field)"
                 @input="setField(field, ($event.target as HTMLInputElement).value)"
@@ -1273,7 +1273,7 @@ defineExpose({ recognize })
             v-model="pasteText"
             rows="4"
             spellcheck="false"
-            class="w-full resize-y rounded-md border border-gray-300 px-2 py-1.5 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
+            class="w-full resize-y rounded-md border border-gray-300 px-2 py-1.5 font-mono text-[11px] focus:border-primary focus:outline-none"
             placeholder='{"host": "smtp.exmail.qq.com", "port": 465, "username": "…", "password": "…"}'
           />
           <div class="mt-1.5 flex items-center gap-2">
@@ -1290,7 +1290,7 @@ defineExpose({ recognize })
       </div>
     </div>
 
-    <p class="mt-2 text-[11px] leading-snug" :class="secretType === 'variable' ? 'text-sky-700' : 'text-amber-600'">
+    <p class="mt-2 text-[11px] leading-snug" :class="secretType === 'variable' ? 'text-primary-dark' : 'text-amber-600'">
       <template v-if="secretType === 'variable'">
         变量类型可读可复制；结构化的变量在列表里显示非敏感字段拼成的摘要。
       </template>

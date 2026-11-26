@@ -803,12 +803,12 @@ watch(
         v-for="chip in selectedChips"
         :key="chip.key"
         type="button"
-        class="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700"
+        class="inline-flex max-w-full items-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary-dark"
         :title="'移除 ' + chip.label"
         @click="removeChip(chip)"
       >
         <span class="truncate">{{ chip.label }}</span>
-        <span class="text-blue-400">×</span>
+        <span class="text-primary">×</span>
       </button>
     </div>
 
@@ -822,18 +822,18 @@ watch(
         :ref="(el) => setTriggerRef('model', el)"
         type="button"
         class="inline-flex h-7 max-w-[15rem] items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
-        :class="activePanel === 'model' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
+        :class="activePanel === 'model' ? 'border-primary/20 bg-primary/5 text-primary-dark' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         :title="modelTriggerTooltip"
         @click.stop="togglePanel('model')"
       >
         <span class="truncate">{{ modelLabel }}</span>
-        <span v-if="thinkingSummaryLabel" class="shrink-0 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-600">
+        <span v-if="thinkingSummaryLabel" class="shrink-0 rounded-full bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary">
           {{ thinkingSummaryLabel }}
         </span>
         <span
           v-if="temperatureSummaryLabel"
           class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
-          :class="isTemperatureOverLimit ? 'bg-amber-100 text-amber-800' : 'bg-sky-50 text-sky-600'"
+          :class="isTemperatureOverLimit ? 'bg-amber-100 text-amber-800' : 'bg-sky-50 text-primary'"
         >
           {{ temperatureSummaryLabel }}
         </span>
@@ -845,7 +845,7 @@ watch(
         type="button"
         class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="approvalMode === 'allow'
-          ? 'border-blue-200 bg-blue-50 text-blue-700'
+          ? 'border-primary/20 bg-primary/5 text-primary-dark'
           : approvalMode === 'ask'
             ? 'border-amber-200 bg-amber-50 text-amber-700'
             : 'border-gray-200 bg-white text-gray-600'"
@@ -871,7 +871,7 @@ watch(
         :ref="(el) => setTriggerRef('knowledge_bases', el)"
         type="button"
         class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
-        :class="activePanel === 'knowledge_bases' || resourceScope.knowledge_bases.length ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
+        :class="activePanel === 'knowledge_bases' || resourceScope.knowledge_bases.length ? 'border-primary/20 bg-primary/5 text-primary-dark' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('knowledge_bases')"
       >
         知识库{{ resourceScope.knowledge_bases.length ? ` ${resourceScope.knowledge_bases.length}` : '' }}
@@ -893,7 +893,7 @@ watch(
         :ref="(el) => setTriggerRef('mcp_tools', el)"
         type="button"
         class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
-        :class="activePanel === 'mcp_tools' || resourceScope.mcp_tools.length ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
+        :class="activePanel === 'mcp_tools' || resourceScope.mcp_tools.length ? 'border-primary/20 bg-primary/5 text-primary-dark' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('mcp_tools')"
       >
         MCP{{ resourceScope.mcp_tools.length ? ` ${resourceScope.mcp_tools.length}` : '' }}
@@ -990,7 +990,7 @@ watch(
                 <button
                   v-if="item.thinking_enable"
                   type="button"
-                  class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100"
+                  class="inline-flex items-center gap-0.5 rounded-full bg-primary/5 px-1.5 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/10"
                   title="调整本次任务思考与参数"
                   @click="openThinkingSettings(item, $event)"
                 >
@@ -1050,7 +1050,7 @@ watch(
               >
                 <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForTask ? 'translate-x-5' : 'translate-x-0.5'"></span>
               </button>
-              <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700">
+              <span v-else class="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary-dark">
                 已开启
               </span>
             </div>
@@ -1181,7 +1181,7 @@ watch(
                 class="mt-2 rounded-lg border border-amber-200 bg-amber-50/80 p-2 text-[10px] leading-relaxed text-amber-700"
               >
                 <div class="flex items-start gap-1 font-semibold">
-                  <span>⚠️</span>
+                  <span aria-hidden="true">⚠</span>
                   <span>当前温度大于 1.0。部分模型仅支持 0.0～1.0 范围，超出范围可能被服务商忽略或引发调用异常，请确认模型官方文档支持。</span>
                 </div>
               </div>

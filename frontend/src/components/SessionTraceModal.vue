@@ -53,7 +53,7 @@ const isMobile = computed(() => windowWidth.value < 640)
                     <SparklesIcon class="w-5 h-5" />
                 </div>
                 <div>
-                    <h3 class="text-sm sm:text-lg font-black text-gray-800 truncate">会话回溯详情</h3>
+                    <h3 class="text-sm sm:text-lg font-bold text-gray-800 truncate">会话回溯详情</h3>
                     <p class="text-[10px] text-gray-400 font-mono" v-if="traceId">Trace: {{ traceId }}</p>
                 </div>
             </div>
@@ -61,7 +61,7 @@ const isMobile = computed(() => windowWidth.value < 640)
                 <button 
                     v-if="showContinue"
                     @click="emit('continue')"
-                    class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-black border border-primary/20"
+                    class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-bold border border-primary/20"
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                     <span>继续聊天</span>
@@ -103,8 +103,8 @@ const isMobile = computed(() => windowWidth.value < 640)
                 >
                     <!-- Turn Header -->
                     <div class="flex justify-between items-center mb-4">
-                        <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                            <span class="w-2 h-2 rounded-full bg-blue-500 shadow-sm shadow-blue-500/20"></span>
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full bg-primary shadow-sm shadow-primary/20"></span>
                             对话回合 #{{ tIdx + 1 }}
                         </span>
                         <span class="text-[9px] text-gray-400 font-mono bg-gray-50 px-2 py-0.5 rounded-full">{{ formatDate(turn.created_at) }}</span>
@@ -113,13 +113,13 @@ const isMobile = computed(() => windowWidth.value < 640)
                     <!-- Q&A Content -->
                     <div class="space-y-4">
                         <div>
-                            <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">提问 · Query</div>
+                            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 opacity-70">提问 · Query</div>
                             <div class="text-gray-800 text-sm font-bold leading-relaxed whitespace-pre-wrap bg-gray-50/50 p-3 rounded-xl border border-gray-100">
                                 {{ turn.query || 'N/A' }}
                             </div>
                         </div>
                         <div>
-                            <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
+                            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                             <div class="text-gray-600 text-xs sm:text-sm leading-relaxed">
                                 <MessageRenderer :content="turn.summary || 'N/A'" />
                             </div>
@@ -132,7 +132,7 @@ const isMobile = computed(() => windowWidth.value < 640)
                             @click="emit('toggle-steps', turn)"
                             class="flex items-center justify-between w-full p-2.5 rounded-xl hover:bg-gray-50 transition-all group/btn"
                         >
-                            <div class="flex items-center space-x-2 text-[11px] font-black text-gray-500 group-hover/btn:text-primary transition-colors uppercase tracking-widest">
+                            <div class="flex items-center space-x-2 text-[11px] font-bold text-gray-500 group-hover/btn:text-primary transition-colors uppercase tracking-widest">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                 <span>执行全链路 (Steps)</span>
                                 <span v-if="turn.steps?.length" class="bg-gray-100 px-1.5 py-0.5 rounded text-[9px] font-mono">{{ turn.steps.length }}</span>
@@ -154,25 +154,25 @@ const isMobile = computed(() => windowWidth.value < 640)
                             <div v-if="turn.steps && turn.steps.length > 0" class="space-y-4">
                                 <div v-for="(step, sIdx) in turn.steps" :key="sIdx" class="relative group/step">
                                     <!-- Step Dot -->
-                                    <div class="absolute -left-[26px] top-1 w-5 h-5 rounded-full border border-gray-200 shadow-sm flex items-center justify-center text-[9px] font-black text-white z-10"
-                                        :class="step.status === 'error' ? 'bg-amber-500' : 'bg-blue-500'">
+                                    <div class="absolute -left-[26px] top-1 w-5 h-5 rounded-full border border-gray-200 shadow-sm flex items-center justify-center text-[9px] font-bold text-white z-10"
+                                        :class="step.status === 'error' ? 'bg-amber-500' : 'bg-primary'">
                                         {{ Number(sIdx) + 1 }}
                                     </div>
                                     <!-- Step Card -->
                                     <div class="bg-white rounded-xl border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow">
                                         <div class="flex justify-between items-center mb-2">
                                             <div class="flex items-center gap-2">
-                                                <span class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
+                                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-tighter"
                                                     :class="{
-                                                        'bg-blue-100 text-blue-700': step.event_type === 'thought',
-                                                        'bg-purple-100 text-purple-700': step.event_type === 'router',
+                                                        'bg-primary/10 text-blue-700': step.event_type === 'thought',
+                                                        'bg-primary/10 text-primary-dark': step.event_type === 'router',
                                                         'bg-amber-100 text-amber-700': step.event_type === 'tool_call',
                                                         'bg-green-100 text-green-700': step.event_type === 'synthesis' || step.event_type === 'final_answer',
                                                         'bg-red-100 text-red-700': step.event_type === 'error'
                                                     }">
                                                     {{ step.event_type }}
                                                 </span>
-                                                <span v-if="step.tool_name" class="text-[9px] font-black text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded font-mono">
+                                                <span v-if="step.tool_name" class="text-[9px] font-bold text-primary bg-primary/5 px-1.5 py-0.5 rounded font-mono">
                                                     {{ step.tool_name }}
                                                 </span>
                                             </div>
@@ -184,7 +184,7 @@ const isMobile = computed(() => windowWidth.value < 640)
                                                 <pre class="text-[9px] text-gray-500 overflow-x-auto font-mono whitespace-pre-wrap break-all">{{ typeof step.tool_input === 'string' ? step.tool_input : JSON.stringify(step.tool_input, null, 2) }}</pre>
                                             </div>
                                             <!-- Output -->
-                                            <div v-if="step.tool_output && step.tool_output.content" class="text-[11px] text-gray-600 leading-relaxed bg-blue-50/20 p-2 rounded-lg border border-blue-100/10">
+                                            <div v-if="step.tool_output && step.tool_output.content" class="text-[11px] text-gray-600 leading-relaxed bg-primary/5 p-2 rounded-lg border border-primary/10">
                                                 {{ step.tool_output.content }}
                                             </div>
                                         </div>
@@ -199,7 +199,7 @@ const isMobile = computed(() => windowWidth.value < 640)
 
                     <!-- Indicator for current trace -->
                     <div v-if="activeTraceId && turn.trace_id === activeTraceId" class="absolute top-0 right-0">
-                        <div class="bg-primary text-white text-[8px] font-black px-2.5 py-1 rounded-bl-xl uppercase tracking-tighter shadow-sm animate-pulse">
+                        <div class="bg-primary text-white text-[8px] font-bold px-2.5 py-1 rounded-bl-xl uppercase tracking-tighter shadow-sm animate-pulse">
                             Current Turn
                         </div>
                     </div>

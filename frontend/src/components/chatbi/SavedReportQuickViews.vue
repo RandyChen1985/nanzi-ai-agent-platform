@@ -12,8 +12,8 @@
       <div class="flex items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-1.5">
           <span class="text-sm" aria-hidden="true">{{ view.icon }}</span>
-          <h3 class="min-w-0 flex-1 truncate text-xs font-black text-gray-700 dark:text-gray-200">{{ view.label }}</h3>
-          <span class="shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-blue-600 shadow-sm dark:bg-gray-800 dark:text-blue-300">
+          <h3 class="min-w-0 flex-1 truncate text-xs font-bold text-gray-700 dark:text-gray-200">{{ view.label }}</h3>
+          <span class="shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-primary shadow-sm dark:bg-gray-800 dark:text-primary-hover">
             {{ view.items.length }}
           </span>
         </div>
@@ -25,7 +25,7 @@
         <button
           v-if="view.items[0]"
           type="button"
-          class="min-h-9 shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 text-[11px] font-bold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+          class="min-h-9 shrink-0 rounded-lg border border-primary/20 bg-primary/5 px-3 text-[11px] font-bold text-primary-dark transition hover:border-primary/25 hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/30 dark:border-primary-dark/60 dark:bg-primary-dark/40 dark:text-primary-hover dark:hover:bg-primary-dark/60"
           :aria-label="`运行${view.items[0].title || '报表'}`"
           @click="emit('select', view.items[0])"
         >

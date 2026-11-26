@@ -61,7 +61,10 @@
               :disabled="entry.disabled"
               :title="entry.disabledHint || entry.label"
               @click="run(entry.key)"
-            >{{ entry.label }}</button>
+            >
+              <span aria-hidden="true">{{ entry.icon }}</span>
+              <span class="truncate">{{ entry.label }}</span>
+            </button>
           </template>
         </template>
       </div>

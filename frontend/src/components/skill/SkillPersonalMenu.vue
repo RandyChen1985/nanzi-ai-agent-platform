@@ -83,7 +83,7 @@ function select(key: PersonalMenuKey) {
       class="flex items-center gap-2"
       :class="collapsed ? 'mb-3 flex-col' : 'mb-5 px-2'"
     >
-      <span class="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">
+      <span class="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary text-white shadow-sm shadow-primary/20">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" />
         </svg>
@@ -119,7 +119,7 @@ function select(key: PersonalMenuKey) {
         :class="[
           collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5 text-left',
           active === item.key
-            ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20'
+            ? 'bg-primary font-semibold text-white shadow-sm shadow-primary/20'
             : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100',
         ]"
         :title="collapsed ? item.label : undefined"
@@ -134,7 +134,7 @@ function select(key: PersonalMenuKey) {
           <span
             v-if="collapsed && badgeText(item.badge)"
             class="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2"
-            :class="active === item.key ? 'bg-white ring-blue-600' : 'bg-amber-500 ring-gray-50 dark:ring-gray-800'"
+            :class="active === item.key ? 'bg-white ring-primary' : 'bg-amber-500 ring-gray-50 dark:ring-gray-800'"
           ></span>
         </span>
         <template v-if="!collapsed">
@@ -186,8 +186,8 @@ function select(key: PersonalMenuKey) {
       type="button"
       class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
       :class="active === item.key
-        ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
-        : 'border-gray-200 bg-white text-gray-600 hover:border-blue-200 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-800 dark:hover:text-blue-400'"
+        ? 'border-primary bg-primary text-white shadow-sm'
+        : 'border-gray-200 bg-white text-gray-600 hover:border-primary/20 hover:text-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-primary-dark dark:hover:text-primary'"
       @click="select(item.key)"
     >
       <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -57,10 +57,10 @@ def test_scenario_templates_use_separate_market_detail_and_install_routes():
     assert "场景包市场" in market
     assert "按业务场景一键交付智能体" in market
     assert "templateStats" in market
-    assert "bg-blue-800" in market
-    assert "text-blue-50" in market
-    assert "bg-white p-4 text-center shadow-sm" in market
-    assert "text-blue-900" in market
+    assert "bg-primary/10" in market
+    assert "text-gray-500" in market
+    assert "rounded-xl border border-gray-200 bg-white" in market
+    assert "text-primary-dark" in market
     assert "bg-white/15 p-3 text-center" not in market
     assert "selectedCategory" in market
     assert "activeTab" in market

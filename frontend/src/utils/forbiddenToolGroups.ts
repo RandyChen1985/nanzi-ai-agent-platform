@@ -192,18 +192,18 @@ export function groupToneClasses(
   }
   if (base === 'indigo') {
     return {
-      bigCard: 'border-gray-150 bg-white',
-      subCard: 'border-indigo-100',
-      subHead: 'bg-indigo-50/60 border-b border-indigo-100/50',
-      arrow: 'text-indigo-400',
-      dot: 'bg-indigo-500',
-      title: 'text-indigo-700',
-      count: 'text-indigo-400',
-      action: 'text-indigo-600 hover:text-indigo-800',
+      bigCard: 'border-gray-200 bg-white',
+      subCard: 'border-primary/10',
+      subHead: 'bg-primary/5 border-b border-primary/10',
+      arrow: 'text-primary',
+      dot: 'bg-primary',
+      title: 'text-primary-dark',
+      count: 'text-primary',
+      action: 'text-primary hover:text-primary-dark',
     }
   }
   return {
-    bigCard: 'border-gray-150 bg-white',
+    bigCard: 'border-gray-100 bg-white',
     subCard: 'border-gray-200',
     subHead: 'bg-gray-50 border-b border-gray-100',
     arrow: 'text-gray-400',

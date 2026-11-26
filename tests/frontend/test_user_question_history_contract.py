@@ -156,13 +156,11 @@ def test_question_card_snapshot_matches_live_card_shape():
 
 
 def test_awaiting_user_turn_is_audited_for_history_replay():
-    """awaiting_user 没有同轮恢复，必须在本轮落库，否则历史整体缺该轮。"""
+    """awaiting_user 以及主会话审批/外部执行挂起态均必须当场落库，避免放弃后丢历史。"""
     source = _read(FINALIZE_PY)
     assert "AUDIT_DEFERRED_STATUSES" in source
-    start = source.index("AUDIT_DEFERRED_STATUSES = {")
-    deferred = source[start : source.index("}", start)]
-    assert "awaiting_user" not in deferred, "awaiting_user 仍在延迟审计集合中"
-    assert "awaiting_permission" in deferred, "同轮可恢复暂停态应保持延迟审计"
+    # 审计已支持按 trace_id 幂等 upsert，不再延迟任何挂起态的落库。
+    assert "AUDIT_DEFERRED_STATUSES: set[str] = set()" in source
     assert "context.execution_status not in AUDIT_DEFERRED_STATUSES" in source
 
 

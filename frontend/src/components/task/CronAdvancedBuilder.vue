@@ -26,7 +26,7 @@
           : 'border-gray-100 bg-white hover:border-primary/30'"
         @click="selectScene(scene.id)"
       >
-        <span class="text-base leading-none">{{ scene.icon }}</span>
+        <span class="text-base leading-none" aria-hidden="true">{{ scene.icon }}</span>
         <p class="mt-1.5 text-xs font-bold text-gray-800">{{ scene.title }}</p>
         <p class="mt-0.5 text-[10px] leading-snug text-gray-400">{{ scene.desc }}</p>
       </button>
@@ -267,7 +267,7 @@
           <p class="text-sm font-bold text-gray-800">{{ description.summary }}</p>
           <p class="mt-0.5 text-[11px] leading-relaxed text-gray-400">{{ description.detail }}</p>
         </div>
-        <code class="shrink-0 rounded-md bg-white px-2 py-1 font-mono text-[11px] text-blue-600 ring-1 ring-gray-100">{{ expression || '—' }}</code>
+        <code class="shrink-0 rounded-md bg-white px-2 py-1 font-mono text-[11px] text-primary ring-1 ring-gray-100">{{ expression || '—' }}</code>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-1">
         <span class="text-[10px] font-bold text-gray-400">接下来（{{ timezone }}）：</span>

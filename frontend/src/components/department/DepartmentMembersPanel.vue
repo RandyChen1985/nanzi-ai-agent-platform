@@ -7,7 +7,7 @@
           v-model="search"
           type="search"
           placeholder="搜索姓名 / 账号 / 邮箱"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
         />
       </div>
       <label
@@ -21,7 +21,7 @@
       <button
         v-if="canEdit && deptId"
         type="button"
-        class="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-bold text-white hover:bg-blue-700"
+        class="rounded-lg bg-primary px-3.5 py-2 text-sm font-bold text-white hover:bg-primary-dark"
         @click="openAddDialog"
       >+ 添加成员</button>
     </div>
@@ -29,7 +29,7 @@
     <!-- 批量操作条 -->
     <div
       v-if="canEdit && selectedIds.length"
-      class="flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300"
+      class="flex flex-wrap items-center gap-2 rounded-lg border border-primary/10 bg-primary/5 px-3 py-1.5 text-xs text-primary-dark dark:border-primary/30 dark:bg-primary/10 dark:text-primary-hover"
     >
       <span class="font-bold">已选 {{ selectedIds.length }} 人</span>
       <button
@@ -40,7 +40,7 @@
       >移出本部门</button>
       <button
         type="button"
-        class="rounded px-2 py-1 text-blue-600 hover:underline dark:text-blue-300"
+        class="rounded px-2 py-1 text-primary hover:underline dark:text-primary-hover"
         @click="selectedIds = []"
       >取消选择</button>
     </div>
@@ -103,12 +103,12 @@
                 </span>
                 <span
                   v-if="member.is_primary"
-                  class="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"
+                  class="rounded bg-primary/5 px-1.5 py-0.5 text-[11px] font-bold text-primary dark:bg-primary/10 dark:text-primary-hover"
                   :title="member.primary_dept_name ? `主部门：${member.primary_dept_name}` : '主部门'"
                 >主部门</span>
                 <span
                   v-if="member.role === 'admin'"
-                  class="rounded bg-purple-50 px-1.5 py-0.5 text-[11px] font-bold text-purple-600 dark:bg-purple-500/10 dark:text-purple-300"
+                  class="rounded bg-primary/5 px-1.5 py-0.5 text-[11px] font-bold text-primary dark:bg-primary/10 dark:text-primary-hover"
                 >管理员</span>
               </div>
               <div v-if="member.email" class="mt-0.5 text-[11px] text-gray-400">{{ canEditUser ? member.email : maskEmail(member.email) }}</div>
@@ -177,7 +177,7 @@
                 <button
                   v-if="canJumpToUsers"
                   type="button"
-                  class="rounded px-1 py-0.5 text-[11px] font-bold text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10"
+                  class="rounded px-1 py-0.5 text-[11px] font-bold text-primary hover:bg-primary/5 dark:hover:bg-primary/10"
                   title="到用户管理里查看该用户"
                   @click="jumpToUser(member)"
                 >↗</button>
@@ -248,7 +248,7 @@
                 v-model="candidateSearch"
                 type="search"
                 placeholder="搜索姓名 / 账号 / 邮箱"
-                class="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                class="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
               />
             </div>
             <label
@@ -301,7 +301,7 @@
                 class="group flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition-colors"
                 :class="
                   candidateSelected.includes(user.id)
-                    ? 'border-blue-300 bg-blue-50/70 dark:border-blue-500/40 dark:bg-blue-500/10'
+                    ? 'border-primary/25 bg-primary/5 dark:border-primary/40 dark:bg-primary/10'
                     : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
                 "
               >
@@ -323,7 +323,7 @@
                     </span>
                     <span
                       v-if="user.role === 'admin'"
-                      class="shrink-0 rounded bg-violet-50 px-1 text-[11px] font-bold text-violet-600 dark:bg-violet-500/10 dark:text-violet-300"
+                      class="shrink-0 rounded bg-primary/5 px-1 text-[11px] font-bold text-primary dark:bg-primary/10 dark:text-primary-hover"
                     >管理员</span>
                     <span
                       v-if="Number(user.status) === 0"
@@ -346,11 +346,11 @@
             class="flex items-center justify-between gap-2 border-t border-gray-100 px-5 py-3 dark:border-gray-800"
           >
             <div class="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
-              <span>已选 <b class="text-blue-600 dark:text-blue-400">{{ candidateSelected.length }}</b> 人</span>
+              <span>已选 <b class="text-primary dark:text-primary">{{ candidateSelected.length }}</b> 人</span>
               <button
                 v-if="candidateSelected.length"
                 type="button"
-                class="text-blue-600 hover:underline dark:text-blue-400"
+                class="text-primary hover:underline dark:text-primary"
                 @click="candidateSelected = []"
               >清空</button>
               <span v-if="candidates.length >= 50" class="text-gray-400">· 最多显示 50 位，可搜索缩小范围</span>
@@ -363,7 +363,7 @@
               >取消</button>
               <button
                 type="button"
-                class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
                 :disabled="!candidateSelected.length || adding"
                 @click="submitAdd"
               >{{ adding ? '添加中…' : `加入本部门${candidateSelected.length ? `（${candidateSelected.length}）` : ''}` }}</button>
@@ -679,12 +679,12 @@ const onUnassignedOnlyChange = () => {
 
 // 候选列表的展示辅助：首字母头像 + 已属部门摘要
 const AVATAR_CLASSES = [
-  'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
+  'bg-primary/10 text-primary-dark dark:bg-primary/20 dark:text-primary-hover',
   'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
   'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
-  'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+  'bg-primary/10 text-primary-dark dark:bg-primary/20 dark:text-primary-hover',
   'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
-  'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300'
+  'bg-cyan-100 text-cyan-700 dark:text-cyan-300 dark:bg-primary/20 dark:text-cyan-300'
 ]
 
 const initialOf = (user: any): string =>

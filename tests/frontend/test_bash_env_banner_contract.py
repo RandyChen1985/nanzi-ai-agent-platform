@@ -53,7 +53,7 @@ def test_bash_env_banner_component_has_env_variants_copy_and_dismiss():
     assert "运行在 Kubernetes 沙箱" in source
     assert "sandbox" in source.lower()
     assert "emerald" in source and "amber" in source
-    assert "violet" in source and "sky" in source
+    assert "primary" in source and "sky" in source
     # 手动关闭
     assert "defineEmits" in source
     assert 'aria-label="关闭"' in source or 'aria-label="关闭横幅"' in source

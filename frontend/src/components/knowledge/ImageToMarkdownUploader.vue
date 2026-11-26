@@ -55,10 +55,10 @@
         v-for="item in items"
         :key="item.id"
         class="flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors"
-        :class="item.active ? 'border-primary/60 bg-blue-50/40' : 'border-gray-100'"
+        :class="item.active ? 'border-primary/60 bg-primary/5' : 'border-gray-100'"
         @click="selectItem(item)"
       >
-        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-[9px] font-bold text-blue-500">
+        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary/5 text-[9px] font-bold text-primary">
           {{ extLabel(item.name) }}
         </span>
         <div class="min-w-0 flex-1">
@@ -232,7 +232,7 @@ const badgeText = (status: ItemStatus) =>
 const badgeClass = (status: ItemStatus) =>
   ({
     pending: 'bg-gray-100 text-gray-500',
-    parsing: 'bg-blue-50 text-blue-600',
+    parsing: 'bg-primary/5 text-primary',
     ready: 'bg-emerald-50 text-emerald-600',
     failed: 'bg-red-50 text-red-600',
   }[status])

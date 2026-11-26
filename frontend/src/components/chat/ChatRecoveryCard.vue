@@ -16,7 +16,7 @@
       <span class="mt-0.5 shrink-0" aria-hidden="true">
         <svg
           v-if="state.phase === 'syncing'"
-          class="h-3.5 w-3.5 animate-spin text-blue-500"
+          class="h-3.5 w-3.5 animate-spin text-primary"
           viewBox="0 0 24 24"
           fill="none"
         >

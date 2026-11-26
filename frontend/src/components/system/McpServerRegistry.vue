@@ -59,6 +59,7 @@ function withRulePath(rule: LocatorRule | null, valuePath?: string | null): Loca
 }
 import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
+import McpDefinitionChangesDrawer from '../mcp/McpDefinitionChangesDrawer.vue'
 import ToolGroupTabs from './ToolGroupTabs.vue'
 import { ALL_GROUP_KEY, computeGroupTabs, type GroupableTool } from '@/utils/toolGroupTabs'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
@@ -99,7 +100,6 @@ const myUserName = computed(() => String(userInfo.value?.user_name || ''))
 const namePrefix = computed(() =>
   buildMcpServerNamePrefix(props.scope, myUserId.value),
 )
-
 
 // 这个组件同时服务两个入口：系统管理的「平台 MCP」（scope=global）和
 // 个人中心的「我的 MCP」（scope=personal）。绑定语义完全不同——
@@ -152,7 +152,13 @@ function sortServers(list: any[]): any[] {
  * 右栏概览里的「值得处理」四项：点一下就把左栏切成对应筛选。
  * 它们不进后端（列表接口只有 scope 一个参数），纯前端过滤即可。
  */
-type McpTodoKey = 'offline' | 'unpublished' | 'stale-tools' | 'stale-sync'
+type McpTodoKey =
+  | 'offline'
+  | 'unpublished'
+  | 'stale-tools'
+  | 'stale-sync'
+  | 'definition-changed'
+  | 'probe-failing'
 const todoFilter = ref<McpTodoKey | ''>('')
 
 const MCP_TODO_LABELS: Record<McpTodoKey, string> = {
@@ -160,6 +166,10 @@ const MCP_TODO_LABELS: Record<McpTodoKey, string> = {
   unpublished: '一个工具都没发布',
   'stale-tools': '远端已失效',
   'stale-sync': '超过 7 天未同步',
+  'definition-changed': '工具定义有变更',
+  // 抄近路把 stale-sync 的判据换成「多久没探测」是错的：探测每天跑，那个待办会
+  // 永远为空，而标签还写着「未同步」。探测的问题单独成一项，语义才不串。
+  'probe-failing': '探测连不上远端',
 }
 
 const STALE_SYNC_MS = 7 * 24 * 60 * 60 * 1000
@@ -170,6 +180,11 @@ const matchesTodo = (server: any, key: McpTodoKey): boolean => {
     return server.enabled_status === 1 && Number(server.published_tool_count || 0) === 0
   }
   if (key === 'stale-tools') return Number(server.stale_tool_count || 0) > 0
+  if (key === 'definition-changed') return Number(server.pending_change_count || 0) > 0
+  if (key === 'probe-failing') {
+    return String(server.last_probe_status || '') === 'unreachable'
+      || Number(server.probe_failure_count || 0) >= 3
+  }
   const ts = server.last_sync_at ? new Date(server.last_sync_at).getTime() : 0
   return !ts || Date.now() - ts > STALE_SYNC_MS
 }
@@ -350,7 +365,14 @@ const mcpGroupDistribution = computed(() => {
 
 const mcpTodoCounts = computed(() => {
   const rows = serversMatchingFilters.value
-  return (['offline', 'unpublished', 'stale-tools', 'stale-sync'] as McpTodoKey[])
+  return ([
+    'definition-changed',
+    'probe-failing',
+    'offline',
+    'unpublished',
+    'stale-tools',
+    'stale-sync',
+  ] as McpTodoKey[])
     .map((key) => ({
       key,
       label: MCP_TODO_LABELS[key],
@@ -498,6 +520,75 @@ const selectedToolIds = ref<Set<string>>(new Set())
 const selectedServer = ref<any>(null)
 const tools = ref<any[]>([])
 const toolsLoading = ref(false)
+
+/* ---------------- 工具定义变更（自动探测发现，只读结果） ---------------- */
+
+const showChangesDrawer = ref(false)
+/** 当前服务下「定义已变更」的工具全名集合，工具行据此显示徽章 */
+const changedToolNames = ref<Set<string>>(new Set())
+
+/**
+ * 拉当前服务的待确认变更。
+ *
+ * 只取 tool_name 用于工具行徽章；明细在抽屉里（抽屉自己请求，避免把 before/after
+ * 全量塞进列表响应——一个服务几十条变更时那是几百 KB 的无用载荷）。
+ */
+const fetchDefinitionChanges = async (serverId: string) => {
+  try {
+    const res = await axios.get('/api/portal/mcp/changes', {
+      params: { server_id: serverId, status: 'pending', days: 90, limit: 200 },
+    })
+    if (selectedServer.value?.id !== serverId) return
+    const list = Array.isArray(res.data?.items) ? res.data.items : []
+    changedToolNames.value = new Set(list.map((item: any) => String(item.tool_name)))
+  } catch {
+    // 变更列表拉不到不该挡住工具列表：工具照常展示，只是不显示「定义已变更」徽章。
+    changedToolNames.value = new Set()
+  }
+}
+
+const pendingChangeCount = computed(() => Number(selectedServer.value?.pending_change_count || 0))
+
+/** 全平台待确认变更总数：提示条与页签角标都从服务列表的聚合字段来，不额外查库 */
+const totalPendingChanges = computed(() =>
+  servers.value.reduce((sum: number, server: any) => sum + Number(server.pending_change_count || 0), 0))
+
+const hasChangedTool = (tool: any) => changedToolNames.value.has(String(tool?.tool_name || ''))
+
+/**
+ * 进页面时看到提示条就够一次，关掉别再来烦。
+ * 与分组页签的收起状态同一个套路：认状态存本地，不问你第二遍。
+ */
+const DEFINITION_HINT_DISMISSED_KEY = 'mcp-console:definition-changes-hint-dismissed'
+const definitionHintDismissed = ref(false)
+try {
+  definitionHintDismissed.value = localStorage.getItem(DEFINITION_HINT_DISMISSED_KEY) === '1'
+} catch {
+  definitionHintDismissed.value = false
+}
+const dismissDefinitionHint = () => {
+  definitionHintDismissed.value = true
+  try {
+    localStorage.setItem(DEFINITION_HINT_DISMISSED_KEY, '1')
+  } catch {
+    // 隐私模式下写不进去：本次会话内仍然生效
+  }
+}
+
+const openChangesDrawer = () => {
+  if (!selectedServer.value?.id) return
+  showChangesDrawer.value = true
+}
+
+/** 抽屉里应用/忽略之后：卡片角标与工具行徽章都要跟着变 */
+const onDefinitionChangesUpdated = () => {
+  const id = selectedServer.value?.id
+  // fetchServers 内部会顺带刷新变更角标，不用再单独 fetchDefinitionChanges
+  fetchServers()
+  // 应用变更走的是「整服务 sync_tools」，工具的描述/参数/增删都变了——不刷新工具列表，
+  // 用户关掉抽屉后看到的还是旧定义，会以为没生效。
+  if (id) fetchTools(id)
+}
 /** 工具列表请求序号：快速切换服务时，旧响应不得覆盖新选中服务的工具。 */
 let toolsRequestSeq = 0
 
@@ -772,7 +863,6 @@ const pendingBindings = ref<Record<string, HeaderBinding>>({})
 /** 某个 header 名的绑定；槽位约定是 ``header:<名称>``。未保存的也算。 */
 const bindingOfHeader = (key: string): HeaderBinding | null =>
   headerBindings.value[`header:${key.trim()}`] || pendingBindings.value[`header:${key.trim()}`] || null
-
 
 /** 正在为哪个「其他 Header」挑凭据；非空时显示绑定弹窗。 */
 const headerBindSlot = ref<string | null>(null)
@@ -1431,6 +1521,8 @@ const fetchServers = async () => {
       count: servers.value.length,
     })
     serversLoaded.value = true
+    // 列表刷新后角标是新的，当前服务的工具徽章也要跟着刷新
+    if (selectedServer.value?.id) fetchDefinitionChanges(selectedServer.value.id)
     // 从「收到的分享」点「去我的 MCP 看看」时列表可能刚重建，加载完再落选中
     if (pendingFocusServerId && !tryResolvePendingFocus()) {
       settlePendingFocus(false)
@@ -1447,17 +1539,28 @@ const fetchServers = async () => {
 const isEchoTestServer = (server: any) =>
   String(server?.sse_url || '').includes('/mcp/echo/')
 
+/** 卡片时间的 tooltip：同步时间 + 探测时间一起给，避免两个时间在界面上打架 */
+const probeTimeHint = (server: any): string => {
+  const lines: string[] = []
+  if (server?.last_sync_at) lines.push(`最近同步：${new Date(server.last_sync_at).toLocaleString()}`)
+  if (server?.last_probe_at) {
+    lines.push(`最近检查远端定义：${new Date(server.last_probe_at).toLocaleString()}`)
+  }
+  if (server?.last_probe_error) lines.push(`最近一次探测失败：${server.last_probe_error}`)
+  return lines.join('\n')
+}
+
 /** 同步时间放完整时间会在窄卡片里挤成一坨：显示相对时间，完整值留给 title */
-function formatRelativeTime(value: string | null | undefined): string {
+function formatRelativeTime(value: string | null | undefined, verb = '同步'): string {
   if (!value) return ''
   const ts = new Date(value).getTime()
   if (Number.isNaN(ts)) return ''
   const diff = Date.now() - ts
-  if (diff < 60_000) return '刚刚同步'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前同步`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前同步`
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前同步`
-  return `${new Date(ts).toLocaleDateString('zh-CN')} 同步`
+  if (diff < 60_000) return `刚刚${verb}`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前${verb}`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前${verb}`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前${verb}`
+  return `${new Date(ts).toLocaleDateString('zh-CN')} ${verb}`
 }
 
 /** 参数名只做展示：坏 schema 不能把整个工具列表的渲染打断 */
@@ -1470,6 +1573,31 @@ function toolParamNames(tool: any): string[] {
     return properties && typeof properties === 'object' ? Object.keys(properties) : []
   } catch {
     return []
+  }
+}
+
+/**
+ * 参数 chip 的 `title`：完整 `parameter_schema` 原文。
+ *
+ * 只读用户没有测试台（点「在线测试」既看不到按钮，也拿不到执行权限），参数 chip
+ * 的悬停提示是他们唯一能看到「这个工具到底要什么入参」的地方，所以这里给全文而不是
+ * 摘要；同时它只放在 `title` 属性里——把长 JSON 铺在 chip 旁边会把工具行撑成一团。
+ * 坏 schema 也照原样给出来：能看到原文总比什么都没有强。
+ */
+function toolParameterSchemaTitle(tool: any): string {
+  const raw = tool?.parameter_schema
+  if (raw === null || raw === undefined || raw === '') return ''
+  if (typeof raw !== 'string') {
+    try {
+      return JSON.stringify(raw, null, 2)
+    } catch {
+      return ''
+    }
+  }
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
   }
 }
 
@@ -1570,7 +1698,6 @@ const draftUnboundNames = computed(() => [
   ...draftMissingCred.value,
   ...draftMissingRule.value,
 ])
-
 
 function credentialParamList(tool: any): string[] {
   const raw = tool?.credential_params
@@ -3104,10 +3231,16 @@ const selectServer = (server: any) => {
   // 先清空，避免新服务的标题下短暂展示上一个服务的工具；同时让旧请求失效。
   tools.value = []
   toolsRequestSeq += 1
+  changedToolNames.value = new Set()
   fetchTools(server.id)
-  fetchServerUsage(server.id).then((usage) => {
-    if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
-  })
+  // 用量统计与定义变更都是 admin-only 接口：只读时一次都不发，
+  // 否则每次选中服务都弹一条「获取 MCP 使用情况失败」，把只读浏览变成持续报错。
+  if (canSave.value) {
+    fetchDefinitionChanges(server.id)
+    fetchServerUsage(server.id).then((usage) => {
+      if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
+    })
+  }
 }
 
 const serverToolsPanelRef = ref<HTMLElement | null>(null)
@@ -3185,7 +3318,7 @@ onMounted(fetchServers)
         href="https://modelscope.cn/mcp"
         target="_blank"
         rel="noopener noreferrer"
-        class="flex items-center gap-1.5 border-b border-gray-100 bg-gray-50/60 px-3 py-1.5 text-[11px] text-gray-500 transition-colors hover:text-indigo-600 dark:border-gray-800 dark:bg-gray-800/40 dark:text-gray-400 dark:hover:text-indigo-300 sm:px-4"
+        class="flex items-center gap-1.5 border-b border-gray-100 bg-gray-50/60 px-3 py-1.5 text-[11px] text-gray-500 transition-colors hover:text-primary dark:border-gray-800 dark:bg-gray-800/40 dark:text-gray-400 dark:hover:text-primary-hover sm:px-4"
       >
         <ShoppingBagIcon class="h-3.5 w-3.5 shrink-0" />
         <span class="truncate">去魔搭发现更多 MCP 服务</span>
@@ -3201,8 +3334,8 @@ onMounted(fetchServers)
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0 flex-1">
             <h4
-              class="flex items-center text-sm font-black transition-colors duration-300"
-              :class="props.scope === 'personal' ? 'text-emerald-400' : 'text-indigo-400'"
+              class="flex items-center text-sm font-bold transition-colors duration-300"
+              :class="props.scope === 'personal' ? 'text-emerald-400' : 'text-primary'"
             >
               <ShoppingBagIcon class="mr-1.5 h-4 w-4 shrink-0" />
               探索 MCP 市场
@@ -3217,7 +3350,7 @@ onMounted(fetchServers)
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex items-center rounded px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-all duration-200 whitespace-nowrap"
-              :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
+              :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-primary hover:bg-primary'"
             >
               立即前往市场
               <MagnifyingGlassIcon class="ml-1 h-3 w-3" />
@@ -3290,7 +3423,7 @@ onMounted(fetchServers)
                 <button
                   type="button"
                   @click="showAddDropdown = false; resetWizard(); showAddModal = true"
-                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-primary/5 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   <PlusIcon class="h-4 w-4 text-primary shrink-0" />
                   <div class="min-w-0 flex-1">
@@ -3304,10 +3437,10 @@ onMounted(fetchServers)
                 <button
                   type="button"
                   @click="showAddDropdown = false; createEchoTestMcp()"
-                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-primary-dark transition-colors hover:bg-primary/5 dark:text-primary dark:hover:bg-primary-dark/40"
                   title="创建个人 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
                 >
-                  <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                  <BeakerIcon class="h-4 w-4 text-primary shrink-0" />
                   <div class="min-w-0 flex-1">
                     <div>创建 Echo 测试 MCP</div>
                     <div class="text-[10px] font-normal text-gray-400">个人联调诊断服务</div>
@@ -3363,7 +3496,7 @@ onMounted(fetchServers)
                   v-if="canCreateMcp"
                   type="button"
                   @click="showAddDropdown = false; resetWizard(); showAddModal = true"
-                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-primary/5 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   <PlusIcon class="h-4 w-4 text-primary shrink-0" />
                   <div class="min-w-0 flex-1">
@@ -3378,10 +3511,10 @@ onMounted(fetchServers)
                   v-if="canEditMcp"
                   type="button"
                   @click="showAddDropdown = false; createEchoTestMcp()"
-                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-primary-dark transition-colors hover:bg-primary/5 dark:text-primary dark:hover:bg-primary-dark/40"
                   title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
                 >
-                  <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                  <BeakerIcon class="h-4 w-4 text-primary shrink-0" />
                   <div class="min-w-0 flex-1">
                     <div>创建 Echo 测试 MCP</div>
                     <div class="text-[10px] font-normal text-gray-400">平台内置联调诊断服务</div>
@@ -3408,13 +3541,13 @@ onMounted(fetchServers)
             type="button"
             class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition-colors"
             :class="onlyRunning
-              ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300'
+              ? 'border-primary/20 bg-primary/5 text-primary-dark dark:border-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover'
               : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'"
             :aria-pressed="onlyRunning"
             title="只显示已启用的 MCP 服务"
             @click="onlyRunning = !onlyRunning"
           >
-            <span class="h-1.5 w-1.5 rounded-full" :class="onlyRunning ? 'bg-indigo-500' : 'bg-gray-300'"></span>
+            <span class="h-1.5 w-1.5 rounded-full" :class="onlyRunning ? 'bg-primary' : 'bg-gray-300'"></span>
             仅运行中
           </button>
 
@@ -3454,7 +3587,7 @@ onMounted(fetchServers)
             :aria-label="mcpGroupTabsVisible ? '隐藏分组页签' : '显示分组页签'"
             @click="mcpGroupTabsVisible = !mcpGroupTabsVisible"
           >
-            <FolderIcon class="h-4 w-4" :class="mcpGroupTabsVisible ? 'text-indigo-500' : ''" />
+            <FolderIcon class="h-4 w-4" :class="mcpGroupTabsVisible ? 'text-primary' : ''" />
           </button>
 
           <!-- 卡片密度：55 个服务时紧凑模式一屏能多看一倍 -->
@@ -3466,9 +3599,39 @@ onMounted(fetchServers)
             :aria-label="cardDensity === 'compact' ? '切换为宽松视图' : '切换为紧凑视图'"
             @click="cardDensity = cardDensity === 'compact' ? 'comfy' : 'compact'"
           >
-            <TableCellsIcon class="h-4 w-4" :class="cardDensity === 'compact' ? 'text-indigo-500' : ''" />
+            <TableCellsIcon class="h-4 w-4" :class="cardDensity === 'compact' ? 'text-primary' : ''" />
           </button>
         </div>
+
+        <!-- 进页面就能看见的提示条：发现变更时出现一次，关掉不再烦 -->
+        <div
+          v-if="canSave && canSyncMcp && !definitionHintDismissed && totalPendingChanges > 0"
+          class="flex items-start gap-2 rounded-md border border-violet-200 bg-violet-50 px-2 py-1.5"
+        >
+          <svg class="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5.2l3.2 2" />
+          </svg>
+          <div class="min-w-0 flex-1">
+            <p class="text-[11px] leading-snug text-violet-900">
+              有 <strong>{{ totalPendingChanges }} 处工具定义变更</strong>待确认，探测只记录差异、未改动任何工具。
+            </p>
+            <button
+              type="button"
+              class="mt-0.5 text-[10px] font-bold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900"
+              @click="todoFilter = 'definition-changed'"
+            >只看有变更的服务 →</button>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 rounded p-0.5 text-violet-400 transition-colors hover:text-violet-700"
+            aria-label="收起变更提示"
+            @click="dismissDefinitionHint"
+          >
+            <XMarkIcon class="h-3.5 w-3.5" />
+          </button>
+        </div>
+
       </div>
 
       <div class="custom-scrollbar max-h-[min(52vh,28rem)] flex-1 overflow-y-auto lg:max-h-none">
@@ -3537,7 +3700,7 @@ onMounted(fetchServers)
                 <div v-if="server.user_assertion_enabled || isEchoTestServer(server)" class="mt-1 flex flex-wrap items-center gap-1">
                   <span
                     v-if="server.user_assertion_enabled"
-                    class="inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
+                    class="inline-flex rounded border border-primary/10 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary-dark dark:border-primary/30 dark:bg-primary/10 dark:text-primary-hover"
                   >已启用用户身份签名</span>
                   <span
                     v-if="isEchoTestServer(server)"
@@ -3568,6 +3731,7 @@ onMounted(fetchServers)
                   :title="server.enabled_status === 1 ? '运行中' : '已禁用'"
                 ></span>
                 <Switch
+                  v-if="canSave"
                   :model-value="server.enabled_status === 1"
                   :disabled="!canSave || !canEditMcp || statusLoading[server.id]"
                   :loading="statusLoading[server.id]"
@@ -3575,6 +3739,7 @@ onMounted(fetchServers)
                   @update:model-value="handleServerStatusChange(server, $event)"
                 />
                 <button
+                  v-if="canSave"
                   type="button"
                   class="rounded p-1 text-gray-400 transition-all hover:bg-white hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary dark:hover:bg-gray-800 dark:hover:text-gray-200"
                   :class="actionMenu?.server?.id === server.id
@@ -3637,10 +3802,20 @@ onMounted(fetchServers)
               >
                 已分享 {{ server.share_count }} 次
               </span>
+              <!-- 定义变更用紫色：amber 已被「未发布 / 远端已删除」占用，绿色是「已发布」，
+                   red 是错误。同一屏里颜色不能有两种含义。 -->
+              <span
+                v-if="canSave && canSyncMcp && Number(server.pending_change_count || 0) > 0"
+                class="cursor-help rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 font-bold text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300"
+                v-tooltip="`自动探测发现 ${server.pending_change_count} 处远端定义与本地不一致（描述、参数等）。这些差异只被记录下来，还没有改动任何工具；确认后才应用。`"
+              >{{ server.pending_change_count }} 项定义变更</span>
+              <!-- 显示「最近同步」而不是「最近检查」：这张卡上用户想判断的是
+                   「本地数据多新」，而探测时间只代表「系统看过」——后者放 tooltip 就够，
+                   占着右下角会让人误以为工具定义刚刚被更新过。 -->
               <span
                 v-if="server.last_sync_at && cardDensity !== 'compact'"
                 class="ml-auto shrink-0 text-gray-400"
-                :title="new Date(server.last_sync_at).toLocaleString()"
+                :title="probeTimeHint(server)"
               >{{ formatRelativeTime(server.last_sync_at) }}</span>
             </div>
 
@@ -3654,7 +3829,7 @@ onMounted(fetchServers)
                 <template v-else>还有 {{ unpublishedToolCount(server) }} 个工具未发布</template>
               </span>
               <button
-                v-if="canPublishMcp"
+                v-if="canSave && canPublishMcp"
                 type="button"
                 class="text-[10px] font-bold text-amber-700 underline decoration-amber-300 underline-offset-2 transition-colors hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
                 @click.stop="goPublishServerTools(server)"
@@ -3686,7 +3861,7 @@ onMounted(fetchServers)
             <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
               <span
                 class="block h-full rounded-full"
-                :class="bar.muted ? 'bg-gray-300 dark:bg-gray-600' : 'bg-indigo-400'"
+                :class="bar.muted ? 'bg-gray-300 dark:bg-gray-600' : 'bg-primary'"
                 :style="{ width: `${bar.pct}%` }"
               ></span>
             </span>
@@ -3737,9 +3912,10 @@ onMounted(fetchServers)
             />
             <div class="min-w-0">
               <h3 class="truncate text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
-              <p class="mt-0.5 text-[10px] text-amber-600" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
+              <!-- 只读时「测试 / 发布 / 下线」三个入口本身就不存在，别再承诺这些操作 -->
+              <p class="mt-0.5 text-[10px] text-amber-600" v-if="!isSelectedServerEnabled">{{ canSave ? '服务已禁用，工具暂不可测试、发布或下线' : '服务已禁用，工具不可用' }}</p>
               <p class="mt-0.5 text-[10px] text-slate-500" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
-              <p class="mt-0.5 text-[10px] font-black text-primary" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
+              <p class="mt-0.5 text-[10px] font-bold text-primary" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
               <div v-if="selectedServerUsage" class="mt-1">
                 <button
                   type="button"
@@ -3775,7 +3951,7 @@ onMounted(fetchServers)
               v-if="canSave"
               type="button"
               @click="openLogModal(selectedServer)"
-              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50/60 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96]"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-primary/20 hover:bg-primary/5 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 active:scale-[0.96]"
               v-tooltip="'查看该服务的出站调用日志'"
               aria-label="查看该服务的出站调用日志"
             >
@@ -3823,21 +3999,41 @@ onMounted(fetchServers)
               </svg>
               <span class="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm">{{ staleToolCount }}</span>
             </button>
+            <!-- 定义变更：自动探测发现远端与本地不一致时，入口就在这里 -->
+            <button
+              v-if="canSave && canSyncMcp"
+              type="button"
+              class="relative inline-flex h-8 items-center justify-center gap-1 rounded-lg border px-2 shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 active:scale-[0.96]"
+              :class="pendingChangeCount > 0
+                ? 'border-violet-200 bg-violet-50/70 text-violet-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700'
+                : 'border-gray-200 bg-white text-slate-400 hover:border-violet-200 hover:bg-violet-50/60 hover:text-violet-600'"
+              @click="openChangesDrawer"
+              v-tooltip="pendingChangeCount > 0
+                ? `该服务有 ${pendingChangeCount} 项工具定义变更待确认（探测只记录差异，未改动任何工具）`
+                : '查看工具定义变更历史（自动探测远端 tools/list 的差异）'"
+              :aria-label="`查看工具定义变更历史，待确认 ${pendingChangeCount} 项`"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5.2l3.2 2" />
+              </svg>
+              <span v-if="pendingChangeCount > 0" class="text-[11px] font-bold tabular-nums">{{ pendingChangeCount }}</span>
+            </button>
           </div>
         </div>
 
         <!-- 批量操作条：选中工具后独立成层，不与头部图标工具栏混排 -->
         <div
           v-if="canSave && canPublishMcp && selectedToolIds.size > 0"
-          class="flex flex-wrap items-center gap-2 border-b border-blue-100 bg-blue-50/70 px-3 py-2 sm:px-4 animate-fade-in"
+          class="flex flex-wrap items-center gap-2 border-b border-primary/10 bg-primary/5 px-3 py-2 sm:px-4 animate-fade-in"
         >
-          <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-700">
+          <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary-dark">
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M9 11l3 3L22 4" />
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
             批量操作
-            <span class="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{{ selectedToolIds.size }}</span>
+            <span class="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary-dark">{{ selectedToolIds.size }}</span>
           </span>
           <div class="ml-auto flex flex-wrap items-center gap-2">
             <button
@@ -3874,6 +4070,30 @@ onMounted(fetchServers)
               批量下线
             </button>
           </div>
+        </div>
+
+        <!-- 定义变更服务级提示条：探测发现差异时出现，一键进抽屉 -->
+        <div
+          v-if="canSave && canSyncMcp && pendingChangeCount > 0"
+          class="flex flex-col gap-2 border-b border-violet-200 bg-violet-50/80 px-3 py-2.5 animate-fade-in sm:flex-row sm:items-center sm:justify-between sm:px-4"
+        >
+          <div class="flex min-w-0 items-center gap-2">
+            <svg class="h-4 w-4 shrink-0 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5.2l3.2 2" />
+            </svg>
+            <span class="text-xs leading-snug text-violet-900">
+              自动探测发现该服务有 <strong class="text-violet-800">{{ pendingChangeCount }} 处工具定义变更</strong>待确认。
+              <span class="text-violet-700/80">探测只记录差异，没有改动任何工具。</span>
+            </span>
+          </div>
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center justify-center gap-1 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-violet-700 active:scale-95"
+            @click="openChangesDrawer"
+          >
+            查看差异
+          </button>
         </div>
 
         <!-- 全待发布提示条（当服务启用且工具全部为待发布时展示） -->
@@ -3914,7 +4134,7 @@ onMounted(fetchServers)
               class="group flex min-w-0 flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
               :class="[
                 canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
-                selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
+                selectedToolIds.has(tool.id) ? 'border-primary bg-primary/5 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
               ]"
             >
               <div class="flex min-w-0 flex-1 items-start pr-0 sm:pr-4">
@@ -3929,7 +4149,7 @@ onMounted(fetchServers)
                 <div class="min-w-0 flex-1">
                   <div class="mb-1 flex flex-wrap items-center gap-1.5">
                     <span class="text-sm font-bold text-gray-900 break-all">{{ tool.tool_name }}</span>
-                    <span v-if="tool.usage_count > 0" class="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700" title="被智能体引用次数">
+                    <span v-if="tool.usage_count > 0" class="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary-dark" title="被智能体引用次数">
                       <LinkIcon class="mr-0.5 h-3 w-3" />{{ tool.usage_count }}
                     </span>
                     <span v-if="!isSelectedServerEnabled" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">服务已禁用</span>
@@ -3940,6 +4160,17 @@ onMounted(fetchServers)
                     >远端已删除</span>
                     <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
                     <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
+                    <!-- 必须放在上面那条 v-if/v-else-if/v-else 四态链**之外**：中间插一个
+                         v-if 会把后面的 v-else-if / v-else 接到这个按钮上，结果是「定义
+                         已变更」一出现，发布状态徽标就消失；而服务禁用／远端已删除的工具
+                         又会同时显示矛盾的发布状态。 -->
+                    <button
+                      v-if="canSave && canSyncMcp && tool.is_available !== false && hasChangedTool(tool)"
+                      type="button"
+                      class="cursor-pointer rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-violet-700 transition-colors hover:bg-violet-100"
+                      v-tooltip="'远端这份工具的定义与本地生效的不一致，正在等人工确认。点开看差异；确认前智能体仍按本地旧定义调用。'"
+                      @click.stop="openChangesDrawer"
+                    >定义已变更</button>
                   </div>
                   <p class="line-clamp-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                     {{ tool.tool_description || '暂无描述' }}
@@ -3948,7 +4179,7 @@ onMounted(fetchServers)
                     <button
                       v-if="canManageTool(tool) && canPublishMcp"
                       type="button"
-                      class="mr-1 inline-flex shrink-0 items-center gap-0.5 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600 hover:bg-indigo-100"
+                      class="mr-1 inline-flex shrink-0 items-center gap-0.5 rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/10"
                       v-tooltip="'设置哪些参数的值由凭据中心提供'"
                       @click.stop="openParamMark(tool)"
                     >
@@ -3960,20 +4191,21 @@ onMounted(fetchServers)
                       :key="paramName"
                       role="button"
                       tabindex="0"
+                      :title="toolParameterSchemaTitle(tool)"
                       :class="[
                         'inline-flex items-center gap-0.5 rounded border px-1 text-[9px] transition-colors',
                         isCredentialParam(tool, paramName)
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                           : 'bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400',
                         canManageTool(tool) && canPublishMcp
-                          ? 'cursor-pointer hover:border-indigo-300 hover:text-indigo-600'
+                          ? 'cursor-pointer hover:border-primary/25 hover:text-primary'
                           : 'cursor-default',
                       ]"
                       v-tooltip="isCredentialParam(tool, paramName)
                         ? `${paramName} 的值由凭据中心提供，模型看不到它。点击打开参数设置。`
                         : (canManageTool(tool) && canPublishMcp
                             ? `点击打开参数设置，可把 ${paramName} 改为由凭据提供`
-                            : `${paramName}`)"
+                            : `${paramName}｜完整参数定义：${toolParameterSchemaTitle(tool)}`)"
                       @click.stop="openParamMark(tool, paramName)"
                       @keydown.enter.stop="openParamMark(tool, paramName)"
                     >
@@ -3987,7 +4219,7 @@ onMounted(fetchServers)
                 <button 
                   @click.stop="openTester(tool)"
                   :disabled="!canManageTool(tool)"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-indigo-600 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-primary/10 bg-white text-primary shadow-sm transition-all hover:border-primary/20 hover:bg-primary/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
                   v-tooltip="'在线测试'"
                   aria-label="在线测试"
                 >
@@ -4079,7 +4311,7 @@ onMounted(fetchServers)
               type="button"
               class="flex-1 py-1.5 text-center text-xs font-semibold rounded-md transition-colors flex items-center justify-center gap-1"
               :class="connectionInputTab === 'json'
-                ? 'bg-white shadow-sm text-indigo-700'
+                ? 'bg-white shadow-sm text-primary-dark'
                 : 'text-gray-500 hover:text-gray-700'"
               @click="connectionInputTab = 'json'"
             >
@@ -4102,7 +4334,7 @@ onMounted(fetchServers)
               class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-white text-gray-800 disabled:bg-gray-100"
               @keydown.stop
             />
-            <p v-if="mcpJsonPasteHint" class="text-[10px] text-indigo-700 leading-snug">{{ mcpJsonPasteHint }}</p>
+            <p v-if="mcpJsonPasteHint" class="text-[10px] text-primary-dark leading-snug">{{ mcpJsonPasteHint }}</p>
             <p v-if="newServer.sse_url" class="text-[10px] text-gray-500 font-mono truncate" :title="newServer.sse_url">
               当前地址：{{ newServer.sse_url }}
             </p>
@@ -4123,14 +4355,14 @@ onMounted(fetchServers)
                  以为关掉 Header 就一起关掉了身份传递。 -->
             <div class="order-3 h-px shrink-0 bg-gray-300" aria-hidden="true"></div>
 
-            <div class="order-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+            <div class="order-3 rounded-lg border border-primary/10 bg-primary/5 p-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
                   <div class="flex items-center gap-1.5">
                     <label class="text-xs font-bold text-gray-700">开启用户身份传递</label>
                     <button
                       type="button"
-                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary"
                       title="用户身份传递说明"
                       @click="openAuthHelp('开启用户身份传递', '开启后，系统会把当前登录用户和当前智能体生成短期签名 UserContext，通过 X-Nanzi-User-Assertion 发送给当前 MCP。关闭时完全沿用原有身份认证方式。')"
                     >?</button>
@@ -4138,7 +4370,7 @@ onMounted(fetchServers)
                   <p class="mt-1 text-[10px] leading-relaxed text-gray-500">
                     关闭时保持原有 MCP 调用方式；开启后仅为当前 MCP 增加签名用户身份。签名私钥由系统自动生成并加密保存，业务方只使用公钥验签。
                   </p>
-                  <p v-if="userAssertionPendingSave" class="mt-1 text-[10px] font-semibold leading-relaxed text-indigo-600">
+                  <p v-if="userAssertionPendingSave" class="mt-1 text-[10px] font-semibold leading-relaxed text-primary">
                     当前开关尚未保存：签名私钥在保存时才生成，未保存前无法发送带签名的连接测试。
                   </p>
                 </div>
@@ -4149,13 +4381,13 @@ onMounted(fetchServers)
                 />
               </div>
 
-              <div v-if="newServer.user_assertion_enabled" class="mt-4 space-y-3 border-t border-indigo-100 pt-3">
+              <div v-if="newServer.user_assertion_enabled" class="mt-4 space-y-3 border-t border-primary/10 pt-3">
                 <div>
                   <div class="mb-1 flex items-center gap-1.5">
                     <label class="text-[11px] font-semibold text-gray-700">MCP Audience（系统生成）</label>
                     <button
                       type="button"
-                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary"
                       title="Audience 说明"
                       @click="openAuthHelp('MCP Audience 在哪里使用？', '系统会按当前 MCP 的 server_id 自动生成 Audience，例如 mcp:当前MCP的ID。业务方把这个只读值配置为验签时的 aud 期望值，用来防止其他 MCP 接受本 MCP 的身份断言。用户不需要填写。')"
                     >?</button>
@@ -4170,7 +4402,7 @@ onMounted(fetchServers)
                     <button
                       v-if="mcpAudienceValue !== '保存后由系统自动生成'"
                       type="button"
-                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                      class="shrink-0 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[10px] font-semibold text-primary-dark hover:bg-primary/10"
                       aria-label="复制 Audience"
                       @click="copyMcpValue(mcpAudienceValue, 'Audience')"
                     >{{ copiedMcpValue === 'Audience' ? '已复制' : '复制 Audience' }}</button>
@@ -4182,7 +4414,7 @@ onMounted(fetchServers)
                     <label class="text-[11px] font-semibold text-gray-700">签名 Issuer（系统固定）</label>
                     <button
                       type="button"
-                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary"
                       title="Issuer 说明"
                       @click="openAuthHelp('签名 Issuer 在哪里使用？', 'Issuer 表示这份用户身份签名由谁签发。系统固定使用 nanzi-platform。业务方把这个只读值配置为验签时的 iss 期望值，用户不需要填写。')"
                     >?</button>
@@ -4196,19 +4428,19 @@ onMounted(fetchServers)
                     />
                     <button
                       type="button"
-                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                      class="shrink-0 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[10px] font-semibold text-primary-dark hover:bg-primary/10"
                       aria-label="复制 Issuer"
                       @click="copyMcpValue(mcpIssuerValue, 'Issuer')"
                     >{{ copiedMcpValue === 'Issuer' ? '已复制' : '复制 Issuer' }}</button>
                   </div>
                 </div>
 
-                <div class="rounded-md border border-indigo-100 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
+                <div class="rounded-md border border-primary/10 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
                   <div class="flex items-center gap-1.5 font-semibold text-gray-700">
                     <span>默认透传字段</span>
                     <button
                       type="button"
-                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary"
                       title="默认透传字段说明"
                       @click="openPayloadHelp"
                     >?</button>
@@ -4216,12 +4448,12 @@ onMounted(fetchServers)
                   <p class="mt-1">用户身份结构为 user_context + custom_attributes，业务 MCP 通过验签后的 user_context.user_id 关联业务用户。</p>
                 </div>
 
-                <div class="rounded-md border border-indigo-100 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
+                <div class="rounded-md border border-primary/10 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
                   <div class="flex items-center gap-1.5 font-semibold text-gray-700">
                     <span>公钥获取地址（JWKS）</span>
                     <button
                       type="button"
-                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary"
                       title="业务方如何使用"
                       @click="openAuthHelp('业务方如何使用公钥验签？', `业务 MCP 不需要获取或保存 NanZi 私钥，只需配置当前 MCP 的 JWKS 地址。示例：GET ${mcpJwksUrl || 'https://<NanZi域名>/.well-known/nanzi/mcp/<server_id>/jwks.json'}，缓存返回的公钥；收到 X-Nanzi-User-Assertion 后，根据 JWT Header 的 kid 选择公钥并验证签名，同时校验 iss、aud、exp、iat 和 jti。验签成功后，从 user_context.user_id 关联业务用户。例如：const userId = claims.user_context.user_id。关闭本开关的 MCP 不会发送这个 Header。`)"
                     >?</button>
@@ -4235,7 +4467,7 @@ onMounted(fetchServers)
                     />
                     <button
                       type="button"
-                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-100"
+                      class="shrink-0 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 font-semibold text-primary-dark hover:bg-primary/10"
                       aria-label="复制 JWKS 地址"
                       @click="copyJwksUrl"
                     >{{ copiedMcpValue === 'JWKS 地址' ? '已复制' : '复制 JWKS 地址' }}</button>
@@ -4243,14 +4475,14 @@ onMounted(fetchServers)
                   <p v-else class="mt-1">保存 MCP 后，系统会生成当前 MCP 专属地址；业务方访问该地址获取公钥。</p>
                 </div>
 
-                <div class="flex items-center justify-between gap-3 rounded-md border border-indigo-200 bg-indigo-50/70 p-2.5">
-                  <div class="min-w-0 text-[10px] leading-relaxed text-indigo-800">
+                <div class="flex items-center justify-between gap-3 rounded-md border border-primary/20 bg-primary/5 p-2.5">
+                  <div class="min-w-0 text-[10px] leading-relaxed text-primary-dark">
                     <div class="font-semibold">业务方接入示例</div>
                     <p>自动带入上面的 Audience、Issuer 和 JWKS 地址，生成可复制的验签示例。</p>
                   </div>
                   <button
                     type="button"
-                    class="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="shrink-0 rounded-lg bg-primary px-3 py-2 text-[10px] font-semibold text-white shadow-sm hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
                     :disabled="!mcpJwksUrl"
                     @click="openMcpCodeModal"
                   >一键生成调用模拟代码</button>
@@ -4259,7 +4491,7 @@ onMounted(fetchServers)
             </div>
           
             <!-- Authorization：固定 Token 与凭据中心二选一 -->
-            <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+            <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2 rounded-lg border border-primary/10 bg-primary/5 p-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
                   <label class="block text-xs font-bold text-gray-700">Authorization</label>
@@ -4274,11 +4506,11 @@ onMounted(fetchServers)
 
               <template v-if="authorizationEnabled">
                 <!-- 来源二选一。新建时也能选凭据：先记在 pendingBindings，保存拿到 id 后补写 -->
-                <div class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100">
+                <div class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-primary/10">
                   <button
                     type="button"
                     class="rounded-md px-2.5 py-1 text-[10px] font-semibold"
-                    :class="authSource === 'token' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
+                    :class="authSource === 'token' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-50'"
                     @click="authSource = 'token'"
                   >固定 Token</button>
                   <button
@@ -4292,7 +4524,7 @@ onMounted(fetchServers)
                 <!-- 固定 Token：服务级默认值，全平台共用 -->
                 <div v-if="authSource === 'token'" class="mt-3">
                   <div class="flex items-center gap-2">
-                    <span class="shrink-0 rounded border border-indigo-100 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
+                    <span class="shrink-0 rounded border border-primary/10 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
                     <input
                       :value="authorizationEditing ? authorizationToken : '********'"
                       type="password"
@@ -4305,7 +4537,7 @@ onMounted(fetchServers)
                     <button
                       v-if="isEditing && !authorizationEditing"
                       type="button"
-                      class="shrink-0 rounded border border-indigo-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                      class="shrink-0 rounded border border-primary/20 bg-white px-2.5 py-2 text-[10px] font-semibold text-primary-dark hover:bg-primary/5"
                       @click="startAuthorizationEdit"
                     >编辑</button>
                     <button
@@ -4443,7 +4675,7 @@ onMounted(fetchServers)
                       >
                         <KeyIcon class="h-3.5 w-3.5" />
                       </button>
-                      <button type="button" class="shrink-0 rounded border border-indigo-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50" @click="editHeaderPair(index)">编辑</button>
+                      <button type="button" class="shrink-0 rounded border border-primary/20 bg-white px-2 py-1.5 text-[10px] font-semibold text-primary-dark hover:bg-primary/5" @click="editHeaderPair(index)">编辑</button>
                       <button type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />
                       </button>
@@ -4451,7 +4683,7 @@ onMounted(fetchServers)
                     <template v-else-if="pair.existing && pair.removed">
                       <span class="min-w-0 flex-1 text-xs text-gray-400 line-through">{{ pair.key }}</span>
                       <span class="flex-1 text-[10px] text-red-500">保存后删除</span>
-                      <button type="button" class="shrink-0 text-[10px] font-semibold text-indigo-700 hover:underline" @click="restoreHeaderPair(index)">撤销</button>
+                      <button type="button" class="shrink-0 text-[10px] font-semibold text-primary-dark hover:underline" @click="restoreHeaderPair(index)">撤销</button>
                     </template>
                     <template v-else>
                       <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100" @input="pair.changed = true; authHeadersTouched = true" />
@@ -4649,7 +4881,7 @@ onMounted(fetchServers)
               v-if="wizardStep === 1 && connectionInputTab === 'json' && !isEditing"
               @click="applyMcpJsonPaste({ connect: true })" 
               :disabled="verifying"
-              class="flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-50 sm:px-6 sm:py-2"
+              class="flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-primary-dark disabled:opacity-50 sm:px-6 sm:py-2"
             >
               <ArrowPathIcon v-if="verifying" class="mr-2 h-4 w-4 animate-spin" />
               {{ verifying ? '正在连接并发现工具...' : '解析并连接发现工具' }}
@@ -4742,7 +4974,7 @@ onMounted(fetchServers)
         class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
         @click="runServerAction('logs')"
       >
-        <DocumentTextIcon class="h-4 w-4 shrink-0 text-indigo-500" />
+        <DocumentTextIcon class="h-4 w-4 shrink-0 text-primary" />
         调用日志
       </button>
       <template v-if="canSave">
@@ -4859,7 +5091,7 @@ onMounted(fetchServers)
           <span class="font-semibold text-gray-700">嵌入位置</span>
           <span class="rounded bg-white px-2 py-0.5 font-mono text-gray-600 ring-1 ring-gray-200">HTTP 请求</span>
           <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
-          <span class="rounded bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700 ring-1 ring-indigo-200">① 认证中间件 / Filter（验签，失败直接 401）</span>
+          <span class="rounded bg-primary/5 px-2 py-0.5 font-semibold text-primary-dark ring-1 ring-primary/20">① 认证中间件 / Filter（验签，失败直接 401）</span>
           <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
           <span class="rounded bg-white px-2 py-0.5 font-mono text-gray-600 ring-1 ring-gray-200">② MCP 端点 /mcp</span>
           <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
@@ -4871,19 +5103,19 @@ onMounted(fetchServers)
             <button
               type="button"
               class="rounded-md px-3 py-1.5 text-xs font-semibold"
-              :class="mcpCodeLanguage === 'python' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'"
+              :class="mcpCodeLanguage === 'python' ? 'bg-primary/10 text-primary-dark' : 'text-gray-500 hover:bg-gray-100'"
               @click="mcpCodeLanguage = 'python'"
             >Python</button>
             <button
               type="button"
               class="rounded-md px-3 py-1.5 text-xs font-semibold"
-              :class="mcpCodeLanguage === 'java' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'"
+              :class="mcpCodeLanguage === 'java' ? 'bg-primary/10 text-primary-dark' : 'text-gray-500 hover:bg-gray-100'"
               @click="mcpCodeLanguage = 'java'"
             >Java</button>
           </div>
           <button
             type="button"
-            class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+            class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary-dark hover:bg-primary/10"
             @click="copyMcpCode"
           >复制全部代码</button>
         </div>
@@ -4946,8 +5178,8 @@ onMounted(fetchServers)
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100 bg-white text-gray-600">
-                <tr v-for="row in payloadFieldRows" :key="`${row.location}-${row.field}`" class="align-top hover:bg-indigo-50/30">
-                  <td class="whitespace-nowrap px-3 py-2 font-medium text-indigo-700">{{ row.location }}</td>
+                <tr v-for="row in payloadFieldRows" :key="`${row.location}-${row.field}`" class="align-top hover:bg-primary/5">
+                  <td class="whitespace-nowrap px-3 py-2 font-medium text-primary-dark">{{ row.location }}</td>
                   <td class="whitespace-nowrap px-3 py-2 font-mono text-gray-800">{{ row.field }}</td>
                   <td class="whitespace-nowrap px-3 py-2">{{ row.required }}</td>
                   <td class="px-3 py-2 leading-relaxed">{{ row.usage }}</td>
@@ -4961,8 +5193,8 @@ onMounted(fetchServers)
               <div class="font-semibold text-amber-900">过滤规则：不会透传的敏感字段</div>
               <p class="mt-1">password、token、api_key、authorization、cookie、secret、private_key、session_token 等敏感字段会自动过滤。</p>
             </div>
-            <div class="rounded-lg border border-blue-100 bg-blue-50/70 p-3">
-              <div class="font-semibold text-blue-900">当前版本暂不包含</div>
+            <div class="rounded-lg border border-primary/10 bg-primary/5 p-3">
+              <div class="font-semibold text-primary-dark">当前版本暂不包含</div>
               <p class="mt-1">当前第一期不传 `tenant_id`、`scope` 和完整权限树；业务权限仍由业务 MCP 自己判断。</p>
             </div>
           </div>
@@ -5054,6 +5286,15 @@ onMounted(fetchServers)
       @close="closeAgentUsageDrawer"
       @refresh="refreshSelectedServerUsage"
     />
+
+    <!-- 工具定义变更抽屉：看差异 + 决定，应用前不会改动任何工具 -->
+    <McpDefinitionChangesDrawer
+      :visible="showChangesDrawer"
+      :server-id="selectedServer?.id || ''"
+      :server-name="selectedServer?.server_name || ''"
+      @close="showChangesDrawer = false"
+      @changed="onDefinitionChangesUpdated"
+    />
   </div>
         <!-- 参数级凭据：像工具参数那样一张表里逐个选，一次提交 -->
         <Teleport to="body">
@@ -5087,7 +5328,7 @@ onMounted(fetchServers)
                   type="button"
                   class="-mb-px border-b-2 px-3 py-2 text-xs transition-colors"
                   :class="paramTab === tab
-                    ? 'border-indigo-600 font-semibold text-indigo-700'
+                    ? 'border-primary font-semibold text-primary-dark'
                     : 'border-transparent text-gray-500 hover:text-gray-700'"
                   @click="switchParamTab(tab)"
                 >
@@ -5138,7 +5379,7 @@ onMounted(fetchServers)
                       :key="name"
                       :class="[
                         'border-t border-gray-100',
-                        paramFocus === name ? 'bg-indigo-50/60' : '',
+                        paramFocus === name ? 'bg-primary/5' : '',
                       ]"
                     >
                       <td class="py-2 pr-3">
@@ -5177,7 +5418,7 @@ onMounted(fetchServers)
                             :title="multiManagedSlotOf(paramSlot(paramMarkTarget.tool, name))
                               ? '这个参数由「多值凭据」统一管理，来源不能在这里单独改。要调整请到多值凭据页整组修改。'
                               : ''"
-                            class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                            class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400"
                           >
                             <option value="model">模型填写</option>
                             <option value="cred">固定凭据</option>
@@ -5190,7 +5431,7 @@ onMounted(fetchServers)
                                  结构被悄悄拆散——而且从这一页根本看不出来。 -->
                             <template v-if="multiManagedRuleOfSlot(paramSlot(paramMarkTarget.tool, name))">
                               <span
-                                class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700"
+                                class="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary-dark"
                                 title="这条规则由「多值凭据」一次性配置，组内所有参数共用同一条规则、各取不同字段。要改请到多值凭据页整组修改，在这里单独改会把它拆散。"
                               >
                                 由多值凭据统一管理{{
@@ -5202,7 +5443,7 @@ onMounted(fetchServers)
                               </span>
                               <span
                                 v-if="paramRuleDraft[name]"
-                                class="min-w-0 basis-full break-all text-[10px] text-indigo-600"
+                                class="min-w-0 basis-full break-all text-[10px] text-primary"
                               >{{ ruleSummary(paramRuleDraft[name]) }}</span>
                             </template>
                             <template v-else>
@@ -5232,7 +5473,7 @@ onMounted(fetchServers)
                                  组标识还在但语义已经散了，从这一页看不出来。 -->
                             <span
                               v-if="multiManagedFixedOfSlot(paramSlot(paramMarkTarget.tool, name))"
-                              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700"
+                              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary-dark"
                               title="这条凭据由「多值凭据」一次性选好、供组内多个参数各取一个字段。要换请到多值凭据页整组换，在这里单独换会把它拆散。"
                             >
                               由多值凭据统一管理（{{ multiManagedFixedOfSlot(paramSlot(paramMarkTarget.tool, name))?.binding_group_size }} 个参数）
@@ -5320,7 +5561,7 @@ onMounted(fetchServers)
                        而那一页正文已经够长，塞进去会顶掉按钮 -->
                   <span
                     v-if="paramMultiManagedCount"
-                    class="ml-1.5 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700"
+                    class="ml-1.5 inline-flex items-center rounded bg-primary/5 px-1.5 py-0.5 font-medium text-primary-dark"
                     :title="`${paramMultiManagedCount} 个参数由多值凭据统一管理（一条凭据供多个参数各取一个字段）。要改其中某个参数，请到「多值凭据」页整组修改；在这一页单独改会把组拆散。`"
                   >多值管理 {{ paramMultiManagedCount }}</span>
                   <span v-if="draftMissingCred.length" class="text-red-600">
@@ -5359,7 +5600,7 @@ onMounted(fetchServers)
                           ? `${paramMultiManagedCount} 个参数由多值凭据统一管理，保存不会改动它们`
                           : '')
                         : '没有改动可保存')"
-                    class="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                     :class="paramChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : ''"
                     @click="submitParamMark"
                   >
@@ -5514,6 +5755,5 @@ onMounted(fetchServers)
 </template>
 
 <style scoped>
-.animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
-@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
 </style>

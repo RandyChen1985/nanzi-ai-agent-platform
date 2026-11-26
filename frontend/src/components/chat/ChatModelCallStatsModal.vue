@@ -102,12 +102,12 @@ const contextBreakdownItems = (stat: any) => [
   {
     label: "工具 schema",
     value: Number(stat.context_breakdown?.tools_tokens || 0),
-    color: "bg-violet-400",
+    color: "bg-primary",
   },
   {
     label: "对话消息",
     value: Number(stat.context_breakdown?.conversation_tokens || 0),
-    color: "bg-blue-400",
+    color: "bg-primary",
   },
 ];
 
@@ -181,7 +181,7 @@ const statsSummary = computed(() => {
         v-if="!loading && imageUsage && imageUsage.calls"
         class="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-amber-900"
       >
-        <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-wider">图片消耗</span>
+        <span class="text-[10px] font-bold text-amber-700/80 uppercase tracking-wider">图片消耗</span>
         <span>
           出图 {{ imageUsage.images }} 张<template v-if="imageUsage.requested > imageUsage.images">（请求 {{ imageUsage.requested }} 张）</template>
         </span>
@@ -278,7 +278,7 @@ const statsSummary = computed(() => {
                   </span>
                   <span
                     v-if="stat.subagent"
-                    class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300 border border-violet-200/60 dark:border-violet-800/40"
+                    class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium bg-primary/5 text-primary dark:bg-primary-dark/40 dark:text-primary-hover border border-primary/20 dark:border-primary-dark/40"
                     :title="'委派子代理消耗（临时会话 ' + (stat.child_session_id || '') + '）'"
                   >
                     子代理
@@ -313,13 +313,13 @@ const statsSummary = computed(() => {
                   {{ stat.input_tokens }}
                   <template v-if="stat.cache_input_tokens > 0">
                     <span
-                      class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40"
+                      class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-sans font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40"
                       :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens"
                     >
                       缓存 {{ stat.cache_input_tokens }}
                     </span>
                     <span
-                      class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 border border-gray-200/60 dark:border-gray-700/40"
+                      class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-sans font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 border border-gray-200/60 dark:border-gray-700/40"
                       :title="'未缓存输入 Token: ' + uncachedTokens(stat)"
                     >
                       未缓存 {{ uncachedTokens(stat) }}
@@ -346,7 +346,7 @@ const statsSummary = computed(() => {
                   <span
                     v-for="tName in stat.tool_names"
                     :key="tName"
-                    class="bg-blue-50 dark:bg-blue-900/30 text-blue-500 border border-blue-100/50 dark:border-blue-800/30 px-1 py-0.5 rounded text-[9px] font-mono"
+                    class="bg-primary/5 dark:bg-primary-dark/30 text-primary border border-primary/10 dark:border-primary-dark/30 px-1 py-0.5 rounded text-[9px] font-mono"
                   >
                     {{ tName }}
                   </span>
@@ -361,7 +361,7 @@ const statsSummary = computed(() => {
               <!-- Tool Call Arguments Details -->
               <div v-if="stat.tool_calls && stat.tool_calls.length > 0" class="bg-gray-100/60 dark:bg-gray-950/40 p-2 rounded-lg text-[10px] font-mono text-gray-600 dark:text-gray-400 border border-gray-100 dark:border-gray-800 space-y-1 max-h-[100px] overflow-y-auto">
                 <div v-for="(call, cIdx) in stat.tool_calls" :key="cIdx" class="break-all whitespace-pre-wrap">
-                  <span class="text-blue-500 dark:text-blue-400 font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
+                  <span class="text-primary dark:text-primary font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
                 </div>
               </div>
             </div>
@@ -461,7 +461,7 @@ const statsSummary = computed(() => {
             <div v-if="stat.reasoning_content || stat.response_text" class="pt-1 border-t border-gray-100/50 dark:border-gray-700/20">
               <button
                 @click="emit('toggle', stat.call_index)"
-                class="text-[10px] text-primary dark:text-blue-400 hover:underline flex items-center space-x-1 font-bold focus:outline-none cursor-pointer"
+                class="text-[10px] text-primary dark:text-primary hover:underline flex items-center space-x-1 font-bold focus:outline-none cursor-pointer"
               >
                 <span>{{ expanded[stat.call_index] ? '收起思考与输出' : '展开思考与输出' }}</span>
                 <svg class="w-3 h-3 transform transition-transform" :class="expanded[stat.call_index] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -23,7 +23,7 @@
       </div>
       <h3
         v-else
-        class="text-2xl sm:text-3xl font-black tabular-nums leading-none"
+        class="text-2xl sm:text-3xl font-bold tabular-nums leading-none"
         :class="warning ? 'text-amber-600' : 'text-gray-900'"
       >
         {{ value }}
@@ -92,8 +92,8 @@ const props = withDefaults(
 )
 
 const TONE_CLASS: Record<Tone, string> = {
-  blue: 'bg-blue-50 text-blue-600',
-  indigo: 'bg-indigo-50 text-indigo-600',
+  blue: 'bg-primary/5 text-primary',
+  indigo: 'bg-primary/5 text-primary',
   emerald: 'bg-emerald-50 text-emerald-600',
   amber: 'bg-amber-50 text-amber-600',
 }

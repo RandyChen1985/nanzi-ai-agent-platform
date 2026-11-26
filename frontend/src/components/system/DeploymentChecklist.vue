@@ -138,16 +138,16 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
 </script>
 
 <template>
-  <section v-if="!props.compact && !loading && visible && isExpanded && (!props.hideWhenComplete || !isComplete || forceVisible)" id="deployment-checklist-details" class="hidden lg:block rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-slate-50/60 p-4 shadow-sm sm:p-5">
+  <section v-if="!props.compact && !loading && visible && isExpanded && (!props.hideWhenComplete || !isComplete || forceVisible)" id="deployment-checklist-details" class="hidden lg:block rounded-2xl border border-primary/10 bg-gradient-to-r from-primary/5 via-primary/5 to-slate-50/60 p-4 shadow-sm sm:p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <div class="flex items-center gap-2">
           <h2 class="text-base font-bold text-gray-900">首次部署检查</h2>
-          <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">{{ completedCount }} / {{ steps.length }}</span>
+          <span class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary-dark">{{ completedCount }} / {{ steps.length }}</span>
         </div>
         <p class="mt-1 text-xs text-gray-500">完成模型、参数与智能体发布检查，确保平台可以正常使用。</p>
       </div>
-      <button v-if="!props.compact" type="button" class="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50" @click="isExpanded = !isExpanded">{{ isExpanded ? '收起检查清单' : '重新展开' }}</button>
+      <button v-if="!props.compact" type="button" class="rounded-lg border border-primary/20 bg-white px-3 py-1.5 text-xs font-medium text-primary-dark hover:bg-primary/5" @click="isExpanded = !isExpanded">{{ isExpanded ? '收起检查清单' : '重新展开' }}</button>
     </div>
 
     <div v-if="!props.compact && isExpanded" class="mt-4 flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
@@ -159,14 +159,14 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
               <div class="flex items-center gap-1.5">
                 <h3 class="text-sm font-semibold text-gray-900">{{ step.title }}</h3>
                 <span v-if="step.optional" class="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">可选</span>
-                <button type="button" class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-500 hover:border-blue-400 hover:text-blue-600" :aria-label="`${step.title}检查说明`" @click.stop="openHelp(step.id)">?</button>
+                <button type="button" class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-500 hover:border-primary hover:text-primary" :aria-label="`${step.title}检查说明`" @click.stop="openHelp(step.id)">?</button>
               </div>
               <p class="mt-1 text-xs leading-relaxed text-gray-500">{{ step.desc }}</p>
-              <button type="button" class="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800" @click="openStep(step)">前往配置 →</button>
+              <button type="button" class="mt-2 text-xs font-medium text-primary hover:text-primary-dark" @click="openStep(step)">前往配置 →</button>
             </div>
           </div>
         </article>
-        <div v-if="index < steps.length - 1" class="deployment-checklist-connector flex h-5 shrink-0 items-center justify-center text-xl font-semibold text-blue-300 lg:h-auto lg:w-8">
+        <div v-if="index < steps.length - 1" class="deployment-checklist-connector flex h-5 shrink-0 items-center justify-center text-xl font-semibold text-primary/40 lg:h-auto lg:w-8">
           <span class="lg:hidden">↓</span>
           <span class="hidden lg:inline">→</span>
         </div>
@@ -190,11 +190,11 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
           <button type="button" class="text-2xl leading-none text-gray-400 hover:text-gray-700" aria-label="关闭检查说明" @click="closeHelp">×</button>
         </div>
         <div class="mt-5 grid gap-5 sm:grid-cols-3">
-          <div class="sm:col-span-2"><h3 class="text-sm font-semibold text-gray-900">检查项目</h3><ul class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="item in helpContent[activeHelp].checks" :key="item.key" class="flex gap-1.5"><span class="font-mono font-semibold text-blue-600">{{ item.key }}</span><span>{{ item.what }}</span></li></ul></div>
-          <div><h3 class="text-sm font-semibold text-gray-900">操作步骤</h3><ol class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="(item, index) in helpContent[activeHelp].steps" :key="item" class="flex gap-1.5"><span class="font-semibold text-blue-600">{{ index + 1 }}.</span>{{ item }}</li></ol></div>
+          <div class="sm:col-span-2"><h3 class="text-sm font-semibold text-gray-900">检查项目</h3><ul class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="item in helpContent[activeHelp].checks" :key="item.key" class="flex gap-1.5"><span class="font-mono font-semibold text-primary">{{ item.key }}</span><span>{{ item.what }}</span></li></ul></div>
+          <div><h3 class="text-sm font-semibold text-gray-900">操作步骤</h3><ol class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="(item, index) in helpContent[activeHelp].steps" :key="item" class="flex gap-1.5"><span class="font-semibold text-primary">{{ index + 1 }}.</span>{{ item }}</li></ol></div>
           <div><h3 class="text-sm font-semibold text-gray-900">完成标准</h3><p class="mt-2 rounded-lg bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-800">{{ helpContent[activeHelp].done }}</p></div>
         </div>
-        <div class="mt-6 flex justify-end"><button type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700" @click="closeHelp">知道了</button></div>
+        <div class="mt-6 flex justify-end"><button type="button" class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark" @click="closeHelp">知道了</button></div>
       </div>
     </div>
   </Teleport>

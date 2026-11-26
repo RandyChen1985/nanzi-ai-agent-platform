@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_mcp_flow_guide_banner_contract():
     banner = _source("frontend/src/components/mcp/McpFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     view = _source("frontend/src/views/McpManagement.vue")
 
     # 1. 验证 5 步流程定义与核心业务规则
@@ -25,7 +26,7 @@ def test_mcp_flow_guide_banner_contract():
     assert "/dashboard/agent-management" in banner
     assert "新增服务" in banner
     assert "生态市场" in banner
-    assert "不再提示" in banner
+    assert "不再提示" in strip
     assert "SSE / Streamable HTTP / 生态市场" in banner
     assert "支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置" in banner
     assert "Stdio 本地进程" not in banner

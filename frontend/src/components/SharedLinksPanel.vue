@@ -56,7 +56,7 @@
             </p>
             <p class="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400">
               <span class="rounded px-1.5 py-0.5 font-bold" :class="statusClass(item.state)">{{ statusLabel(item.state) }}</span>
-              <span>{{ item.access_mode === 'secret' ? '密钥' : '公开' }}</span>
+              <span>{{ item.access_mode === 'secret' ? '🔑 密钥' : '🌐 公开' }}</span>
               <span>· 浏览 {{ item.view_count }} · 下载 {{ item.download_count }}</span>
             </p>
             <p class="mt-1 text-[11px] text-gray-400">

@@ -384,3 +384,21 @@ def test_embed_chat_does_not_persist_a_transient_client_transport_error():
     assert "stripClientStreamErrorSuffix(draft.content, draft.clientTransportErrorSuffix)" in source
     assert "agentMsg.value.clientTransportErrorSuffix = transportErrorSuffix;" in source
     assert "clientTransportErrorSuffix?: string;" in source
+
+
+def test_embed_chat_merges_resumable_card_snapshot_into_suspended_history_entry():
+    """挂起轮已落库时刷新页面：同 trace_id 挂起历史必须与本地审批卡快照原地合并而非丢弃快照。"""
+    source = _embed_source()
+    start = source.index("const restoreEmbedStreamSnapshot = async (")
+    body = source[start : source.index("const restored: Message[] = [];", start)]
+    assert "const existingSuspended = isSuspendedHistoryStatus(existingAgent.status);" in body
+    assert "snapshot.draft?.pendingPermission" in body
+    assert "snapshot.draft?.pendingExternalExecution" in body
+    assert "existingAgent.pendingPermission =" in body
+    assert "existingAgent.pendingExternalExecution =" in body
+    assert "reviveInterruptedResumeCards(existingAgent);" in body
+    # 纯等审批刷新（resumeOwned !== true）不得挂载 activeStreamDraft，避免触发无效事件重放清空已落库前半段。
+    assert "if (snapshot.resumeOwned === true) {" in body
+    resume_branch = body[body.index("if (snapshot.resumeOwned === true) {") :]
+    assert "resumeOwned: true," in resume_branch
+    assert "activeStreamDraft = {" in resume_branch

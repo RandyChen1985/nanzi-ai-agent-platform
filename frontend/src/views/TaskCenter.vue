@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import { UserIcon,
+  BellAlertIcon,
+  ChartBarIcon,
+  CloudIcon,
+  DocumentTextIcon,
+  MagnifyingGlassIcon,
+  PauseCircleIcon,
+  PlayCircleIcon,
+  TrashIcon,
+} from "@heroicons/vue/24/outline";
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { taskApi, type AgentTask, type TaskLog, type TaskExecutionHistoryItem } from '../api/task'
 import { agentApi, type AIAgent } from '../api/agent'
@@ -12,6 +22,7 @@ import {
   PencilSquareIcon,
   ClockIcon,
   PaperAirplaneIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
@@ -462,7 +473,8 @@ const editingTask = ref<Partial<AgentTask>>({})
 const taskTemplates = [
   {
     id: 'report',
-    icon: '📊',
+    icon: ChartBarIcon,
+    tone: 'text-primary',
     title: '每日 / 每周指标报表',
     desc: '查指定指标，出核心结论 + 关键数据，按周期推送。',
     name: '【指标】日报',
@@ -473,7 +485,8 @@ const taskTemplates = [
   },
   {
     id: 'inspection',
-    icon: '🚨',
+    icon: BellAlertIcon,
+    tone: 'text-amber-500',
     title: '阈值巡检 / 告警',
     desc: '异常显著标注，正常一句话简报，避免天天收长报告。',
     name: '【核心业务库】巡检',
@@ -484,7 +497,8 @@ const taskTemplates = [
   },
   {
     id: 'digest',
-    icon: '📝',
+    icon: DocumentTextIcon,
+    tone: 'text-emerald-600',
     title: '周期汇总简报',
     desc: '按「总体结论 → 分项明细 → 风险建议」结构输出周报。',
     name: '【运维组】周报',
@@ -495,7 +509,8 @@ const taskTemplates = [
   },
   {
     id: 'retro',
-    icon: '🔍',
+    icon: MagnifyingGlassIcon,
+    tone: 'text-sky-600',
     title: '失败盘点 / 质量复查',
     desc: '汇总本周失败记录，按原因分组并给改进建议。',
     name: '【定时任务】失败盘点',
@@ -506,7 +521,8 @@ const taskTemplates = [
   },
   {
     id: 'external',
-    icon: '🌤',
+    icon: CloudIcon,
+    tone: 'text-teal-600',
     title: '外部信息巡检',
     desc: '调用工具查天气 / 汇率 / 公告，整理成简报。',
     name: '【上海】天气与预警',
@@ -1049,7 +1065,6 @@ const parseCronToUI = (expr: string) => {
     }
 }
 
-
 // 「高级」模式输入框直接绑定 editingTask.cron_expr，这里做即时校验：
 // 非法时把输入框本身标红，并在下方给出具体到字段的原因，而不是一句笼统的「格式不正确」
 const cronExprValidation = computed(() => {
@@ -1153,7 +1168,6 @@ const taskSectionIssues = computed(() =>
 )
 
 /** 保存失败时展开出错的组并滚到可见——收起草稿里报错等于让用户找不到。 */
-
 
 // Filtered Tasks
 const scopedTasks = computed(() => {
@@ -1555,7 +1569,6 @@ const runTaskNow = async (task: AgentTask) => {
   }
 }
 
-
 const openLogs = async (task: AgentTask) => {
   if (task.task_type === 'saved_report') {
     openSavedReportTask(task, 'runs')
@@ -1742,7 +1755,6 @@ const loadMoreLogs = () => {
     logsPage.value++
     fetchLogs(true)
 }
-
 
 // Detail State for Trace
 const selectedTraceId = ref<string | null>(null)
@@ -2173,7 +2185,6 @@ const closeTaskMenu = () => {
   taskMenuId.value = null
 }
 
-
 const logStatusMeta = (status: string | undefined) => {
   const value = String(status || '').toLowerCase()
   if (value === 'success') {
@@ -2368,7 +2379,7 @@ onMounted(async () => {
             {{ chip.label }}
             <b
               v-if="chip.count > 0 || chip.clickable"
-              class="font-black tabular-nums"
+              class="font-bold tabular-nums"
               :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
             >{{ chip.count }}</b>
           </button>
@@ -2450,7 +2461,7 @@ onMounted(async () => {
             {{ chip.label }}
             <b
               v-if="chip.count > 0 || chip.clickable"
-              class="font-black tabular-nums"
+              class="font-bold tabular-nums"
               :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
             >{{ chip.count }}</b>
           </button>
@@ -2473,14 +2484,14 @@ onMounted(async () => {
           type="button"
           class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
           :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value
-            ? 'border-blue-600 text-blue-600'
+            ? 'border-primary text-primary'
             : 'border-transparent text-gray-500 hover:text-gray-700'"
           @click="taskTypeFilter = tab.value; mainViewTab = 'tasks'"
         >
           <span>{{ tab.label }}</span>
           <span
             class="min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold"
-            :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+            :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value ? 'bg-primary/10 text-primary-dark' : 'bg-gray-100 text-gray-500'"
           >
             {{ taskTypeCounts[tab.value] }}
           </span>
@@ -2491,8 +2502,8 @@ onMounted(async () => {
           type="button"
           class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
           :class="mainViewTab === 'history'
-            ? 'border-b-2 border-blue-600 text-blue-600'
-            : 'text-gray-500 hover:text-blue-700'"
+            ? 'border-b-2 border-primary text-primary'
+            : 'text-gray-500 hover:text-primary-dark'"
           title="查看全部任务的执行记录"
           @click="mainViewTab = 'history'"
         >执行记录 →</button>
@@ -2597,7 +2608,7 @@ onMounted(async () => {
                 <td class="px-4 py-3 text-xs text-gray-600">{{ item.creator_name || item.username || '—' }}</td>
                 <td class="px-4 py-3 text-xs text-gray-600 truncate" :title="item.agent_name || ''">{{ item.agent_name || item.agent_id || '—' }}</td>
                 <td class="px-4 py-3">
-                  <span class="rounded-full px-2 py-0.5 text-[9px] font-black" :class="logStatusMeta(item.status).class">
+                  <span class="rounded-full px-2 py-0.5 text-[9px] font-bold" :class="logStatusMeta(item.status).class">
                     {{ logStatusMeta(item.status).label }}
                   </span>
                 </td>
@@ -2747,32 +2758,32 @@ onMounted(async () => {
               <button
                 v-if="task.task_type === 'saved_report'"
                 type="button"
-                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                 @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
-              >订阅设置</button>
+              ><BellAlertIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />订阅设置</button>
               <button
                 v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
                 type="button"
-                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                 @click="closeTaskMenu(); openEditModal(task)"
-              >编辑任务</button>
+              ><PencilSquareIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />编辑任务</button>
               <button
                 type="button"
-                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                 @click="closeTaskMenu(); openLogs(task)"
-              >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+              ><ClockIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
               <button
                 v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
                 type="button"
-                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                 @click="closeTaskMenu(); showCronInspectionModal = true"
-              >巡检配置</button>
+              ><WrenchScrewdriverIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />巡检配置</button>
               <button
                 v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
                 type="button"
-                class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                class="mt-0.5 flex w-full cursor-pointer items-center gap-2 border-t border-gray-100 px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50"
                 @click="closeTaskMenu(); deleteTask(task)"
-              >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+              ><TrashIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
             </div>
           </div>
         </div>
@@ -2784,17 +2795,17 @@ onMounted(async () => {
             <span class="cursor-help border-b border-dashed border-gray-300 font-semibold text-gray-700">{{ formatTaskSchedule(task.cron_expr) }}</span>
           </HoverTip>
           <span
-            class="rounded-full border px-2 py-0.5 text-[10px] font-black"
+            class="rounded-full border px-2 py-0.5 text-[10px] font-bold"
             :class="taskStatusMeta(task).class"
             :title="taskStatusTip(task)"
           >{{ taskStatusMeta(task).label }}</span>
           <span
             v-if="task.task_type === 'saved_report'"
-            class="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700"
+            class="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700"
           >报表订阅</span>
           <span
             v-else-if="task.task_type === 'metadata_inspection'"
-            class="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-black text-purple-700"
+            class="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-bold text-primary-dark"
           >元数据巡检</span>
         </div>
 
@@ -2804,7 +2815,7 @@ onMounted(async () => {
           v-if="taskScheduleMismatch(task)"
           class="line-clamp-2 rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-700"
           :title="taskScheduleMismatch(task)"
-        >⚠ {{ taskScheduleMismatch(task) }}</p>
+        > {{ taskScheduleMismatch(task) }}</p>
         <p
           v-else-if="task.last_error"
           class="line-clamp-2 rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-700"
@@ -2816,12 +2827,12 @@ onMounted(async () => {
           class="flex items-center gap-1.5 text-[11px] text-gray-500"
           :title="'触发 ' + metricValue(task.trigger_count) + ' · 成功 ' + metricValue(task.success_count || task.run_count) + ' · 失败 ' + metricValue(task.failure_count) + ' · 跳过 ' + metricValue(task.skipped_count)"
         >
-          <span>运行 <b class="font-black text-gray-900">{{ taskMetricText(task).runs }}</b> 次</span>
+          <span>运行 <b class="font-bold text-gray-900">{{ taskMetricText(task).runs }}</b> 次</span>
           <span class="text-gray-300">·</span>
           <span>
             成功率
             <b
-              class="font-black"
+              class="font-bold"
               :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-900'"
             >{{ taskMetricText(task).rate }}</b>
           </span>
@@ -2919,8 +2930,8 @@ onMounted(async () => {
             <tr
               v-for="task in filteredTasks"
               :key="task.id"
-              class="group transition-colors hover:bg-blue-50/30"
-              :class="selectedTaskIds.has(task.id) ? 'bg-blue-50/40' : ''"
+              class="group transition-colors hover:bg-primary/5"
+              :class="selectedTaskIds.has(task.id) ? 'bg-primary/5' : ''"
             >
               <td class="px-2 py-3 align-middle">
                 <input
@@ -2939,11 +2950,11 @@ onMounted(async () => {
                       <p class="truncate text-sm font-bold leading-5 text-gray-900 group-hover:text-primary" :title="task.name">{{ task.name }}</p>
                       <span
                         v-if="task.task_type === 'saved_report'"
-                        class="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-black text-emerald-700"
+                        class="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700"
                       >报表</span>
                       <span
                         v-else-if="task.task_type === 'metadata_inspection'"
-                        class="shrink-0 rounded-full border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[9px] font-black text-purple-700"
+                        class="shrink-0 rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary-dark"
                       >巡检</span>
                     </div>
                     <p class="mt-0.5 max-w-full truncate text-[11px] text-gray-400">
@@ -2962,7 +2973,7 @@ onMounted(async () => {
               </td>
               <td v-if="showRateColumn" class="px-3 py-3">
                 <span
-                  class="text-xs font-black tabular-nums"
+                  class="text-xs font-bold tabular-nums"
                   :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-800'"
                 >{{ taskMetricText(task).rate }}</span>
               </td>
@@ -2978,7 +2989,7 @@ onMounted(async () => {
                 </div>
               </td>
               <td class="px-3 py-3">
-                <span class="rounded-full border px-2 py-0.5 text-[10px] font-black" :class="taskStatusMeta(task).class" :title="taskStatusTip(task)">
+                <span class="rounded-full border px-2 py-0.5 text-[10px] font-bold" :class="taskStatusMeta(task).class" :title="taskStatusTip(task)">
                   {{ taskStatusMeta(task).label }}
                 </span>
               </td>
@@ -3008,38 +3019,38 @@ onMounted(async () => {
                         <button
                           v-if="task.task_type === 'saved_report'"
                           type="button"
-                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                           @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
-                        >订阅设置</button>
+                        ><BellAlertIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />订阅设置</button>
                         <button
                           v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
                           type="button"
-                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                           @click="closeTaskMenu(); openEditModal(task)"
-                        >编辑任务</button>
+                        ><PencilSquareIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />编辑任务</button>
                         <button
                           type="button"
-                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                           @click="closeTaskMenu(); openLogs(task)"
-                        >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+                        ><ClockIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
                       <button
                         v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
                         type="button"
-                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                         @click="closeTaskMenu(); showCronInspectionModal = true"
-                      >巡检配置</button>
+                      ><WrenchScrewdriverIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />巡检配置</button>
                       <button
                         v-if="canManageTask(task)"
                         type="button"
-                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
                         @click="closeTaskMenu(); toggleStatus(task)"
-                      >{{ task.status === 1 ? '暂停调度' : '恢复调度' }}</button>
+                      ><PauseCircleIcon v-if="task.status === 1" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><PlayCircleIcon v-else class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ task.status === 1 ? '暂停调度' : '恢复调度' }}</button>
                       <button
                         v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
                         type="button"
-                        class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                        class="mt-0.5 flex w-full cursor-pointer items-center gap-2 border-t border-gray-100 px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50"
                         @click="closeTaskMenu(); deleteTask(task)"
-                      >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+                      ><TrashIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
                     </div>
                   </div>
                 </div>
@@ -3165,7 +3176,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">资源限定与安全审批</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3181,7 +3192,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">3</span>
                             <h4 class="font-bold text-gray-900 text-sm">渠道分发与触达订阅</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3197,7 +3208,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">手动试跑与时序观测</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -3242,9 +3253,9 @@ onMounted(async () => {
                          每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
                       </p>
                       <div class="bg-gray-50 rounded-xl p-4 border border-gray-200 font-mono text-[11px] space-y-1.5">
-                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
-                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
-                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
+                         <div class="flex"><span class="text-primary w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
+                         <div class="flex"><span class="text-primary w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
+                         <div class="flex"><span class="text-primary w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
                       </div>
                       <div class="p-3.5 bg-amber-50/70 rounded-xl border border-amber-100 space-y-1 text-xs">
                          <span class="font-bold text-amber-900">结果导向输出原则</span>
@@ -3291,9 +3302,9 @@ onMounted(async () => {
       <div class="h-full flex flex-col">
         <!-- 方案 C：新建先选模板。模板只预填，每一栏选完都能改 -->
         <div v-if="showTemplatePicker" class="min-h-0 flex-1 space-y-3 overflow-y-auto px-1 p-1">
-          <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
-            <p class="text-xs font-bold text-blue-900">先选一个起点，再改对象和时间</p>
-            <p class="mt-1 text-[11px] leading-relaxed text-blue-700">
+          <div class="rounded-xl border border-primary/10 bg-primary/5 px-3 py-2.5">
+            <p class="text-xs font-bold text-primary-dark">先选一个起点，再改对象和时间</p>
+            <p class="mt-1 text-[11px] leading-relaxed text-primary-dark">
               选模板会预填任务名、执行时间、要做什么、输出要求和通知渠道；<b>【】里的内容需要你换成自己的对象</b>，其余都能继续改。
             </p>
           </div>
@@ -3302,20 +3313,20 @@ onMounted(async () => {
               v-for="tpl in taskTemplates"
               :key="tpl.id"
               type="button"
-              class="flex flex-col items-start gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-blue-200 hover:bg-blue-50/40"
+              class="flex flex-col items-start gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-primary/20 hover:bg-primary/5"
               @click="applyTaskTemplate(tpl)"
             >
-              <span class="text-base leading-none">{{ tpl.icon }}</span>
+              <component :is="tpl.icon" class="h-5 w-5" :class="tpl.tone" aria-hidden="true" />
               <span class="text-xs font-bold text-gray-800">{{ tpl.title }}</span>
               <span class="text-[10px] leading-relaxed text-gray-500">{{ tpl.desc }}</span>
-              <span class="mt-1 rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">{{ tpl.summary }}</span>
+              <span class="mt-1 rounded border border-primary/10 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary-dark">{{ tpl.summary }}</span>
             </button>
             <button
               type="button"
               class="flex flex-col items-start gap-1 rounded-xl border border-dashed border-gray-300 bg-white px-3 py-2.5 text-left transition hover:border-gray-400 hover:bg-gray-50"
               @click="startBlankTask"
             >
-              <span class="text-base leading-none">✏️</span>
+              <PencilSquareIcon class="h-5 w-5 text-gray-400" aria-hidden="true" />
               <span class="text-xs font-bold text-gray-800">从空白开始</span>
               <span class="text-[10px] leading-relaxed text-gray-500">不预填任何内容，自己写全部字段。</span>
               <span class="mt-1 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500">完全自定义</span>
@@ -3333,7 +3344,7 @@ onMounted(async () => {
                宽屏时挪到右侧粘性栏（见本区块下方 aside），窄屏才留在表单顶部 -->
           <div v-if="isMobile" class="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="text-[10px] font-black text-gray-400">📋 这个任务会这样跑</span>
+              <span class="text-[10px] font-bold text-gray-400"> 这个任务会这样跑</span>
               <span v-if="taskSummaryNext" class="ml-auto rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700">
                 下次 {{ taskSummaryNext }}
               </span>
@@ -3394,7 +3405,7 @@ onMounted(async () => {
                       >MAIN</span>
                       <span
                         v-else-if="selectedEditingAgent?.is_system"
-                        class="shrink-0 rounded border border-blue-200 bg-blue-50 px-1 text-[8px] font-mono text-blue-600"
+                        class="shrink-0 rounded border border-primary/20 bg-primary/5 px-1 text-[8px] font-mono text-primary"
                       >SYSTEM</span>
                       <span
                         v-else-if="selectedEditingAgent"
@@ -3428,7 +3439,7 @@ onMounted(async () => {
                     class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
                     :class="
                       agentTab === 'system'
-                        ? 'bg-white text-blue-600 shadow-sm'
+                        ? 'bg-white text-primary shadow-sm'
                         : 'text-gray-500 hover:text-gray-700'
                     "
                     @click.stop="switchAgentTab('system')"
@@ -3439,7 +3450,7 @@ onMounted(async () => {
                     <span>系统智能体</span>
                     <span
                       class="rounded px-1 text-[9px] font-normal"
-                      :class="agentTab === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-gray-200/70 text-gray-500'"
+                      :class="agentTab === 'system' ? 'bg-primary/5 text-primary' : 'bg-gray-200/70 text-gray-500'"
                     >{{ agentSearchQuery ? `${filteredSystemAgents.length}/${systemAgents.length}` : systemAgents.length }}</span>
                   </button>
 
@@ -3542,7 +3553,7 @@ onMounted(async () => {
                             >MAIN</span>
                             <span
                               v-else
-                              class="rounded border border-blue-200 bg-blue-50 px-1 text-[8px] font-mono text-blue-600"
+                              class="rounded border border-primary/20 bg-primary/5 px-1 text-[8px] font-mono text-primary"
                             >SYSTEM</span>
                           </div>
                         </div>
@@ -3592,7 +3603,7 @@ onMounted(async () => {
                           class="h-full w-full object-cover"
                         />
                         <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
-                        <span v-else class="text-sm">👤</span>
+                        <UserIcon v-else class="h-4 w-4 text-gray-400" aria-hidden="true" />
                       </div>
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center justify-between gap-2">
@@ -3630,15 +3641,14 @@ onMounted(async () => {
             </div>
           </div>
 
-
           <div>
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary text-[10px] font-black text-white">1</span>
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary text-[10px] font-bold text-white">1</span>
               <label class="text-xs font-bold text-gray-700">要做什么</label>
               <span class="text-[10px] font-bold text-gray-400">必填 · 执行指令</span>
               <button
                 type="button"
-                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary"
                 title="查看填写示例"
                 aria-label="查看填写示例"
                 @click="showPromptHelpModal = true"
@@ -3669,7 +3679,7 @@ onMounted(async () => {
                       v-for="tpl in promptTemplates"
                       :key="tpl.title"
                       type="button"
-                      class="w-full px-3 py-2 text-left hover:bg-indigo-50/60 transition-colors"
+                      class="w-full px-3 py-2 text-left hover:bg-primary/5 transition-colors"
                       @click="applyPromptTemplate(tpl.text)"
                     >
                       <div class="text-xs font-semibold text-gray-700">{{ tpl.title }}</div>
@@ -3688,8 +3698,8 @@ onMounted(async () => {
                 />
               </div>
             </div>
-            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-blue-800">
-              <span class="shrink-0 font-black">①</span>
+            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-primary/10 bg-primary/5 px-2.5 py-1.5 text-[11px] leading-relaxed text-primary-dark">
+              <span class="shrink-0 font-bold">①</span>
               <span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 不要图表请写第 2 栏，那边才会强制生效。</span>
             </div>
             <TaskPromptComposer
@@ -3731,19 +3741,19 @@ onMounted(async () => {
 
           <div>
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gray-300 text-[10px] font-black text-white">2</span>
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gray-300 text-[10px] font-bold text-white">2</span>
               <label class="text-xs font-bold text-gray-700">输出有什么要求</label>
               <span class="text-[10px] font-bold text-gray-400">选填 · 任务约束，留空不影响任务</span>
               <button
                 type="button"
-                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary"
                 title="查看填写说明与示例"
                 aria-label="查看填写说明与示例"
                 @click="showConstraintsHelpModal = true"
               >?</button>
             </div>
             <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600">
-              <span class="shrink-0 font-black text-gray-400">②</span>
+              <span class="shrink-0 font-bold text-gray-400">②</span>
               <span>只写<b>规矩</b>，不写任务。没有特别要求就<b>直接留空</b> —— 留空时任务行为与不加约束完全一致。</span>
             </div>
             <textarea
@@ -3759,11 +3769,11 @@ onMounted(async () => {
                 v-for="preset in constraintPresets"
                 :key="preset.label"
                 type="button"
-                class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition hover:border-primary/20 hover:bg-primary/5 hover:text-primary-dark"
                 :title="preset.text"
                 @click="appendConstraintPreset(preset.text)"
               >
-                <span class="font-black text-gray-400">+</span>{{ preset.label }}
+                <span class="font-bold text-gray-400">+</span>{{ preset.label }}
               </button>
             </div>
           </div>
@@ -3863,7 +3873,7 @@ onMounted(async () => {
                          class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/10"
                          @click="openCronBuilder"
                        >
-                         🎛 可视化生成
+                          可视化生成
                        </button>
                    </div>
                    <p class="text-[10px] text-gray-400">请使用标准 Cron 表达式，或点击「可视化生成」按分钟 / 小时 / 日 / 月 / 周组合</p>
@@ -3872,15 +3882,15 @@ onMounted(async () => {
 
             <div
               class="mt-2 p-2.5 rounded-xl flex items-start space-x-2 border transition"
-              :class="cronExprValidation.valid ? 'bg-blue-50/50 border-blue-100/50' : 'bg-rose-50/60 border-rose-200'"
+              :class="cronExprValidation.valid ? 'bg-primary/5 border-primary/10' : 'bg-rose-50/60 border-rose-200'"
             >
               <span
                 class="text-xs mt-0.5 italic shrink-0"
-                :class="cronExprValidation.valid ? 'text-blue-500' : 'text-rose-500'"
+                :class="cronExprValidation.valid ? 'text-primary' : 'text-rose-500'"
               >{{ cronExprValidation.valid ? 'Auto-Translate:' : '⚠ 格式有误:' }}</span>
               <p
                 class="text-[11px] font-bold leading-relaxed"
-                :class="cronExprValidation.valid ? 'text-blue-700' : 'text-rose-600'"
+                :class="cronExprValidation.valid ? 'text-primary-dark' : 'text-rose-600'"
               >{{ cronDescription }}</p>
             </div>
 
@@ -3888,12 +3898,12 @@ onMounted(async () => {
               v-if="cronNextRuns.length"
               class="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-emerald-100 bg-emerald-50/70 px-2.5 py-2"
             >
-              <span class="text-[10px] font-black text-emerald-700">接下来三次运行</span>
+              <span class="text-[10px] font-bold text-emerald-700">接下来三次运行</span>
               <span
                 v-for="(run, index) in cronNextRuns"
                 :key="run"
                 class="rounded border border-emerald-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700"
-              >{{ run }}<span v-if="index === 0" class="ml-1 font-sans text-[9px] font-black text-emerald-500">下次</span></span>
+              >{{ run }}<span v-if="index === 0" class="ml-1 font-sans text-[9px] font-bold text-emerald-500">下次</span></span>
             </div>
           </div>
 
@@ -3904,7 +3914,7 @@ onMounted(async () => {
               :aria-expanded="showAdvancedRetry ? 'true' : 'false'"
               @click="showAdvancedRetry = !showAdvancedRetry"
             >
-              <span class="text-[10px] font-black text-gray-400">{{ showAdvancedRetry ? '▾' : '▸' }}</span>
+              <span class="text-[10px] font-bold text-gray-400">{{ showAdvancedRetry ? '▾' : '▸' }}</span>
               <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">执行失败策略</span>
               <span class="text-[10px] text-gray-400">
                 {{ taskMaxRetries > 0 ? `失败重试 ${taskMaxRetries} 次 / 间隔 ${taskRetryDelayMinutes} 分钟` : '默认不重试' }}
@@ -3980,7 +3990,7 @@ onMounted(async () => {
                   :key="channel"
                   class="flex items-center gap-2"
                 >
-                  <span class="w-14 shrink-0 text-[10px] font-black text-gray-500">{{ notificationChannelLabel(channel) }}</span>
+                  <span class="w-14 shrink-0 text-[10px] font-bold text-gray-500">{{ notificationChannelLabel(channel) }}</span>
                   <select
                     v-model="notificationChannelGroups[channel]"
                     class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -4003,7 +4013,7 @@ onMounted(async () => {
                 <button
                   v-if="!embedded"
                   type="button"
-                  class="ml-1 font-black text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                  class="ml-1 font-bold text-primary underline underline-offset-2 hover:text-primary-dark"
                   @click="openPersonalNotificationSettings"
                 >
                   去个人中心配置消息通知
@@ -4024,7 +4034,7 @@ onMounted(async () => {
         >
           <div class="rounded-xl border border-gray-200 bg-white px-3 py-2.5">
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="text-[10px] font-black text-gray-400">📋 这个任务会这样跑</span>
+              <span class="text-[10px] font-bold text-gray-400"> 这个任务会这样跑</span>
               <span class="ml-auto text-[9px] font-bold text-gray-300">随填随更新</span>
             </div>
             <p class="text-xs leading-relaxed text-gray-600">
@@ -4070,7 +4080,7 @@ onMounted(async () => {
         </aside>
         </div>
 
-        <div v-if="!showTemplatePicker" class="flex justify-end space-x-3 pt-4 pb-safe-area border-t border-gray-50">
+        <div v-if="!showTemplatePicker" class="flex justify-end space-x-3 pt-4 pb-[env(safe-area-inset-bottom)] border-t border-gray-50">
           <button @click="closeEditModal" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600">取消</button>
           <button @click="saveTask" class="px-8 py-2 bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all font-bold text-sm">确认保存</button>
         </div>
@@ -4119,12 +4129,12 @@ onMounted(async () => {
         >
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <div class="min-w-0">
-              <p class="text-xs font-black text-gray-800">{{ example.title }}</p>
+              <p class="text-xs font-bold text-gray-800">{{ example.title }}</p>
               <p class="mt-0.5 text-[10px] text-gray-400 line-clamp-1">{{ example.tip }}</p>
             </div>
             <button
               type="button"
-              class="shrink-0 rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100"
+              class="shrink-0 rounded-lg bg-primary/5 px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary/10"
               @click="applyPromptExample(example.text)"
             >填入</button>
           </div>
@@ -4149,7 +4159,7 @@ onMounted(async () => {
           这里填写的内容会作为<b>高优先级约束</b>合并进智能体的系统提示词——当它与智能体自身的输出习惯（例如默认要求画图表、要求固定表格）冲突时，<b>以这里为准</b>。
         </p>
         <div class="overflow-hidden rounded-xl border border-gray-100">
-          <p class="border-b border-gray-100 bg-gray-50/70 px-2.5 py-1.5 text-xs font-black text-gray-800">同一件事，两栏分别写</p>
+          <p class="border-b border-gray-100 bg-gray-50/70 px-2.5 py-1.5 text-xs font-bold text-gray-800">同一件事，两栏分别写</p>
           <table class="w-full text-left text-[11px] leading-relaxed">
             <thead>
               <tr class="bg-gray-50/40 text-[10px] font-bold text-gray-400">
@@ -4183,7 +4193,7 @@ onMounted(async () => {
           </table>
         </div>
         <div class="rounded-xl border border-gray-100 bg-gray-50/70 p-2.5 space-y-1.5">
-          <p class="text-xs font-black text-gray-800">可以用来约束什么</p>
+          <p class="text-xs font-bold text-gray-800">可以用来约束什么</p>
           <p class="text-[11px] leading-relaxed text-gray-600"><b>输出形态</b>：列表 / 表格 / 纯文本、禁止图表代码块、按移动端排版。</p>
           <p class="text-[11px] leading-relaxed text-gray-600"><b>业务口径</b>：指标定义、单位、时间口径、统计方式。</p>
           <p class="text-[11px] leading-relaxed text-gray-600"><b>数据范围</b>：只看哪些区域 / 业务线 / 数据集。</p>
@@ -4196,12 +4206,12 @@ onMounted(async () => {
         >
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <div class="min-w-0">
-              <p class="text-xs font-black text-gray-800">{{ example.title }}</p>
+              <p class="text-xs font-bold text-gray-800">{{ example.title }}</p>
               <p class="mt-0.5 text-[10px] text-gray-400 line-clamp-1">{{ example.tip }}</p>
             </div>
             <button
               type="button"
-              class="shrink-0 rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100"
+              class="shrink-0 rounded-lg bg-primary/5 px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary/10"
               @click="applyConstraintExample(example.text)"
             >填入</button>
           </div>
@@ -4277,14 +4287,14 @@ onMounted(async () => {
               <button
                 type="button"
                 class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
-                :class="logsDensity === 'compact' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                :class="logsDensity === 'compact' ? 'bg-primary/5 text-primary' : 'text-gray-500 hover:bg-gray-100'"
                 title="所有记录压成一行，一屏扫完（再点一次回到标准）"
                 @click="setLogsDensity('compact')"
               >⌃ 全部折叠</button>
               <button
                 type="button"
                 class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
-                :class="logsDensity === 'expanded' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                :class="logsDensity === 'expanded' ? 'bg-primary/5 text-primary' : 'text-gray-500 hover:bg-gray-100'"
                 title="所有正文一次性展开（再点一次回到标准）"
                 @click="setLogsDensity('expanded')"
               >⌄ 全部展开</button>
@@ -4416,7 +4426,7 @@ onMounted(async () => {
                           >
                             <span v-if="(log as any).stepsLoading" class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></span>
                             执行步骤
-                            <span v-if="(log as any).steps?.length" class="rounded-full bg-gray-100 px-1 text-[10px] font-black text-gray-500">{{ (log as any).steps.length }}</span>
+                            <span v-if="(log as any).steps?.length" class="rounded-full bg-gray-100 px-1 text-[10px] font-bold text-gray-500">{{ (log as any).steps.length }}</span>
                             <span class="text-[9px]">{{ (log as any).isExpanded ? '⌃' : '⌄' }}</span>
                           </button>
                           <button
@@ -4427,7 +4437,7 @@ onMounted(async () => {
                         </div>
 
                         <!-- 执行步骤 -->
-                        <div v-show="(log as any).isExpanded" class="mt-2 border-l-2 border-blue-100 pl-2.5">
+                        <div v-show="(log as any).isExpanded" class="mt-2 border-l-2 border-primary/10 pl-2.5">
                           <div v-if="(log as any).stepsLoading" class="py-3">
                             <div class="flex animate-pulse items-center gap-1.5">
                               <div class="h-1 w-1 rounded-full bg-primary/40"></div>
@@ -4445,8 +4455,8 @@ onMounted(async () => {
                                 <span
                                   class="rounded px-1 py-px font-extrabold"
                                   :class="{
-                                    'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
-                                    'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
+                                    'bg-primary/10 text-blue-700': (step as any).event_type === 'thought',
+                                    'bg-primary/10 text-primary-dark': (step as any).event_type === 'router',
                                     'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
                                     'bg-emerald-100 text-emerald-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
                                     'bg-red-100 text-red-700': (step as any).event_type === 'error',
@@ -4533,8 +4543,6 @@ onMounted(async () => {
   background-position: right 0.625rem center;
   background-size: 0.875rem;
 }
-@keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
-.animate-slide-in-right { animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
 .drawer-slide-enter-active, .drawer-slide-leave-active {
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);

@@ -23,7 +23,7 @@ const emit = defineEmits<{
         >
           <h3 class="font-bold text-gray-800 text-lg flex items-center">
             <svg
-              class="w-5 h-5 text-blue-600 mr-2"
+              class="w-5 h-5 text-primary mr-2"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -400,9 +400,9 @@ const emit = defineEmits<{
         <div
           class="px-8 py-6 bg-gray-50 border-t border-gray-100 flex items-start space-x-4"
         >
-          <div class="bg-blue-100 p-2 rounded-lg">
+          <div class="bg-primary/10 p-2 rounded-lg">
             <svg
-              class="w-5 h-5 text-blue-600"
+              class="w-5 h-5 text-primary"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"

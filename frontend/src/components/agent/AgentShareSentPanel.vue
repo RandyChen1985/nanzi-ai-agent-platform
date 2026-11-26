@@ -104,7 +104,7 @@ const withdraw = async (record: AgentShareRecord) => {
       </button>
     </div>
 
-    <div class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
+    <div class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
       分享出去的是<strong>一份副本</strong>：对方接受后会得到属于他自己的智能体，需要重新命名并走向导确认。
       你这一份不会被改动，也不会变成共用。
     </div>

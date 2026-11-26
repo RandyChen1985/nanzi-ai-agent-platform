@@ -167,7 +167,7 @@ const clearTimeout = () => {
       <!-- Runtime Settings Section -->
       <div>
         <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-          <span class="mr-2">🚀</span> 运行环境 (Runtime)
+          运行环境 (Runtime)
         </h4>
 
         <div class="space-y-4">
@@ -264,7 +264,7 @@ const clearTimeout = () => {
       <!-- Prompt Tuning Section (Optional/Advanced) -->
       <div class="pt-4 border-t border-gray-100">
         <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-          <span class="mr-2">📝</span> 提示词微调 (Prompt Override)
+          提示词微调 (Prompt Override)
         </h4>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">工具描述覆盖</label>

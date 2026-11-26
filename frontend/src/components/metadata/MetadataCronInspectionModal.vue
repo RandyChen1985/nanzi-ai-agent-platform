@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ClockIcon } from "@heroicons/vue/24/outline";
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import Modal from '@/components/Modal.vue'
@@ -339,8 +340,8 @@ const getHealthBadge = (health: string) => {
     case 'skipped':
       return {
         label: '已跳过',
-        bgClass: 'bg-blue-50 text-blue-700 border-blue-200',
-        dotClass: 'bg-blue-500',
+        bgClass: 'bg-primary/5 text-primary-dark border-primary/20',
+        dotClass: 'bg-primary',
       }
     default:
       return {
@@ -382,10 +383,8 @@ const getHealthBadge = (health: string) => {
 
     <div v-else class="space-y-6 text-slate-700 text-sm">
       <!-- 顶部功能简介横幅 -->
-      <div class="rounded-xl p-4 bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-blue-50/30 border border-blue-100 flex items-start gap-3">
-        <div class="w-9 h-9 rounded-lg bg-blue-100/80 text-blue-600 flex items-center justify-center shrink-0 shadow-sm text-lg">
-          ⏱️
-        </div>
+      <div class="rounded-xl p-4 bg-gradient-to-r from-primary/5 via-primary/5 to-primary/5 border border-primary/10 flex items-start gap-3">
+        <div class="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0 shadow-sm text-lg"><ClockIcon class="h-5 w-5" aria-hidden="true" /></div>
         <div class="space-y-1">
           <h4 class="font-semibold text-slate-800 text-sm">自动化物理结构一致性巡检</h4>
           <p class="text-xs text-slate-600 leading-relaxed">
@@ -452,7 +451,7 @@ const getHealthBadge = (health: string) => {
           <div class="flex items-center justify-between">
             <label class="block text-xs font-bold text-slate-700">巡检时间周期 (Cron 计划)</label>
             <span v-if="!config.enabled" class="text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
-              ⚠️ 任务处于暂停状态，保存后需开启开关才会自动执行
+              任务处于暂停状态，保存后需开启开关才会自动执行
             </span>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -464,7 +463,7 @@ const getHealthBadge = (health: string) => {
               class="text-left px-3.5 py-2.5 rounded-lg border transition-all flex flex-col justify-center cursor-pointer"
               :class="
                 selectedPreset === opt.value
-                  ? 'border-blue-500 bg-blue-50/80 text-blue-900 ring-2 ring-blue-400/50 font-medium'
+                  ? 'border-primary bg-primary/5 text-primary-dark ring-2 ring-primary/50 font-medium'
                   : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50'
               "
             >
@@ -473,7 +472,7 @@ const getHealthBadge = (health: string) => {
                 <span
                   v-if="opt.value !== 'custom'"
                   class="font-mono text-[11px]"
-                  :class="selectedPreset === opt.value ? 'text-blue-600 font-bold' : 'text-slate-400'"
+                  :class="selectedPreset === opt.value ? 'text-primary font-bold' : 'text-slate-400'"
                 >
                   {{ opt.value }}
                 </span>
@@ -493,7 +492,7 @@ const getHealthBadge = (health: string) => {
                 placeholder="如: 0 1,13 * * * (分 时 日 月 周)"
                 class="flex-1 font-mono text-xs px-3 py-2 border rounded-lg focus:outline-none focus:ring-2"
                 :class="customCronValidation.valid
-                  ? 'border-slate-300 focus:ring-primary-500/20 focus:border-primary-500'
+                  ? 'border-slate-300 focus:ring-primary/20 focus:border-primary'
                   : 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500'"
               />
               <span class="text-xs font-mono" :class="customCronValidation.valid ? 'text-slate-400' : 'text-rose-500'">
@@ -512,7 +511,7 @@ const getHealthBadge = (health: string) => {
         <div class="flex items-center justify-between">
           <div class="space-y-0.5">
             <span class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-              🔔 异常告警通知渠道
+              异常告警通知渠道
             </span>
             <p class="text-[11px] text-slate-500">
               仅当巡检检出 Schema 结构漂移（缺失/新增/类型不一致）或数据源连接异常时发送通知，未发现异常时不打扰。
@@ -623,7 +622,7 @@ const getHealthBadge = (health: string) => {
         </div>
 
         <p class="text-[11px] text-slate-400">
-          💡 外部群机器人与邮箱将使用当前用户在【个人中心 ➔ 消息通知设置】中配置的 Webhook 与邮箱地址；未配置或未启用的渠道无法勾选。
+          外部群机器人与邮箱将使用当前用户在【个人中心 ➔ 消息通知设置】中配置的 Webhook 与邮箱地址；未配置或未启用的渠道无法勾选。
         </p>
 
         <div
@@ -636,7 +635,7 @@ const getHealthBadge = (health: string) => {
           <button
             type="button"
             @click="openPersonalNotificationSettings"
-            class="flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:text-primary-800 underline shrink-0 cursor-pointer"
+            class="flex items-center gap-1 text-[11px] font-medium text-primary hover:text-primary-hover underline shrink-0 cursor-pointer"
           >
             去个人中心配置消息通知 →
           </button>
@@ -647,12 +646,12 @@ const getHealthBadge = (health: string) => {
       <div class="p-4 rounded-xl border border-slate-200/80 bg-slate-50/50 space-y-3">
         <div class="flex items-center justify-between">
           <span class="font-semibold text-xs text-slate-700 flex items-center gap-1.5">
-            📊 调度引擎运行指标
+            调度引擎运行指标
           </span>
           <button
             type="button"
             @click="fetchConfig"
-            class="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-1 cursor-pointer"
+            class="text-xs text-primary hover:text-primary-hover flex items-center gap-1 cursor-pointer"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -703,7 +702,7 @@ const getHealthBadge = (health: string) => {
           <button
             type="button"
             @click="navigateToTaskCenter"
-            class="text-xs font-medium text-primary-600 hover:text-primary-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+            class="text-xs font-medium text-primary hover:text-primary-hover hover:underline flex items-center gap-0.5 cursor-pointer"
           >
             去任务中心查看 →
           </button>
@@ -724,7 +723,7 @@ const getHealthBadge = (health: string) => {
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span v-else>⚡</span>
+            <span v-else class="inline-block h-4 w-4 shrink-0" aria-hidden="true"></span>
             立即运行一次
           </button>
         </div>

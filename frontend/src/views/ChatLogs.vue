@@ -469,7 +469,7 @@ const highlightJsonHtml = (val: unknown): string => {
           cls = 'text-emerald-300' // string
         }
       } else if (/true|false/.test(match)) {
-        cls = 'text-purple-300 font-semibold' // boolean
+        cls = 'text-violet-300 font-semibold' // boolean
       } else if (/null/.test(match)) {
         cls = 'text-slate-500 italic' // null
       }
@@ -1230,7 +1230,7 @@ onMounted(() => {
               <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 relative group">
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2">
-                    <span class="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold">
+                    <span class="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
                       {{ turn.username ? turn.username.charAt(0).toUpperCase() : 'U' }}
                     </span>
                     <span class="text-xs font-bold text-gray-500">用户提问</span>
@@ -1249,11 +1249,11 @@ onMounted(() => {
               </div>
 
               <!-- AI reply -->
-              <div class="rounded-xl border border-blue-100 bg-blue-50/40 p-4 relative group">
+              <div class="rounded-xl border border-primary/10 bg-primary/5 p-4 relative group">
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xs font-bold text-primary/70">AI 回复</span>
-                    <div class="inline-flex rounded-md border border-blue-100 bg-white/80 p-0.5 text-[11px]">
+                    <div class="inline-flex rounded-md border border-primary/10 bg-white/80 p-0.5 text-[11px]">
                       <button
                         type="button"
                         class="px-2 py-0.5 rounded transition-colors"
@@ -1306,7 +1306,7 @@ onMounted(() => {
                 <!-- 修复前落库的轮次没有卡片快照，退化为只回放问题文本 -->
                 <div
                   v-else-if="turn.userQuestionText"
-                  class="mb-2 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs leading-relaxed text-violet-900"
+                  class="mb-2 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark"
                 >
                   <span class="font-semibold">AI 提问：</span>{{ turn.userQuestionText }}
                 </div>
@@ -1323,18 +1323,18 @@ onMounted(() => {
                 </div>
                 <pre
                   v-else-if="turn.summary"
-                  class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
+                  class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-primary/10 rounded-lg p-3 overflow-x-auto"
                 >{{ turn.summary }}</pre>
 
                 <!-- Bottom action bar: View Trace Link -->
-                <div class="mt-3 pt-2.5 border-t border-blue-100/60 flex items-center justify-between text-xs">
+                <div class="mt-3 pt-2.5 border-t border-primary/10 flex items-center justify-between text-xs">
                   <span class="text-[11px] font-mono text-gray-400">
                     Trace: {{ turn.trace_id ? turn.trace_id.slice(0, 12) + '…' : '-' }}
                   </span>
                   <button
                     v-if="turn.trace_id"
                     type="button"
-                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-primary text-[11px] font-semibold hover:bg-primary hover:text-white transition-all shadow-2xs"
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-primary/20 text-primary text-[11px] font-semibold hover:bg-primary hover:text-white transition-all shadow-2xs"
                     @click="viewTurnTrace(turn)"
                   >
                     <ClockIcon class="w-3.5 h-3.5" />
@@ -1420,7 +1420,7 @@ onMounted(() => {
                     <span
                       class="px-2 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider"
                       :class="{
-                        'bg-blue-50 text-blue-600 border-blue-100': step.event_type === 'thought',
+                        'bg-primary/5 text-primary border-primary/10': step.event_type === 'thought',
                         'bg-amber-50 text-amber-600 border-amber-100': step.event_type === 'tool_call',
                         'bg-green-50 text-green-600 border-green-100': step.event_type === 'tool_result' || step.event_type === 'final_answer',
                         'bg-red-50 text-red-600 border-red-100': step.event_type === 'error',
@@ -1438,7 +1438,7 @@ onMounted(() => {
                     </span>
                     <span
                       v-if="getSubagentMeta(step)"
-                      class="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-indigo-100 bg-indigo-50 text-indigo-600"
+                      class="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-primary/10 bg-primary/5 text-primary"
                       :title="formatSubagentTraceSummary(getSubagentMeta(step))"
                     >
                       子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}
@@ -1448,15 +1448,15 @@ onMounted(() => {
                   <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
                     <div
                       v-if="getSubagentMeta(step)"
-                      class="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 space-y-2"
+                      class="rounded-lg border border-primary/10 bg-primary/5 p-3 space-y-2"
                     >
                       <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs font-bold text-indigo-700">子代理委派</span>
-                        <span class="text-[10px] text-indigo-500">
+                        <span class="text-xs font-bold text-primary-dark">子代理委派</span>
+                        <span class="text-[10px] text-primary">
                           {{ formatSubagentTraceSummary(getSubagentMeta(step)) }}
                         </span>
                       </div>
-                      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-indigo-900/70">
+                      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-primary-dark/70">
                         <template v-if="getSubagentMeta(step)?.run_id">
                           <dt class="font-semibold">Run ID</dt>
                           <dd class="font-mono break-all">{{ getSubagentMeta(step)?.run_id }}</dd>
@@ -1484,7 +1484,7 @@ onMounted(() => {
                       v-if="imageUsageFromStep(step)"
                       class="flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-1.5"
                     >
-                      <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-wider">用量</span>
+                      <span class="text-[10px] font-bold text-amber-700/80 uppercase tracking-wider">用量</span>
                       <span
                         v-for="chip in imageUsageChips(step)"
                         :key="`usage-${idx}-${chip}`"
@@ -1542,7 +1542,7 @@ onMounted(() => {
 
                       <div
                         v-if="getStepViewMode(`input-${idx}`) === 'render' && payloadView(step.tool_input).textContent"
-                        class="payload-markdown prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        class="payload-markdown max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
                         v-html="payloadView(step.tool_input).markdownHtml"
                       />
                       <pre
@@ -1596,7 +1596,7 @@ onMounted(() => {
 
                       <div
                         v-if="getStepViewMode(`output-${idx}`) === 'render' && payloadView(step.tool_output).textContent"
-                        class="payload-markdown prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        class="payload-markdown max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
                         v-html="payloadView(step.tool_output).markdownHtml"
                       />
                       <pre

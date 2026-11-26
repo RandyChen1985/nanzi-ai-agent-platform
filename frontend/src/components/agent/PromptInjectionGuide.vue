@@ -102,7 +102,7 @@ const toggleGroup = (key: string) => {
 
 const pillClass = (kind: InjectionPillKind) =>
   kind === 'always'
-    ? 'border-blue-100 bg-blue-50 text-primary'
+    ? 'border-primary/10 bg-primary/5 text-primary'
     : 'border-amber-100 bg-amber-50 text-amber-700';
 
 /** 说明文案是本地常量，先转义再放行反引号与加粗，避免把 `<USER_PROFILE>` 当标签解析 */

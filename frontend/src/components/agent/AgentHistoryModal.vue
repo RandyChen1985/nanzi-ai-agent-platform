@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChatBubbleLeftRightIcon } from "@heroicons/vue/24/outline";
 import { ref, computed, watch } from 'vue'
 import Modal from '../Modal.vue'
 import { agentApi, type AIAgent, type AgentExecutionHistory } from '../../api/agent'
@@ -208,7 +209,7 @@ watch(selectedId, () => {
               加载中...
             </div>
             <div v-else-if="!loading && executions.length === 0" class="py-16 px-6 text-center">
-              <div class="text-2xl opacity-40 mb-2">💬</div>
+              <div class="text-2xl opacity-40 mb-2"><ChatBubbleLeftRightIcon class="h-7 w-7" aria-hidden="true" /></div>
               <p class="text-sm text-gray-400 font-medium">暂无对话记录</p>
               <p class="text-[11px] text-gray-400 mt-1">试试调整关键词或稍后再查看</p>
             </div>
@@ -304,7 +305,7 @@ watch(selectedId, () => {
               <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 relative group">
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2">
-                    <span class="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold">
+                    <span class="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
                       {{ selectedItem.username ? selectedItem.username.charAt(0).toUpperCase() : 'U' }}
                     </span>
                     <span class="text-xs font-bold text-gray-500">用户提问</span>
@@ -319,11 +320,11 @@ watch(selectedId, () => {
                 <p class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">{{ selectedItem.query || '(空)' }}</p>
               </div>
 
-              <div class="rounded-xl border border-blue-100 bg-blue-50/40 p-4 relative group">
+              <div class="rounded-xl border border-primary/10 bg-primary/5 p-4 relative group">
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xs font-bold text-primary/70">AI 回复</span>
-                    <div class="inline-flex rounded-md border border-blue-100 bg-white/80 p-0.5 text-[11px]">
+                    <div class="inline-flex rounded-md border border-primary/10 bg-white/80 p-0.5 text-[11px]">
                       <button
                         type="button"
                         class="px-2 py-0.5 rounded transition-colors"
@@ -365,7 +366,7 @@ watch(selectedId, () => {
                 </div>
                 <pre
                   v-else
-                  class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
+                  class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-primary/10 rounded-lg p-3 overflow-x-auto"
                 >{{ selectedItem.summary }}</pre>
               </div>
             </div>

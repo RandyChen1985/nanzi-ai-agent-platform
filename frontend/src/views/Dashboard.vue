@@ -999,7 +999,7 @@ onMounted(() => {
             :class="[
               sidebarInitialClass,
               theme === 'light'
-                ? 'bg-blue-50 !text-blue-600 border border-blue-200/80 shadow-xs'
+                ? 'bg-primary/5 !text-blue-600 border border-primary/20 shadow-xs'
                 : 'bg-slate-800 !text-slate-200 border border-white/10 shadow-sm'
             ]"
           >
@@ -1043,64 +1043,6 @@ onMounted(() => {
             </svg>
           </transition>
         </button>
-
-
-        <!-- Version Footer -->
-        <transition name="fade">
-          <div
-            v-if="!isCollapsed"
-            class="mt-1.5 pt-1.5 px-2 flex items-center justify-between"
-            :class="theme === 'light' ? 'border-t border-gray-100' : 'border-t border-white/[0.05]'"
-          >
-            <span
-              class="text-[11px] font-normal tracking-tight select-none opacity-80"
-              :class="theme === 'light' ? 'text-gray-400' : 'text-slate-400'"
-            >平台版本</span>
-            <component
-              :is="repoUrl ? 'a' : 'span'"
-              :href="repoUrl || undefined"
-              :target="repoUrl ? '_blank' : undefined"
-              :rel="repoUrl ? 'noopener noreferrer' : undefined"
-              class="group inline-flex items-center text-[10px] font-mono font-medium rounded-full px-2 py-0.5 transition-all border leading-none shrink-0 outline-none focus:outline-none focus:ring-0 select-none"
-              :class="[
-                theme === 'light'
-                  ? (repoUrl ? 'bg-gray-100/80 text-gray-500 border-gray-200/70 hover:text-gray-900 hover:border-gray-300 hover:bg-gray-100' : 'bg-gray-50 text-gray-400 border-gray-200/50')
-                  : (repoUrl ? 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08] hover:border-white/15' : 'bg-white/[0.02] text-slate-400 border-white/[0.04]'),
-                repoUrl ? 'cursor-pointer' : 'cursor-default'
-              ]"
-              :title="repoUrl ? 'View on GitHub' : undefined"
-            >
-              <svg
-                v-if="repoUrl"
-                class="w-2.5 h-2.5 mr-1 opacity-70 group-hover:opacity-100 transition-opacity shrink-0"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-              </svg>
-              <span>{{ displayVersion }}</span>
-            </component>
-          </div>
-          <div v-else-if="repoUrl" class="mt-1.5 flex justify-center">
-            <a
-              :href="repoUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="p-1 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors"
-              :title="`版本: ${displayVersion} (查看 GitHub 仓库)`"
-            >
-              <svg
-                class="w-3.5 h-3.5 opacity-70 hover:opacity-100 transition-opacity"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-              </svg>
-            </a>
-          </div>
-        </transition>
       </div>
       </template>
 
@@ -1468,10 +1410,10 @@ onMounted(() => {
             class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col border border-gray-200 dark:border-gray-700 animate-slide-up"
           >
             <!-- Header -->
-            <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-green-50/30 dark:bg-green-900/10">
+            <div class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/70 dark:bg-gray-800/60">
               <div class="flex items-center gap-2">
-                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse" aria-hidden="true"></div>
-                <h3 id="online-users-dialog-title" class="text-lg font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">在线用户列表</h3>
+                <div class="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true"></div>
+                <h3 id="online-users-dialog-title" class="text-sm font-semibold text-gray-900 dark:text-gray-100">在线用户列表</h3>
               </div>
               <button
                 type="button"
@@ -1479,17 +1421,17 @@ onMounted(() => {
                 @click="showOnlineUsersDialog = false"
                 class="rounded text-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 dark:hover:text-gray-200"
               >
-                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 
             <!-- List -->
             <div class="flex-1 overflow-y-auto max-h-[60vh] p-4 custom-scrollbar">
-              <div v-if="onlineUsersLoading" class="text-center py-10 text-gray-400 text-xs font-bold uppercase tracking-widest">
+              <div v-if="onlineUsersLoading" class="text-center py-10 text-gray-400 text-xs font-medium">
                 正在加载在线用户…
               </div>
               <div v-else-if="onlineUsersError" class="text-center py-10">
-                <p class="text-xs font-bold uppercase tracking-widest text-red-500">在线用户加载失败</p>
+                <p class="text-xs font-medium text-red-500">在线用户加载失败</p>
                 <button
                   type="button"
                   class="mt-3 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -1498,30 +1440,30 @@ onMounted(() => {
                   重试
                 </button>
               </div>
-              <div v-else-if="onlineUsers.length === 0" class="text-center py-10 text-gray-400 text-xs font-bold uppercase tracking-widest">
+              <div v-else-if="onlineUsers.length === 0" class="text-center py-10 text-gray-400 text-xs font-medium">
                 暂无在线用户信息
               </div>
-              <div v-else class="space-y-3">
-                <div v-for="user in onlineUsers" :key="user.user_id || user.user_name" class="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 transition-all hover:border-green-200">
-                  <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-black uppercase text-sm flex-shrink-0 leading-none">
+              <div v-else class="space-y-2.5">
+                <div v-for="user in onlineUsers" :key="user.user_id || user.user_name" class="flex items-center p-3 rounded-xl bg-gray-50/70 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 transition-colors hover:border-gray-200">
+                  <div class="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-semibold uppercase text-xs flex-shrink-0 leading-none">
                     {{ userInitialOf(user.real_name || user.user_name) }}
                   </div>
                   <div class="ml-3 flex-1 min-w-0">
                     <div class="flex items-center gap-2">
-                      <span class="font-bold text-gray-800 dark:text-gray-100 truncate">{{ user.real_name || user.user_name }}</span>
-                      <span class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter border" :class="user.role === 'admin' ? 'bg-purple-50 text-purple-600 border-purple-100' : 'bg-blue-50 text-blue-600 border-blue-100'">
-                        {{ user.role === 'admin' ? 'Admin' : 'User' }}
+                      <span class="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">{{ user.real_name || user.user_name }}</span>
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border" :class="user.role === 'admin' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-gray-100 text-gray-600 border-gray-200'">
+                        {{ user.role === 'admin' ? '管理员' : '普通用户' }}
                       </span>
                     </div>
-                    <div class="text-[10px] text-gray-400 font-mono mt-0.5 truncate">@{{ user.user_name }}</div>
+                    <div class="text-[11px] text-gray-400 font-mono mt-0.5 truncate">@{{ user.user_name }}</div>
                   </div>
                   <div class="flex flex-col items-end flex-shrink-0 text-right">
-                    <div class="text-[10px] text-green-500 font-bold uppercase tracking-widest flex items-center gap-1">
-                      <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                      Active
+                    <div class="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
+                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      在线
                     </div>
                     <span
-                      class="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-0.5"
+                      class="text-[11px] text-gray-400 dark:text-gray-500 font-mono mt-0.5 tabular-nums"
                       :title="formatExactActiveTime(user.last_active)"
                     >
                       {{ formatActiveRelativeTime(user.last_active) }}
@@ -1532,9 +1474,9 @@ onMounted(() => {
             </div>
 
             <!-- Footer -->
-            <div class="p-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center text-[10px] text-gray-400 font-black uppercase tracking-widest">
-              <span>共计: {{ onlineUsers.length }} 位用户</span>
-              <span class="text-[8px] opacity-60">实时更新</span>
+            <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center text-xs text-gray-500">
+              <span class="tabular-nums">共 {{ onlineUsers.length }} 位在线用户</span>
+              <span class="text-[11px] text-gray-400">实时更新</span>
             </div>
           </div>
         </div>

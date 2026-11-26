@@ -1,3 +1,5 @@
+"""登录页 8 套视觉主题、品牌配置兼容与个人中心风格切换契约。"""
+
 from pathlib import Path
 
 import pytest
@@ -8,44 +10,46 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
 
-def login_source():
+def login_source() -> str:
     return (ROOT / "frontend/src/views/Login.vue").read_text(encoding="utf-8")
 
 
-def test_login_visual_carousel_contracts():
+def themes_source() -> str:
+    return (ROOT / "frontend/src/constants/loginThemes.ts").read_text(encoding="utf-8")
+
+
+def composable_source() -> str:
+    return (ROOT / "frontend/src/composables/useLoginTheme.ts").read_text(encoding="utf-8")
+
+
+def personal_source() -> str:
+    return (ROOT / "frontend/src/views/PersonalCenter.vue").read_text(encoding="utf-8")
+
+
+def selector_source() -> str:
+    return (ROOT / "frontend/src/components/personal/LoginThemeSelector.vue").read_text(encoding="utf-8")
+
+
+def test_login_supports_all_8_themes_with_f1_default():
+    themes = themes_source()
+    assert "export const DEFAULT_LOGIN_THEME: LoginThemeId = 'f1'" in themes
+    for theme_id in ("'f1'", "'f2'", "'f3'", "'f4'", "'g'", "'h'", "'i'", "'j'"):
+        assert theme_id in themes
+
+
+def test_login_keeps_branding_configuration_and_subtitle_defaults():
     source = login_source()
     for text in (
-        "key: 'b'",
-        "key: 'a'",
-        "key: 'c'",
         "NanZi · 智能体平台",
         "Your Intelligent Agent Platform",
-    ):
-        assert text in source
-    for text in (
         "branding.value.enabled",
         "branding.value.product_name",
         "branding.value.login_subtitle",
-        "sessionStorage",
-        "Math.random()",
-        "7000",
-        "clearInterval",
-        "prefers-reduced-motion",
-        "pauseSlideTimer",
-        "resumeSlideTimer",
-        "aria-current",
         ':src="iconUrl"',
     ):
         assert text in source
     assert "nanzi-wordmark-on-light.svg" not in source
     assert "nanzi-wordmark-on-dark.svg" not in source
-
-
-def test_login_visual_carousel_starts_with_third_slide_and_ends_with_first():
-    source = login_source()
-
-    assert source.index("key: 'c'") < source.index("key: 'b'")
-    assert source.index("key: 'b'") < source.index("key: 'a'")
 
 
 def test_login_subtitle_defaults_are_consistent_across_branding_configuration():
@@ -59,66 +63,32 @@ def test_login_subtitle_defaults_are_consistent_across_branding_configuration():
     assert "placeholder=\"Your Intelligent Agent Platform\"" in system_config
 
 
-def test_login_visual_brand_lockup_is_anchored_to_the_panel_top_left():
-    source = login_source()
-
-    assert "absolute top-10 left-10" in source
-    assert "xl:top-12 xl:left-12" in source
-    assert "flex items-center justify-center gap-3 mb-10" not in source
-
-
 def test_login_panel_has_a_compact_small_desktop_layout():
     source = login_source()
 
     assert "lg:w-[420px] xl:w-[460px]" in source
     assert "px-6 lg:px-7 xl:px-10" in source
-    assert "mb-6 xl:mb-10" in source
-    assert "mb-5 xl:mb-8" in source
-    assert "space-y-4 xl:space-y-6" in source
-    assert "mt-8 pt-5 xl:mt-12 xl:pt-8" in source
 
 
-def test_login_large_desktop_keeps_the_primary_title_on_one_line():
-    source = login_source()
+def test_login_theme_persists_in_redis_and_local_cache_mirror():
+    composable = composable_source()
+    ui_mode = (ROOT / "frontend/src/composables/useUiMode.ts").read_text(encoding="utf-8")
+    cleanup = (ROOT / "frontend/src/utils/sessionCleanup.ts").read_text(encoding="utf-8")
 
-    assert "lg:w-[420px] xl:w-[460px]" in source
-    assert "max-w-4xl xl:max-w-[1100px]" in source
-
-
-def test_login_visual_content_does_not_move_with_mouse():
-    source = login_source()
-
-    assert "window.addEventListener('mousemove', handleMouseMove)" not in source
-    assert "const mouseX = ref(0)" not in source
-    assert "const mouseY = ref(0)" not in source
-    assert ':style="{ transform: `translate(${mouseX}px, ${mouseY}px)` }"' not in source
+    assert "/api/portal/portal-prefs/login-theme" in composable
+    assert "/api/portal/portal-prefs" in composable
+    assert "LOGIN_THEME_STORAGE_KEY" in composable
+    assert "syncLoginThemeFromPrefs" in ui_mode
+    # 登出清理不应清掉设备级登录页皮肤镜像，否则退出后立即跳回默认
+    assert "nanzi_login_theme" not in cleanup
 
 
-def test_login_execution_slide_uses_a_dark_tech_palette():
-    source = login_source()
+def test_personal_center_exposes_login_theme_tab_and_selector():
+    personal = personal_source()
+    selector = selector_source()
 
-    assert "gradient: 'from-blue-500/30 via-blue-950/60 to-[#0b1830]'" in source
-    assert "accent: 'text-blue-300'" in source
-    assert "glow: 'bg-cyan-400/10'" in source
-    assert "bg: 'bg-[#0b1830]'" in source
-    assert "light: false" in source
-    assert "bg: 'bg-[#eff6ff]'" not in source
-
-
-def test_login_mouse_follow_effect_is_a_background_light_plus_a_non_moving_lens():
-    source = login_source()
-
-    assert "const mouseLightX = ref(50)" in source
-    assert "const mouseLightY = ref(50)" in source
-    assert "const handleVisualMouseMove = (event: MouseEvent)" in source
-    assert '@mousemove="handleVisualMouseMove"' in source
-    assert '@mouseleave="handleVisualMouseLeave"' in source
-    assert "transition-[left,top] duration-300 ease-out motion-reduce:transition-none" in source
-    assert "pointer-events-none" in source
-    assert ':style="{ left: `${mouseLightX}%`, top: `${mouseLightY}%`' in source
-    assert "radial-gradient(circle, rgba(96, 165, 250, 0.24)" in source
-
-    # 鼠标跟随效果只有两个：背景光晕，以及标题上"原始文字静止"的放大镜镜片。
-    # 放大镜的契约由 test_login_visual_magnifier_contract.py 锁定。
-    assert "<MagnifierTitle" in source
-    assert "translate(${mouseX}px, ${mouseY}px)" not in source
+    assert 'data-user-sub-tab="login-theme"' in personal
+    assert "登录页风格" in personal
+    assert "<LoginThemeSelector" in personal
+    assert 'data-user-panel="login-theme"' in selector
+    assert "/login?preview=" in selector

@@ -64,7 +64,7 @@
                 >
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                 </svg>
-                <span class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase shrink-0" :class="eventBadgeClass(step.event_type)">
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0" :class="eventBadgeClass(step.event_type)">
                   {{ step.event_type }}
                 </span>
                 <span v-if="step.tool_name" class="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate">{{ step.tool_name }}</span>
@@ -79,7 +79,7 @@
                 <!-- 工具入参 -->
                 <div v-if="hasPayload(step.tool_input)">
                   <div class="flex items-center justify-between mb-1">
-                    <span class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wide">工具入参 Input</span>
+                    <span class="text-[10px] font-bold text-primary dark:text-primary uppercase tracking-wide">工具入参 Input</span>
                     <button type="button" @click="copyText(step.tool_input)" class="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1">
                       <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3"/></svg>
                       复制
@@ -124,9 +124,9 @@
 
         <!-- Tab: 组装 Prompt -->
         <div v-if="activeTab === 'prompt'" class="p-4 space-y-3">
-          <div class="flex items-start gap-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 px-3 py-2">
-            <span class="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
-              ⚠️ 此为管道「组装阶段」快照：首条 System 为平台/Agent 组装完成的<b>全量系统提示词</b>（含历史边界），其后为对话消息序列。不含本轮实时工具结果与后续 ReAct 动态追加块。
+          <div class="flex items-start gap-2 rounded-lg bg-primary/5 dark:bg-primary-dark/20 border border-primary/10 dark:border-primary-dark/40 px-3 py-2">
+            <span class="text-xs text-primary-dark dark:text-primary-hover leading-relaxed">
+              此为管道「组装阶段」快照：首条 System 为平台/Agent 组装完成的<b>全量系统提示词</b>（含历史边界），其后为对话消息序列。不含本轮实时工具结果与后续 ReAct 动态追加块。
             </span>
           </div>
 
@@ -401,11 +401,11 @@ const isPromptExpanded = (idx: number): boolean => expandedPrompt.value.has(idx)
 const eventBadgeClass = (ev?: string): string => {
   switch (ev) {
     case "tool_call":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+      return "bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover";
     case "tool_result":
       return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
     case "model_call":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+      return "bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover";
     case "thought":
       return "bg-gray-100 text-gray-600 dark:bg-gray-800/60 dark:text-gray-300";
     case "error":
@@ -422,11 +422,11 @@ const roleBadgeClass = (role?: string): string => {
     case "system":
       return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
     case "user":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+      return "bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover";
     case "tool":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300";
     default:
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+      return "bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover";
   }
 };
 

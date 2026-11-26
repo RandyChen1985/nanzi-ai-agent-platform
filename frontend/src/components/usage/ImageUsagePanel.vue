@@ -21,7 +21,7 @@
         <div class="bg-white rounded-2xl p-5 border border-amber-100 shadow-sm">
           <span class="text-sm font-medium text-gray-500">出图张数</span>
           <div class="mt-1 flex items-baseline gap-2">
-            <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
+            <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">
               {{ summary.images }}
             </h3>
             <span class="text-xs text-gray-400">张</span>
@@ -38,7 +38,7 @@
           <span class="text-sm font-medium text-gray-500">上游折算 Token</span>
           <div class="mt-1 flex items-baseline gap-2">
             <h3
-              class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none"
+              class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none"
               :title="formatTokenFull(summary.upstream_tokens)"
             >
               {{ formatTokenCompact(summary.upstream_tokens) }}
@@ -53,7 +53,7 @@
         <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
           <span class="text-sm font-medium text-gray-500">工具调用次数</span>
           <div class="mt-1 flex items-baseline gap-2">
-            <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
+            <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">
               {{ summary.calls }}
             </h3>
             <span class="text-xs text-gray-400">次</span>
@@ -64,7 +64,7 @@
         <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
           <span class="text-sm font-medium text-gray-500">平均单次耗时</span>
           <div class="mt-1 flex items-baseline gap-2">
-            <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
+            <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">
               {{ formatElapsed(summary.avg_elapsed_ms) }}
             </h3>
           </div>

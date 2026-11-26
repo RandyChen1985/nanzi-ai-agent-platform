@@ -68,7 +68,7 @@ const {
       <button
         v-if="avatarUrl"
         type="button"
-        class="text-[11px] text-blue-500 hover:text-blue-600 hover:underline"
+        class="text-[11px] text-primary hover:text-primary-dark hover:underline"
         @click="avatarUrl = ''"
       >
         继承全局形象
@@ -119,7 +119,7 @@ const {
         class="h-8 w-8 overflow-hidden rounded-full border-2 transition-all hover:scale-110 active:scale-95"
         :class="
           (preset.isDefault && !avatarUrl) || avatarUrl === preset.url
-            ? 'border-blue-500 ring-2 ring-blue-500/30'
+            ? 'border-primary ring-2 ring-primary/30'
             : 'border-transparent hover:border-gray-300'
         "
         @click="avatarUrl = preset.isDefault ? '' : preset.url"

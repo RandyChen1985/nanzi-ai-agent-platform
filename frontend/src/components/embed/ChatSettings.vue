@@ -519,8 +519,8 @@ const handleLogout = () => {
       >
         <!-- Header -->
         <div class="flex justify-between items-center mb-5 flex-shrink-0">
-          <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest flex items-center gap-1.5">
-            <svg class="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest flex items-center gap-1.5">
+            <svg class="w-4 h-4 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             界面设置
           </h3>
           <button
@@ -550,12 +550,12 @@ const handleLogout = () => {
           <div class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">个性视觉 / Styles</h4>
+              <h4 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">个性视觉 / Styles</h4>
             </div>
 
             <!-- Theme Mode -->
             <div>
-              <label class="block text-[10px] font-black text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">主题模式</label>
+              <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">主题模式</label>
               <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
                 <button
                   @click="handleSetTheme('light')"
@@ -584,7 +584,7 @@ const handleLogout = () => {
 
             <!-- Theme Color -->
             <div>
-              <label class="block text-[10px] font-black text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">主题颜色</label>
+              <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">主题颜色</label>
               <div class="grid grid-cols-5 sm:grid-cols-10 gap-2">
                 <button
                   v-for="color in presetColors"
@@ -593,7 +593,7 @@ const handleLogout = () => {
                   class="w-7 h-7 rounded-full transition-all duration-300 hover:scale-110 flex items-center justify-center relative active:scale-90"
                   :class="
                     activeColor === color
-                      ? 'ring-2 ring-offset-2 ring-blue-500 border-transparent scale-110 shadow-md'
+                      ? 'ring-2 ring-offset-2 ring-primary border-transparent scale-110 shadow-md'
                       : 'border-transparent hover:shadow'
                   "
                   :style="{ backgroundColor: color, '--tw-ring-color': color }"
@@ -603,7 +603,7 @@ const handleLogout = () => {
                 </button>
                 <!-- Custom Color (Basic Input) -->
                 <div
-                  class="relative w-7 h-7 rounded-full overflow-hidden border-2 border-transparent hover:scale-110 transition-transform cursor-pointer group flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 shadow-sm active:scale-90"
+                  class="relative w-7 h-7 rounded-full overflow-hidden border-2 border-transparent hover:scale-110 transition-transform cursor-pointer group flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-primary shadow-sm active:scale-90"
                 >
                   <input
                     type="color"
@@ -619,7 +619,7 @@ const handleLogout = () => {
             <!-- AI Agent Avatar Settings (Admin Configurable) -->
             <div>
               <div class="flex items-center justify-between mb-2">
-                <label class="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                <label class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1">
                   <span>AI 助手头像</span>
                   <span class="text-[9px] font-normal text-gray-400">（聊天消息气泡旁展示）</span>
                 </label>
@@ -630,7 +630,7 @@ const handleLogout = () => {
                   v-else-if="config.agentAvatar"
                   @click="handleResetAgentAvatar"
                   type="button"
-                  class="text-[10px] text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 hover:underline flex items-center gap-0.5"
+                  class="text-[10px] text-primary hover:text-primary-dark dark:hover:text-primary hover:underline flex items-center gap-0.5"
                 >
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                   恢复默认
@@ -656,14 +656,14 @@ const handleLogout = () => {
                     class="relative w-8 h-8 rounded-full overflow-hidden border-2 transition-all duration-200 hover:scale-110 active:scale-95 flex items-center justify-center bg-gray-100 dark:bg-gray-700"
                     :class="
                       (preset.isDefault && !config.agentAvatar) || config.agentAvatar === preset.url
-                        ? 'border-blue-500 ring-2 ring-blue-500/30 scale-105 shadow-sm'
+                        ? 'border-primary ring-2 ring-primary/30 scale-105 shadow-sm'
                         : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
                     "
                   >
                     <img :src="preset.url" :alt="preset.name" class="w-full h-full object-cover" />
                     <span
                       v-if="(preset.isDefault && !config.agentAvatar) || config.agentAvatar === preset.url"
-                      class="absolute inset-0 bg-blue-600/20 flex items-center justify-center"
+                      class="absolute inset-0 bg-primary/20 flex items-center justify-center"
                     >
                       <svg class="w-3 h-3 text-white filter drop-shadow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
                     </span>
@@ -683,10 +683,10 @@ const handleLogout = () => {
                     type="button"
                     @click="triggerAvatarUpload"
                     :disabled="avatarUploading"
-                    class="shrink-0 px-2.5 py-1.5 text-[11px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 transition-all disabled:opacity-50"
+                    class="shrink-0 px-2.5 py-1.5 text-[11px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-primary dark:hover:border-primary bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary flex items-center gap-1 transition-all disabled:opacity-50"
                     title="上传本地图片作为 AI 头像"
                   >
-                    <svg v-if="avatarUploading" class="w-3.5 h-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>
+                    <svg v-if="avatarUploading" class="w-3.5 h-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>
                     <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                     <span>{{ avatarUploading ? '上传中...' : '上传图片' }}</span>
                   </button>
@@ -700,7 +700,7 @@ const handleLogout = () => {
                       @keyup.enter="handleCustomAvatarBlur"
                       :disabled="avatarSyncing"
                       placeholder="或粘贴网络图片 URL"
-                      class="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-900/40 transition-all disabled:opacity-60"
+                      class="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none focus:border-primary focus:ring-1 focus:ring-primary/10 dark:focus:ring-primary-dark/40 transition-all disabled:opacity-60"
                     />
                   </div>
                 </div>
@@ -720,14 +720,14 @@ const handleLogout = () => {
 
             <!-- Markdown Theme (6 styles in 3x2 Grid) -->
             <div>
-              <label class="block text-[10px] font-black text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">AI消息排版样式</label>
+              <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">AI消息排版样式</label>
               <div class="grid grid-cols-3 gap-1.5">
                 <button
                   @click="handleSetMarkdownTheme('default')"
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'default' || !config.markdownTheme
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -739,7 +739,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'minimal'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -751,7 +751,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'academic'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -763,7 +763,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'apple'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -775,7 +775,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'warm'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -787,7 +787,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'compact'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -799,7 +799,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'bauhaus'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -811,7 +811,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'editorial'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -823,7 +823,7 @@ const handleLogout = () => {
                   class="py-1.5 text-[10px] border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1 active:scale-95"
                   :class="
                     config.markdownTheme === 'zen'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60 shadow-sm font-black'
+                      ? 'bg-primary/5 dark:bg-primary-dark/20 text-primary dark:text-primary border-primary/20 dark:border-primary-dark/60 shadow-sm font-bold'
                       : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700/60 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   "
                 >
@@ -840,7 +840,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">隐藏聊天头像</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">隐藏聊天头像</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">隐藏双方头像，左右各腾出 40px，气泡显示更多内容</p>
                 </div>
               </div>
@@ -854,7 +854,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7a3 3 0 013-3h10a3 3 0 013 3v10a3 3 0 01-3 3H7a3 3 0 01-3-3V7z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">隐藏 AI 消息外框</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">隐藏 AI 消息外框</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">仅隐藏消息气泡外框，Markdown 表格边框保留</p>
                 </div>
               </div>
@@ -868,7 +868,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">生成中动画</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">生成中动画</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">生成回复时输入框里的小人走路动画，关闭后只保留三点提示</p>
                 </div>
               </div>
@@ -882,7 +882,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9h8M8 13h5M8 17h8M4 4h16v16H4z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">Bash 运行环境横幅提示</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">Bash 运行环境横幅提示</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">输入框上方提示 Bash 运行在宿主机或容器沙箱</p>
                 </div>
               </div>
@@ -894,7 +894,7 @@ const handleLogout = () => {
           <div v-if="!routingLocked" class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7h8M8 12h8M8 17h5M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
-              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">主专家自动委派 / Delegation</h4>
+              <h4 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">主专家自动委派 / Delegation</h4>
             </div>
 
             <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
@@ -903,7 +903,7 @@ const handleLogout = () => {
                 @click="handleSetRoutingMode('auto')"
                 class="flex-1 py-1.5 text-xs rounded-md font-medium transition-all"
                 :class="routingMode === 'auto'
-                  ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm font-black'
+                  ? 'bg-white dark:bg-gray-600 text-primary dark:text-primary shadow-sm font-bold'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
               >
                 主专家自动委派
@@ -913,7 +913,7 @@ const handleLogout = () => {
                 @click="handleSetRoutingMode('expert')"
                 class="flex-1 py-1.5 text-xs rounded-md font-medium transition-all"
                 :class="routingMode === 'expert'
-                  ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm font-black'
+                  ? 'bg-white dark:bg-gray-600 text-primary dark:text-primary shadow-sm font-bold'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
               >
                 默认智能体
@@ -925,11 +925,11 @@ const handleLogout = () => {
             </p>
 
             <div v-if="routingMode === 'expert'" class="space-y-1.5">
-              <label class="block text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">选择默认智能体</label>
+              <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">选择默认智能体</label>
               <select
                 :value="config.expertAgentId"
                 :disabled="allowedAgents.length === 0"
-                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40 disabled:opacity-50"
+                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 dark:focus:ring-primary-dark/40 disabled:opacity-50"
                 @change="handleSetExpertAgent"
               >
                 <option v-if="allowedAgents.length === 0" value="">暂无可用智能体</option>
@@ -947,7 +947,7 @@ const handleLogout = () => {
           <div class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">智能特性 / Features</h4>
+              <h4 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">智能特性 / Features</h4>
             </div>
 
             <!-- Switch Row 1: Multi-Agent Collaboration -->
@@ -957,7 +957,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20H7v-2C7 15 5 13 3 13m4 7v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">多智能体协同</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">多智能体协同</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">开启后支持跨领域任务并行执行</p>
                 </div>
               </div>
@@ -971,7 +971,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">SQL PLAN 中间层</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">SQL PLAN 中间层</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">高风险查数先校验执行计划</p>
                 </div>
               </div>
@@ -985,7 +985,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
                 </div>
                 <div class="min-w-0">
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">思考过程</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">思考过程</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">
                     {{ reasoningDensityHint(currentReasoningDensity()) }}
                   </p>
@@ -1016,7 +1016,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-750 dark:text-gray-250 flex items-center gap-1.5">
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1.5">
                     反幻觉校验
                     <GroundingHelpPopover />
                   </h5>
@@ -1033,7 +1033,7 @@ const handleLogout = () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 5h5m-5 5h8M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
                 </div>
                 <div>
-                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">实时输出</h5>
+                  <h5 class="text-xs font-bold text-gray-700 dark:text-gray-200">实时输出</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">校验失败后撤回，内容可能短暂显示</p>
                 </div>
               </div>
@@ -1050,7 +1050,7 @@ const handleLogout = () => {
           <div class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-3">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
-              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">功能引导 / Feature Tour</h4>
+              <h4 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">功能引导 / Feature Tour</h4>
             </div>
             <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">首次使用会自动播放一次；之后可以在这里重看，进度按账号保存。</p>
             <div class="flex items-center justify-between gap-2">
@@ -1067,10 +1067,10 @@ const handleLogout = () => {
           </div>
 
           <!-- Bottom Action Buttons -->
-          <div class="mt-6 pt-4 border-t border-gray-150 dark:border-gray-700/50 space-y-2">
+          <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700/50 space-y-2">
             <button
               @click="confirmReset"
-              class="w-full py-2 text-xs font-bold text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 active:scale-98 rounded-xl transition-all flex items-center justify-center space-x-2 border border-blue-100 dark:border-blue-900/30 shadow-sm"
+              class="w-full py-2 text-xs font-bold text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/20 active:scale-95 rounded-xl transition-all flex items-center justify-center space-x-2 border border-primary/10 dark:border-primary-dark/30 shadow-sm"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
               <span>开启新会话</span>
@@ -1078,7 +1078,7 @@ const handleLogout = () => {
             <!-- Mobile Only Logout Button -->
             <button
               @click="handleLogout"
-              class="sm:hidden w-full py-2 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-98 rounded-xl transition-all flex items-center justify-center space-x-2 border border-red-100 dark:border-red-900/30"
+              class="sm:hidden w-full py-2 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95 rounded-xl transition-all flex items-center justify-center space-x-2 border border-red-100 dark:border-red-900/30"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
               <span>退出登录</span>
@@ -1092,14 +1092,14 @@ const handleLogout = () => {
     <!-- Confirm Modal -->
     <div v-if="showConfirmModal" class="absolute inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
         <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-64 p-4 border border-gray-200 dark:border-gray-700 animate-fade-in-up">
-            <h3 class="text-sm font-black text-gray-850 dark:text-gray-150 mb-2 flex items-center gap-1.5">
+            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2 flex items-center gap-1.5">
                 <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                 确认开启新会话？
             </h3>
             <p class="text-[10.5px] text-gray-500 dark:text-gray-400 leading-normal mb-4">当前页面将被清空以开始新对话。旧的对话记录仍可在“历史”中查阅。</p>
             <div class="flex space-x-2">
                 <button @click="showConfirmModal = false" class="flex-1 py-1.5 text-xs font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 rounded-xl transition-colors">取消</button>
-                <button @click="handleReset" class="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors">确认开启</button>
+                <button @click="handleReset" class="flex-1 py-1.5 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-xl transition-colors">确认开启</button>
             </div>
         </div>
     </div>

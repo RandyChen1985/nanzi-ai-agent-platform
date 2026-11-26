@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import re
+
 import pytest
 
 
@@ -111,8 +113,8 @@ def test_client_token_issue_uses_primary_button_and_clear_label():
     assert "生成 MCP Access Token" in view
     assert "生成当前用户 Access Token" not in view
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
-    assert "bg-indigo-600" in clients_section
-    assert "hover:bg-indigo-700" in clients_section
+    assert "bg-primary" in clients_section
+    assert "hover:bg-primary-dark" in clients_section
     assert "disabled:opacity-50" in clients_section
 
 
@@ -347,7 +349,7 @@ def test_client_usage_kpis_fit_one_row_on_large_screens_with_compact_cards():
     usage_modal = view.split('v-if="showClientUsage && clientUsageTarget"', 1)[1]
     assert "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" in usage_modal
     assert "text-[11px] font-bold" in usage_modal
-    assert "mt-1 text-lg font-black" in usage_modal
+    assert "mt-1 text-lg font-semibold" in usage_modal
 
 
 def test_client_usage_kpis_include_six_compact_inline_svg_icons():
@@ -566,11 +568,11 @@ def test_client_token_action_uses_soft_primary_treatment_while_create_remains_pr
     token_button = client_actions.split('@click="openTokenIssue(client)"', 1)[0].rsplit("<button", 1)[1]
     create_button = view.split('@click="showCreate = true"', 1)[0].rsplit("<button", 1)[1]
 
-    assert "border-indigo-200" in token_button
-    assert "bg-indigo-50" in token_button
-    assert "text-indigo-700" in token_button
-    assert "bg-indigo-600" not in token_button
-    assert "bg-indigo-600" in create_button
+    assert "border-primary/25" in token_button
+    assert "bg-primary/10" in token_button
+    assert "text-primary" in token_button
+    assert not re.search(r"(?<![/\w-])bg-primary(?![/\w-])", token_button)
+    assert "bg-primary" in create_button
 
 
 def test_client_card_uses_compact_permission_summary_and_on_demand_details():
@@ -591,7 +593,7 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
 
 def test_client_status_is_present_in_card_footer_separate_from_action_buttons():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
-    card = view.split('<div v-for="client in clients"', 1)[1]
+    card = view.split('v-for="client in clients"', 1)[1]
 
     actions_start = card.index('data-testid="client-actions"')
     status_start = card.index('data-testid="client-status"')
@@ -666,7 +668,7 @@ def test_client_scope_change_shows_reissue_guidance_until_new_token_is_issued():
 def test_client_reissue_guidance_is_visible_when_card_is_collapsed():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    card_start = view.index('<div v-for="client in clients"')
+    card_start = view.index('v-for="client in clients"')
     header_start = view.index('<div class="flex flex-col gap-4', card_start)
     alert_start = view.index('v-if="client.needs_token_regeneration"', card_start)
     expanded_start = view.index('v-if="expandedClientIds.has(client.client_id)"', card_start)
@@ -720,7 +722,7 @@ def test_service_desk_exposes_client_token_lifecycle_summary_and_physical_delete
 
 def test_token_lifecycle_table_hides_authorized_user_column():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
-    token_table = view.split('<h2 class="text-xl font-black">Token 生命周期</h2>', 1)[1].split('<!-- Client 基本信息编辑弹窗 -->', 1)[0]
+    token_table = view.split('<h2 class="text-xl font-semibold">Token 生命周期</h2>', 1)[1].split('<!-- Client 基本信息编辑弹窗 -->', 1)[0]
 
     assert "授权用户" not in token_table
     assert '<th class="p-3">时间信息</th>' in token_table

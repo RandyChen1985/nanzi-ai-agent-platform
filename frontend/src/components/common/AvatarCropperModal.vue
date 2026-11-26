@@ -201,7 +201,7 @@ const handleConfirm = () => {
         <!-- Header -->
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/70 dark:bg-gray-900/40">
           <div class="flex items-center space-x-2">
-            <div class="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl">
+            <div class="p-2 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary rounded-xl">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
@@ -247,8 +247,8 @@ const handleConfirm = () => {
               <!-- 遮罩与圆形虚线取景区 -->
               <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
                 <!-- 圆形头像聚焦虚线与外层半透明遮罩 -->
-                <div class="w-[200px] h-[200px] rounded-full border-2 border-dashed border-blue-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] z-10 flex items-center justify-center">
-                  <div class="w-2.5 h-2.5 rounded-full bg-blue-500/60"></div>
+                <div class="w-[200px] h-[200px] rounded-full border-2 border-dashed border-primary shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] z-10 flex items-center justify-center">
+                  <div class="w-2.5 h-2.5 rounded-full bg-primary/60"></div>
                 </div>
               </div>
             </div>
@@ -258,7 +258,7 @@ const handleConfirm = () => {
               <span class="text-xs font-bold text-gray-500 dark:text-gray-400">实时气泡效果预览</span>
               
               <!-- 模拟聊天气泡头像样式 -->
-              <div class="relative w-16 h-16 rounded-full ring-2 ring-blue-500/30 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 shadow-md flex items-center justify-center">
+              <div class="relative w-16 h-16 rounded-full ring-2 ring-primary/30 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 shadow-md flex items-center justify-center">
                 <div
                   v-if="imageSrc && isImageReady"
                   class="absolute w-[64px] h-[64px] flex items-center justify-center overflow-hidden"
@@ -290,7 +290,7 @@ const handleConfirm = () => {
           <div class="w-full max-w-sm flex flex-col space-y-2">
             <div class="flex justify-between items-center px-1">
               <span class="text-xs font-bold text-gray-500 dark:text-gray-400">缩放大小</span>
-              <span class="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">{{ Math.round(cropperZoom * 100) }}%</span>
+              <span class="text-xs font-mono font-bold text-primary dark:text-primary">{{ Math.round(cropperZoom * 100) }}%</span>
             </div>
             <div class="flex items-center space-x-3">
               <button
@@ -307,7 +307,7 @@ const handleConfirm = () => {
                 min="0.3"
                 max="3.5"
                 step="0.05"
-                class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600 focus:outline-none"
+                class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary focus:outline-none"
               />
               <button
                 type="button"
@@ -321,7 +321,7 @@ const handleConfirm = () => {
           </div>
 
           <p class="text-[11px] text-gray-400 dark:text-gray-500 text-center leading-relaxed">
-            💡 提示：鼠标左键拖拽可微调位置，滚动鼠标滚轮可平滑缩放。<br/>
+            提示：鼠标左键拖拽可微调位置，滚动鼠标滚轮可平滑缩放。<br/>
             即使上传超大高分辨率原图，系统也会自动无损裁剪压缩，极速呈现。
           </p>
         </div>
@@ -340,7 +340,7 @@ const handleConfirm = () => {
             type="button"
             :disabled="loading || !isImageReady"
             @click="handleConfirm"
-            class="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all shadow-sm focus:outline-none flex items-center space-x-1.5 disabled:opacity-50"
+            class="px-5 py-2 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary-dark active:scale-95 transition-all shadow-sm focus:outline-none flex items-center space-x-1.5 disabled:opacity-50"
           >
             <svg
               v-if="loading"

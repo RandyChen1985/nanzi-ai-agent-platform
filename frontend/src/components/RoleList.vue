@@ -18,7 +18,7 @@
       @mouseleave="showPopover = false"
     >
       <span
-        class="bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] rounded-full border border-blue-100 font-bold cursor-help hover:bg-blue-100 transition-colors"
+        class="bg-primary/5 text-primary px-1.5 py-0.5 text-[10px] rounded-full border border-primary/10 font-bold cursor-help hover:bg-primary/10 transition-colors"
       >
         +{{ remainingCount }}
       </span>
@@ -101,17 +101,5 @@ watch(showPopover, async (val) => {
 </script>
 
 <style scoped>
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -90%) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -100%) scale(1);
-  }
-}
-.animate-fade-in {
-  animation: fade-in 0.15s ease-out forwards;
-}
+
 </style>

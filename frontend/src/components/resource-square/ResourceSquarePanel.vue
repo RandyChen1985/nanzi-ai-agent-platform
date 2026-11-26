@@ -340,7 +340,7 @@ onMounted(async () => {
         </span>
       </div>
 
-      <div v-if="kbStale && !kbError" class="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
+      <div v-if="kbStale && !kbError" class="rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 text-[11px] text-primary-dark dark:border-primary-dark/40 dark:bg-primary-dark/20 dark:text-primary-hover">
         知识库规模与更新时间暂时读不到（知识库引擎未响应），文档数显示为「—」。
       </div>
       <div v-if="kbError" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">

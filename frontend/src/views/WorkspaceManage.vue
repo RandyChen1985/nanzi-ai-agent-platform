@@ -40,7 +40,10 @@
     </div>
 
     <!-- 标题卡：沿用知识库/数据源的 hero 配方（右上淡蓝光晕 + 底部剪影 + 两端渐隐） -->
-    <div class="hero-surface relative overflow-hidden rounded-2xl border border-gray-200/80 p-4 shadow-sm sm:p-5">
+    <!-- 不写 overflow-hidden：HeroSilhouette 自己处理底部圆角裁切，
+         父级一裁就会切断「最近 / 新建」这两个下拉（面板看起来像被削平）。
+         知识库、数据源的同类卡片也都没有这层裁切。 -->
+      <div class="hero-surface relative z-20 rounded-2xl border border-gray-200/80 p-4 shadow-sm sm:p-5">
       <HeroSilhouette variant="cards" :height="44" />
       <div class="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div class="min-w-0">
@@ -78,7 +81,7 @@
                 :title="recent.path"
                 @click="openRecent(recent)"
               >
-                <span>{{ fileEmoji(recent.name) }}</span>
+                <component :is="fileIcon(recent.name)" class="h-3.5 w-3.5 shrink-0" :class="fileIconTone(recent.name)" aria-hidden="true" />
                 <span class="min-w-0 flex-1 truncate">{{ displayFileName(recent.name) }}</span>
               </button>
             </div>
@@ -102,10 +105,12 @@
               class="absolute right-0 z-30 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
             >
               <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('dir')">
-                📁 新建文件夹
+                <FolderPlusIcon class="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+                新建文件夹
               </button>
               <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('file')">
-                📄 新建文件
+                <DocumentPlusIcon class="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                新建文件
               </button>
             </div>
           </div>
@@ -202,17 +207,42 @@
       </span>
 
       <div class="ml-auto flex items-center gap-1.5">
-        <select
-          v-model="typeFilter"
-          class="h-7 rounded-lg border border-gray-200 bg-white px-2 py-0 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
-        >
-          <option value="all">全部类型</option>
-          <option value="doc">文档</option>
-          <option value="sheet">表格</option>
-          <option value="image">图片</option>
-          <option value="archive">压缩包</option>
-          <option value="code">代码</option>
-        </select>
+        <div ref="typeFilterRef" class="relative">
+          <button
+            type="button"
+            class="inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-600 transition-colors hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600"
+            :aria-expanded="typeFilterOpen ? 'true' : 'false'"
+            aria-haspopup="listbox"
+            title="按文件类型筛选"
+            @click="typeFilterOpen = !typeFilterOpen"
+          >
+            <component :is="activeTypeFilter.icon" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ activeTypeFilter.label }}</span>
+            <ChevronDownIcon class="h-3 w-3 shrink-0 text-gray-400" aria-hidden="true" />
+          </button>
+          <div
+            v-if="typeFilterOpen"
+            role="listbox"
+            class="absolute left-0 z-30 mt-1 w-32 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
+          >
+            <button
+              v-for="opt in TYPE_FILTER_OPTIONS"
+              :key="opt.key"
+              type="button"
+              role="option"
+              :aria-selected="typeFilter === opt.key ? 'true' : 'false'"
+              class="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors"
+              :class="typeFilter === opt.key
+                ? 'bg-primary/5 font-bold text-primary dark:bg-primary/10'
+                : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60'"
+              @click="selectTypeFilter(opt.key)"
+            >
+              <component :is="opt.icon" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span class="flex-1 truncate">{{ opt.label }}</span>
+              <CheckIcon v-if="typeFilter === opt.key" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         <select
           v-model="sortBy"
           class="h-7 rounded-lg border border-gray-200 bg-white px-2 py-0 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
@@ -228,14 +258,18 @@
             :class="viewMode === 'list' ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white' : 'text-gray-500'"
             title="列表视图"
             @click="viewMode = 'list'"
-          >☰</button>
+          >
+            <Bars3Icon class="h-4 w-4" aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="px-2 py-1 text-xs"
             :class="viewMode === 'grid' ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white' : 'text-gray-500'"
             title="卡片视图"
             @click="viewMode = 'grid'"
-          >▦</button>
+          >
+            <Squares2X2Icon class="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </div>
@@ -243,11 +277,11 @@
     <!-- 批量操作条 -->
     <div
       v-if="selectedPaths.size && !inTrash"
-      class="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300"
+      class="flex items-center gap-3 rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 text-xs text-primary-dark dark:border-primary-dark/50 dark:bg-primary-dark/30 dark:text-primary-hover"
     >
       <span>已选 {{ selectedPaths.size }} 项</span>
       <button type="button" class="font-semibold hover:underline" @click="askBatchDelete">批量删除</button>
-      <button type="button" class="text-blue-500 hover:underline dark:text-blue-400" @click="clearSelection">取消选择</button>
+      <button type="button" class="text-primary hover:underline dark:text-primary" @click="clearSelection">取消选择</button>
     </div>
 
     <!-- 列表视图 -->
@@ -307,11 +341,11 @@
                 @click.stop="navigate(item.path)"
                 @dblclick.stop
               >
-                <span class="text-base leading-none">📁</span>
+                <component :is="FolderIcon" class="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
                 <span class="truncate font-medium text-gray-800 hover:text-primary dark:text-gray-200">{{ displayFileName(item.name) }}</span>
               </button>
               <div v-else class="flex min-w-0 items-center gap-2">
-                <span class="text-base leading-none">{{ fileEmoji(item.name) }}</span>
+                <component :is="fileIcon(item.name)" class="h-4 w-4 shrink-0" :class="fileIconTone(item.name)" aria-hidden="true" />
                 <span class="truncate text-gray-800 dark:text-gray-200" :title="item.path">{{ displayFileName(item.name) }}</span>
               </div>
             </td>
@@ -380,7 +414,13 @@
               class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
               @error="onThumbError(item.path)"
             />
-            <span v-else class="select-none text-4xl leading-none">{{ item.is_dir ? "📁" : fileEmoji(item.name) }}</span>
+            <component
+              :is="fileIcon(item.name, item.is_dir)"
+              v-else
+              class="h-10 w-10 select-none"
+              :class="fileIconTone(item.name, item.is_dir)"
+              aria-hidden="true"
+            />
 
             <label
               v-if="canSelect(item)"
@@ -532,12 +572,27 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
+import type { Component } from "vue"
 import axios from "@/utils/axios"
 import InputModal from "@/components/InputModal.vue"
 import ConfirmModal from "@/components/ConfirmModal.vue"
 import WorkspaceRowActions from "@/components/workspace/WorkspaceRowActions.vue"
 import WorkspaceDirectorySaveDialog from "@/components/embed/WorkspaceDirectorySaveDialog.vue"
 import HeroSilhouette from "@/components/common/HeroSilhouette.vue"
+import {
+  ArchiveBoxIcon,
+  Bars3Icon,
+  CheckIcon,
+  ChevronDownIcon,
+  CodeBracketIcon,
+  DocumentPlusIcon,
+  DocumentTextIcon,
+  FolderIcon,
+  FolderPlusIcon,
+  PhotoIcon,
+  Squares2X2Icon,
+  TableCellsIcon,
+} from "@heroicons/vue/24/outline"
 import ChatCanvas from "@/components/embed/ChatCanvas.vue"
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
 import ShareFileDialog from "@/components/ShareFileDialog.vue"
@@ -545,6 +600,7 @@ import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { shouldAutoDismissUploads } from "@/utils/workspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
+import { workspaceFileIcon, workspaceFileTone } from "@/utils/workspaceFileIcon"
 import { planBatchDelete, selectAllState, toggleSelectAllPaths } from "@/utils/workspaceBatchSelection"
 import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
 import {
@@ -594,6 +650,21 @@ const SORT_KEYS: readonly SortKey[] = ["mtime", "name", "size"]
 const TYPE_FILTER_KEYS: readonly TypeFilterKey[] = ["all", "doc", "sheet", "image", "archive", "code"]
 
 /**
+ * 类型筛选的展示项。
+ *
+ * 图标顺序与聊天侧「浏览工作空间」抽屉保持一致：同一个筛选在两个入口长得不一样，
+ * 用户会以为筛的不是同一件事。选中态用 CheckIcon 标出，而不是靠颜色深浅去猜。
+ */
+const TYPE_FILTER_OPTIONS: Array<{ key: TypeFilterKey; label: string; icon: Component }> = [
+  { key: "all", label: "全部类型", icon: Squares2X2Icon },
+  { key: "doc", label: "文档", icon: DocumentTextIcon },
+  { key: "sheet", label: "表格", icon: TableCellsIcon },
+  { key: "image", label: "图片", icon: PhotoIcon },
+  { key: "archive", label: "压缩包", icon: ArchiveBoxIcon },
+  { key: "code", label: "代码", icon: CodeBracketIcon },
+]
+
+/**
  * 视图偏好：视图模式 / 排序 / 类型筛选。
  *
  * 三项都存 localStorage，刷新后原样恢复。没有改用后端 `/fs/browser-prefs`：
@@ -639,6 +710,16 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const viewMode = ref<ViewMode>(storedPrefs.viewMode || "list")
 const sortBy = ref<SortKey>(storedPrefs.sortBy || "mtime")
 const typeFilter = ref<TypeFilterKey>(storedPrefs.typeFilter || "all")
+const typeFilterOpen = ref(false)
+const typeFilterRef = ref<HTMLElement | null>(null)
+/** 当前筛选的展示项；`all` 必定存在，取不到时退回第一项，避免模板里出现空图标位。 */
+const activeTypeFilter = computed(
+  () => TYPE_FILTER_OPTIONS.find((opt) => opt.key === typeFilter.value) ?? TYPE_FILTER_OPTIONS[0]!,
+)
+const selectTypeFilter = (key: TypeFilterKey) => {
+  typeFilter.value = key
+  typeFilterOpen.value = false
+}
 const selectedPaths = reactive(new Set<string>())
 const dragging = ref(false)
 const createOpen = ref(false)
@@ -708,7 +789,7 @@ const extOf = (name: string) => {
 /**
  * 卡片缩略图只对后端 preview 真正放行的图片类型出图。
  *
- * 用 `IMAGE_EXTENSIONS` 而不是 `fileEmoji` 里那份更宽的表：那张表含 svg，
+ * 用 `IMAGE_EXTENSIONS` 而不是图标映射那份更宽的表：那份表含 svg，
  * 但 `/fs/preview` 的白名单（`IMAGE_PREVIEW_EXTENSIONS`）里没有它，给 svg 出图
  * 只会换来一串注定失败的请求。
  */
@@ -836,15 +917,15 @@ const formatTime = (timestamp: number) => {
   })
 }
 
-const fileEmoji = (name: string) => {
-  const ext = extOf(name)
-  if (["md", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(ext)) return "📄"
-  if (["xls", "xlsx", "xlsm", "csv"].includes(ext)) return "📊"
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) return "🖼️"
-  if (["zip", "tar", "gz", "tgz", "7z", "rar"].includes(ext)) return "🗜️"
-  if (["py", "sh", "js", "ts", "json", "yaml", "yml"].includes(ext)) return "📜"
-  return "📄"
-}
+/**
+ * 文件类型图标（SVG）。
+ *
+ * 早先这里返回 emoji（📄📊🖼️🗜️📜），列表里靠它区分「文档 / 表格 / 图片 / 压缩包 / 代码」。
+ * emoji 清理时函数体被换成了空返回，列表就只剩文件名了——所以改成按
+ * `resolveFileTypeVisual` 的分类挑图标：形状负责区分类型，颜色只做弱提示。
+ */
+const fileIcon = workspaceFileIcon
+const fileIconTone = workspaceFileTone
 
 let loadSeq = 0
 let searchSeq = 0
@@ -1076,6 +1157,7 @@ const onDocumentClick = (event: MouseEvent) => {
   const target = event.target as Node
   if (recentMenuRef.value && !recentMenuRef.value.contains(target)) recentOpen.value = false
   if (createMenuRef.value && !createMenuRef.value.contains(target)) createOpen.value = false
+  if (typeFilterRef.value && !typeFilterRef.value.contains(target)) typeFilterOpen.value = false
 }
 
 const onRowActionsOpen = () => {

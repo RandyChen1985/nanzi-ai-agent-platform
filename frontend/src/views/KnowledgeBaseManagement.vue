@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { SparklesIcon } from "@heroicons/vue/24/outline";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import HoverTip from '../components/HoverTip.vue'
 import TagInput from '../components/TagInput.vue'
@@ -171,7 +172,7 @@ const VISIBILITY_SCOPE_OPTIONS: {
     // 楼宇：代表部门/组织
     iconPath:
       'M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21',
-    iconClass: 'text-violet-500',
+    iconClass: 'text-primary',
   },
   {
     key: 'public',
@@ -181,14 +182,14 @@ const VISIBILITY_SCOPE_OPTIONS: {
     // 地球：代表跨部门/可对外共享
     iconPath:
       'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3c2.4 2.4 3.6 5.4 3.6 9s-1.2 6.6-3.6 9c-2.4-2.4-3.6-5.4-3.6-9S9.6 5.4 12 3z',
-    iconClass: 'text-blue-500',
+    iconClass: 'text-primary',
   },
 ]
 
 /** 可见范围徽标配色：与下拉图标色、权限配置页徽标保持一致 */
 const VISIBILITY_BADGE_CLASS: Record<VisibilityScope, string> = {
-  public: 'bg-blue-50 text-blue-600 border-blue-100',
-  team: 'bg-violet-50 text-violet-600 border-violet-100',
+  public: 'bg-primary/5 text-primary border-primary/10',
+  team: 'bg-primary/5 text-primary border-primary/10',
   private: 'bg-amber-50 text-amber-700 border-amber-100',
 }
 
@@ -1962,7 +1963,7 @@ const overviewVisibilityRows = computed(() =>
     iconPath: visibilityOptionOf(tab.key).iconPath,
     iconClass: visibilityOptionOf(tab.key).iconClass,
     barClass:
-      tab.key === 'public' ? 'bg-primary' : tab.key === 'team' ? 'bg-violet-500' : 'bg-amber-500',
+      tab.key === 'public' ? 'bg-primary' : tab.key === 'team' ? 'bg-primary' : 'bg-amber-500',
   }))
 )
 
@@ -2544,17 +2545,17 @@ const deleteDatasetMessage = computed(() => {
   // 权限没读到时不能当作「没有授权」，否则会静默丢掉这条风险警告
   const permsUnknown = permissionsError.value
   const permWarning = permsUnknown
-    ? '（⚠️ 授权信息读取失败，无法确认该知识库是否存在授权关系）'
-    : '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
+    ? '（[WARN] 授权信息读取失败，无法确认该知识库是否存在授权关系）'
+    : '（[WARN] 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
 
   const assetRefs = deleteAgentRefs.value
   const refWarning = assetRefs.length
-    ? `（⚠️ 该库正被 ${assetRefs.length} 个智能体引用：${assetRefs
+    ? `（[WARN] 该库正被 ${assetRefs.length} 个智能体引用：${assetRefs
         .map((agent) => agent.display_name)
         .slice(0, 3)
         .join('、')}${assetRefs.length > 3 ? ' 等' : ''}；删除后这些智能体将检索不到本库内容）`
     : deleteAgentRefsUnknown.value
-      ? '（⚠️ 引用关系读取失败，无法确认是否仍有智能体在使用本库）'
+      ? '（[WARN] 引用关系读取失败，无法确认是否仍有智能体在使用本库）'
       : ''
   
   if (deletingDataset.value.is_missing_in_ragflow) {
@@ -2568,7 +2569,7 @@ const deleteDatasetMessage = computed(() => {
     if (permsUnknown) {
       baseMsg += permWarning
     } else if (hasPerms) {
-      baseMsg += '（⚠️ 注意：该知识库当前已授权给角色/用户，删除后系统关联的全部授权记录将被同步擦除清理）'
+      baseMsg += '（[WARN] 注意：该知识库当前已授权给角色/用户，删除后系统关联的全部授权记录将被同步擦除清理）'
     }
     return baseMsg + refWarning
   }
@@ -3762,7 +3763,7 @@ const getFileIconClass = (filename: string) => {
   switch (ext) {
     case 'pdf': return 'bg-red-500 shadow-[0_0_4px_#ef4444]'
     case 'doc':
-    case 'docx': return 'bg-blue-500 shadow-[0_0_4px_#3b82f6]'
+    case 'docx': return 'bg-primary shadow-[0_0_4px_#3b82f6]'
     case 'xls':
     case 'xlsx': return 'bg-emerald-500 shadow-[0_0_4px_#10b981]'
     case 'ppt':
@@ -4117,7 +4118,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <span
               v-if="engineStatusHint"
               class="whitespace-nowrap text-xs font-medium"
-              :class="isKnowledgeEnabled && engineStatus === 'checking' ? 'text-blue-600' : 'text-amber-600'"
+              :class="isKnowledgeEnabled && engineStatus === 'checking' ? 'text-primary' : 'text-amber-600'"
             >
               {{ engineStatusHint }}
             </span>
@@ -4252,7 +4253,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           v-if="datasetsStale"
           class="mx-3 mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-2"
         >
-          <span class="shrink-0">⚠️</span>
+          <span class="shrink-0">⚠</span>
           <span class="flex-1 leading-relaxed">知识库引擎连接异常，当前展示的是上次成功获取的数据，可能不是最新。</span>
           <button type="button" class="shrink-0 font-semibold hover:underline" @click="fetchDatasets(true)">刷新</button>
         </div>
@@ -4488,14 +4489,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   >
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
                   </svg>
-                  <svg class="w-3.5 h-3.5 shrink-0" :class="group.isUnassigned ? 'text-gray-400' : 'text-indigo-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-3.5 h-3.5 shrink-0" :class="group.isUnassigned ? 'text-gray-400' : 'text-primary'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                   </svg>
                   <span class="truncate text-[11.5px] font-semibold">{{ group.label }}</span>
                 </div>
                 <span
                   class="shrink-0 text-[10px] font-semibold tabular-nums"
-                  :class="group.isUnassigned ? 'text-gray-400' : 'text-indigo-500'"
+                  :class="group.isUnassigned ? 'text-gray-400' : 'text-primary'"
                   :title="group.hasChildren ? `含下级部门共 ${group.totalCount} 个知识库` : `${group.totalCount} 个知识库`"
                 >
                   {{ group.totalCount }}
@@ -5267,7 +5268,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </div>
               <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
                 <div class="flex items-center gap-3">
-                  <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600">
+                  <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/5 text-primary">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                       <path d="M4 7h16M4 12h10M4 17h13" stroke-linecap="round" />
                     </svg>
@@ -5635,7 +5636,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             v-if="selectedDocument"
             class="p-4 rounded-xl border select-none"
             :class="{
-              'bg-blue-50/20 border-blue-100': getDocStatus(selectedDocument) === 'parsing',
+              'bg-primary/5 border-blue-100': getDocStatus(selectedDocument) === 'parsing',
               'bg-red-50/20 border-red-100': getDocStatus(selectedDocument) === 'failed',
               'bg-emerald-50/20 border-emerald-100': getDocStatus(selectedDocument) === 'parsed',
               'bg-gray-50/30 border-gray-200': getDocStatus(selectedDocument) === 'unparsed'
@@ -5656,15 +5657,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <div v-if="getDocStatus(selectedDocument) === 'parsing'" class="space-y-2 mt-2">
                   <div class="flex items-center justify-between text-xs">
                     <span class="text-gray-500 font-medium">切片构建进度：</span>
-                    <span class="font-bold text-blue-600">{{ ((selectedDocument.progress ?? 0) * 100).toFixed(1) }}%</span>
+                    <span class="font-bold text-primary">{{ ((selectedDocument.progress ?? 0) * 100).toFixed(1) }}%</span>
                   </div>
-                  <div class="w-full bg-blue-100/50 rounded-full h-2 overflow-hidden">
+                  <div class="w-full bg-primary/10 rounded-full h-2 overflow-hidden">
                     <div 
-                      class="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out"
+                      class="bg-primary h-2 rounded-full transition-all duration-500 ease-out"
                       :style="{ width: `${Math.min(100, (selectedDocument.progress ?? 0) * 100)}%` }"
                     ></div>
                   </div>
-                  <p class="text-[11px] text-blue-500/80 font-mono italic mt-1.5 truncate" :title="selectedDocument.progress_msg">
+                  <p class="text-[11px] text-primary/80 font-mono italic mt-1.5 truncate" :title="selectedDocument.progress_msg">
                     实时状态: {{ selectedDocument.progress_msg || '正在启动解析器...' }}
                   </p>
                 </div>
@@ -5933,7 +5934,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   </div>
                 </div>
                 <div v-else class="rounded-xl bg-gray-50/50 p-4 border text-center text-sm text-gray-400 select-none">
-                  <span v-if="isReadOnlyDataset(selectedDataset)" class="text-amber-600 font-medium">⚠️ 只读模式：您不是该知识库的创建人，仅可查看，不可修改或上传文档</span>
+                  <span v-if="isReadOnlyDataset(selectedDataset)" class="text-amber-600 font-medium">只读模式：您不是该知识库的创建人，仅可查看，不可修改或上传文档</span>
                   <span v-else>当前状态无法向知识库上传文档（可能由于 RAGFlow 失联或权限受限）</span>
                 </div>
                 </template>
@@ -5960,7 +5961,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                     <span
                       v-for="tag in selectedDataset.tags"
                       :key="tag"
-                      class="px-2.5 py-1 text-xs rounded-lg bg-blue-50/60 text-blue-700 border border-blue-100/60 font-medium transition-all hover:bg-blue-100/50 select-none cursor-default"
+                      class="px-2.5 py-1 text-xs rounded-lg bg-primary/5 text-primary-dark border border-primary/10 font-medium transition-all hover:bg-primary/10 select-none cursor-default"
                     >
                       {{ tag }}
                     </span>
@@ -6182,13 +6183,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                       <span
                         v-for="role in datasetPermissions.roles"
                         :key="`ref-role-${role.id}`"
-                        class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-100 flex items-center gap-1"
+                        class="px-2 py-0.5 rounded bg-primary/5 text-primary-dark text-[11px] font-semibold border border-primary/10 flex items-center gap-1"
                       >
                         角色 · {{ role.name }}
                         <button
                           v-if="canManagePermissions"
                           type="button"
-                          class="text-indigo-400 hover:text-red-500 font-bold focus:outline-none cursor-pointer"
+                          class="text-primary hover:text-red-500 font-bold focus:outline-none cursor-pointer"
                           title="取消授权"
                           @click.stop="removePermission('role', role.id, role.name)"
                         >×</button>
@@ -6462,7 +6463,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span v-else>✨</span>
+              <SparklesIcon v-else class="h-3.5 w-3.5" aria-hidden="true" />
               <span>{{ aiAnalyzing ? 'AI 分析中...' : 'AI 智能分析元数据' }}</span>
             </button>
           </div>
@@ -6853,7 +6854,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <p class="truncate text-sm font-semibold text-gray-900">{{ item.name }}</p>
                   <span
                     class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                    :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
+                    :class="item.visibility === 'public' ? 'bg-primary/5 text-primary' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'"
                   >{{ item.visibility === 'public' ? '授权可见' : 'TEAM 级' }}</span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ item.description || '暂无描述' }}</p>
@@ -7317,7 +7318,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <input 
                   type="checkbox" 
                   :checked="selectedCandidateIds.includes(r.id)"
-                  class="rounded text-indigo-600 border-gray-300 focus:ring-indigo-500" 
+                  class="rounded text-primary border-gray-300 focus:ring-primary" 
                   @click.stop="toggleCandidateSelection(r.id)"
                 />
                 <div class="flex flex-col">
@@ -7468,7 +7469,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">文档上传与解析</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -7484,7 +7485,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">3</span>
                             <h4 class="font-bold text-gray-900 text-sm">召回测试与调优</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -7502,7 +7503,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/knowledge-retrieval-test')"
-                            class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             召回测试 &rarr;
                          </button>
@@ -7513,7 +7514,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">权限授权与角色分配</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -7524,7 +7525,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/roles')"
-                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往角色管理 &rarr;
                          </button>
@@ -7560,16 +7561,16 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">RAGFlow 切分策略选型推荐</h4>
                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
-                         <span class="font-bold text-blue-900 text-sm">naive（通用分块，推荐）</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/10 space-y-1">
+                         <span class="font-bold text-primary-dark text-sm">naive（通用分块，推荐）</span>
                          <p class="text-gray-600 leading-relaxed">适用于大部分文章、产品说明书、Wiki 文档与 Markdown。按段落标点自适应合并切分。</p>
                       </div>
                       <div class="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-1">
                          <span class="font-bold text-emerald-900 text-sm">qa（问答对模式）</span>
                          <p class="text-gray-600 leading-relaxed">适用于 FAQ 客服手册、常见问题解答。自动提取 Q&A 问答对并向量化 Question。</p>
                       </div>
-                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
-                         <span class="font-bold text-purple-900 text-sm">table（表格模式）</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/10 space-y-1">
+                         <span class="font-bold text-primary-dark text-sm">table（表格模式）</span>
                          <p class="text-gray-600 leading-relaxed">适用于 Excel、CSV、财务数据表。保留行列结构与表头，避免跨行错位。</p>
                       </div>
                       <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">

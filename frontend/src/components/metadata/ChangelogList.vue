@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ClipboardDocumentListIcon } from "@heroicons/vue/24/outline";
 import { ref, onMounted, computed } from 'vue'
 import { diffLines } from 'diff'
 import { changelogApi } from '../../api/changelog'
@@ -136,7 +137,7 @@ const getOperationBadgeStyle = (operation: string) => {
     case 'create':
       return 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
     case 'update':
-      return 'bg-blue-50 text-blue-700 border-blue-200/80'
+      return 'bg-primary/5 text-primary-dark border-primary/20'
     case 'delete':
       return 'bg-red-50 text-red-700 border-red-200/80'
     default:
@@ -149,7 +150,7 @@ const getOperationNodeIconStyle = (operation: string) => {
     case 'create':
       return 'bg-emerald-500 text-white ring-4 ring-emerald-50'
     case 'update':
-      return 'bg-blue-500 text-white ring-4 ring-blue-50'
+      return 'bg-primary text-white ring-4 ring-primary/5'
     case 'delete':
       return 'bg-red-500 text-white ring-4 ring-red-50'
     default:
@@ -179,11 +180,11 @@ const getResourceTypeText = (resourceType: string) => {
 
 const getResourceTypeBadgeStyle = (resourceType: string) => {
   switch (resourceType) {
-    case 'dataset': return 'bg-purple-50 text-purple-700 border-purple-100'
-    case 'table': return 'bg-blue-50 text-blue-700 border-blue-100'
-    case 'column': return 'bg-cyan-50 text-cyan-700 border-cyan-100'
+    case 'dataset': return 'bg-primary/5 text-primary-dark border-primary/10'
+    case 'table': return 'bg-primary/5 text-primary-dark border-primary/10'
+    case 'column': return 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-100'
     case 'metric': return 'bg-amber-50 text-amber-700 border-amber-100'
-    case 'relationship': return 'bg-indigo-50 text-indigo-700 border-indigo-100'
+    case 'relationship': return 'bg-primary/5 text-primary-dark border-primary/10'
     default: return 'bg-gray-50 text-gray-600 border-gray-200'
   }
 }
@@ -224,9 +225,9 @@ onMounted(() => {
           class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
         >
           <option value="all">所有操作</option>
-          <option value="create">🟢 新增 (Create)</option>
-          <option value="update">🔵 更新 (Update)</option>
-          <option value="delete">🔴 删除 (Delete)</option>
+          <option value="create">新增 (Create)</option>
+          <option value="update">更新 (Update)</option>
+          <option value="delete">删除 (Delete)</option>
         </select>
 
         <!-- 资源类型筛选 -->
@@ -256,7 +257,7 @@ onMounted(() => {
           <button 
             type="button"
             @click="setViewMode('timeline')"
-            :class="[viewMode === 'timeline' ? 'bg-white text-blue-700 font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
+            :class="[viewMode === 'timeline' ? 'bg-white text-primary-dark font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
             title="时间线轨迹视图"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -267,7 +268,7 @@ onMounted(() => {
           <button 
             type="button"
             @click="setViewMode('list')"
-            :class="[viewMode === 'list' ? 'bg-white text-blue-700 font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
+            :class="[viewMode === 'list' ? 'bg-white text-primary-dark font-bold shadow-xs' : 'text-gray-500 hover:text-gray-800', 'px-2.5 py-1 text-xs rounded-md transition-all flex items-center gap-1.5']"
             title="结构列表卡片视图"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,12 +329,12 @@ onMounted(() => {
           </div>
 
           <!-- 时间线内容卡片 -->
-          <div class="bg-slate-50/70 hover:bg-white rounded-xl border border-slate-200/80 hover:border-blue-300 p-3.5 transition-all shadow-2xs hover:shadow-xs ml-2">
+          <div class="bg-slate-50/70 hover:bg-white rounded-xl border border-slate-200/80 hover:border-primary/25 p-3.5 transition-all shadow-2xs hover:shadow-xs ml-2">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="flex flex-wrap items-center gap-2 min-w-0">
                 <!-- 用户头像胶囊 -->
                 <div class="flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-gray-200/80 text-xs font-semibold text-gray-700 shadow-2xs">
-                  <div class="w-4 h-4 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold">
+                  <div class="w-4 h-4 rounded-full bg-primary/10 text-primary-dark flex items-center justify-center text-[10px] font-bold">
                     {{ (log.user_name || 'U').slice(0, 1).toUpperCase() }}
                   </div>
                   <span>{{ log.user_name || '系统操作' }}</span>
@@ -385,7 +386,7 @@ onMounted(() => {
             <!-- 卡片底栏交互 -->
             <div class="mt-2.5 pt-2 border-t border-gray-200/50 flex items-center justify-between text-xs text-gray-400">
               <span class="text-[11px] text-gray-400">点击卡片可查看字段级详细差异对比 (Diff)</span>
-              <span class="text-blue-600 group-hover:text-blue-700 font-bold inline-flex items-center gap-1 transition-colors">
+              <span class="text-primary group-hover:text-primary-dark font-bold inline-flex items-center gap-1 transition-colors">
                 <span>查看 Diff</span>
                 <svg class="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
@@ -402,7 +403,7 @@ onMounted(() => {
       <div 
         v-for="log in filteredChangelogs" 
         :key="log.id"
-        class="bg-white rounded-xl border border-gray-100 p-4 hover:border-blue-300 hover:shadow-xs transition-all cursor-pointer group"
+        class="bg-white rounded-xl border border-gray-100 p-4 hover:border-primary/25 hover:shadow-xs transition-all cursor-pointer group"
         @click="viewChangeDiff(log)"
       >
         <div class="flex items-start justify-between gap-3">
@@ -443,9 +444,9 @@ onMounted(() => {
           </div>
 
           <!-- 右侧操作箭头 -->
-          <div class="flex items-center gap-1.5 text-xs text-blue-600 font-bold shrink-0 self-center">
+          <div class="flex items-center gap-1.5 text-xs text-primary font-bold shrink-0 self-center">
             <span class="hidden sm:inline opacity-0 group-hover:opacity-100 transition-opacity">查看详情</span>
-            <svg class="w-4 h-4 text-gray-400 group-hover:text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 text-gray-400 group-hover:text-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
           </div>
@@ -455,7 +456,7 @@ onMounted(() => {
 
     <!-- 空状态 -->
     <div v-else class="bg-white rounded-xl border border-gray-100 p-10 text-center shadow-xs">
-      <div class="text-4xl mb-3 grayscale opacity-30">📋</div>
+      <div class="text-4xl mb-3 grayscale opacity-30"><ClipboardDocumentListIcon class="h-10 w-10" aria-hidden="true" /></div>
       <h3 class="text-base font-bold text-gray-800 mb-1">
         {{ changelogs.length === 0 ? '暂无变更记录' : '未匹配到符合条件的记录' }}
       </h3>

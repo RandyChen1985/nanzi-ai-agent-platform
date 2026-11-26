@@ -9,7 +9,7 @@
           ? 'bg-white/95 dark:bg-zinc-900/90 border-amber-500/25 dark:border-amber-500/35 text-amber-950 dark:text-amber-50 shadow-amber-500/5 dark:shadow-amber-950/20'
           : type === 'error'
             ? 'bg-white/95 dark:bg-zinc-900/90 border-rose-500/25 dark:border-rose-500/35 text-rose-950 dark:text-rose-50 shadow-rose-500/5 dark:shadow-rose-950/20'
-            : 'bg-white/95 dark:bg-zinc-900/90 border-sky-500/25 dark:border-sky-500/35 text-sky-950 dark:text-sky-50 shadow-sky-500/5 dark:shadow-sky-950/20',
+            : 'bg-white/95 dark:bg-zinc-900/90 border-primary/25 dark:border-primary/35 text-primary-dark dark:text-sky-50 shadow-primary/5 dark:shadow-black/20',
     ]"
     @mouseenter="pauseTimer"
     @mouseleave="resumeTimer"
@@ -24,7 +24,7 @@
             ? 'bg-amber-500 text-white shadow-amber-500/30'
             : type === 'error'
               ? 'bg-rose-500 text-white shadow-rose-500/30'
-              : 'bg-sky-500 text-white shadow-sky-500/30',
+              : 'bg-primary text-white shadow-primary/30',
       ]"
     >
       <!-- Success Icon -->
@@ -65,7 +65,7 @@
               ? 'text-amber-950 dark:text-amber-100'
               : type === 'error'
                 ? 'text-rose-950 dark:text-rose-100'
-                : 'text-sky-950 dark:text-sky-100',
+                : 'text-primary-dark dark:text-sky-100',
         ]"
       >
         {{ message }}

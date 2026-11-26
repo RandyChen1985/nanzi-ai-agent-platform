@@ -188,7 +188,7 @@ const skillsForActiveScope = computed(() => {
       <div class="flex-shrink-0 px-5 pt-5 pb-3 border-b border-gray-100 dark:border-gray-700">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <h3 id="resource-scope-modal-title" class="text-base font-black text-gray-900 dark:text-gray-100">项目会话资源</h3>
+            <h3 id="resource-scope-modal-title" class="text-base font-bold text-gray-900 dark:text-gray-100">项目会话资源</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
               先填写项目名称，再按需勾选资源；保存后仅对本会话生效。
             </p>
@@ -404,7 +404,7 @@ const skillsForActiveScope = computed(() => {
                     @click="emit('toggle-option', group.key, option)"
                   >
                     <span
-                      class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0"
+                      class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
                       :class="option.scope === 'personal' ? 'bg-emerald-500' : optionAccent(optionIndex)"
                     >{{ optionInitial({ name: mcpToolDisplayName(option, mcpGroup.serverName) }) }}</span>
                     <span class="min-w-0 flex-1">
@@ -448,7 +448,7 @@ const skillsForActiveScope = computed(() => {
                 @click="emit('toggle-option', group.key, option)"
               >
                 <span
-                  class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0"
+                  class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
                   :class="isPersonalOption(option) ? 'bg-emerald-500' : optionAccent(optionIndex)"
                 >{{ optionInitial(option) }}</span>
                 <span class="min-w-0 flex-1">
@@ -504,7 +504,7 @@ const skillsForActiveScope = computed(() => {
                   : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
                 @click="emit('toggle-option', group.key, option)"
               >
-                <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0" :class="optionAccent(optionIndex)">{{ optionInitial(option) }}</span>
+                <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" :class="optionAccent(optionIndex)">{{ optionInitial(option) }}</span>
                 <span class="min-w-0 flex-1">
                   <span class="block text-sm font-bold text-gray-900 dark:text-gray-100 truncate" :title="option.name || option.id">{{ option.name || option.id }}</span>
                   <span v-if="option.description" class="block text-xs text-gray-400 dark:text-gray-500 truncate">{{ option.description }}</span>
@@ -528,7 +528,7 @@ const skillsForActiveScope = computed(() => {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
-            class="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-primary hover:bg-blue-50 dark:hover:bg-gray-700 disabled:opacity-40"
+            class="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-primary hover:bg-primary/5 dark:hover:bg-gray-700 disabled:opacity-40"
             :disabled="loading || saving"
             @click="emit('refresh')"
           >

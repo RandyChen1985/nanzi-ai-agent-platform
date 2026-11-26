@@ -4,7 +4,7 @@
       <template #action>
         <button
           type="button"
-          class="text-[11.5px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          class="text-[11.5px] font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
           @click="$emit('view-all')"
         >
           全部场景 →
@@ -17,11 +17,11 @@
         v-for="scenario in scenarios"
         :key="scenario.id"
         type="button"
-        class="flex gap-2.5 rounded-xl border border-gray-200/80 bg-white p-3.5 text-left shadow-xs transition-colors hover:border-blue-200 hover:bg-blue-50/30 dark:border-gray-800 dark:bg-gray-900/40 dark:hover:border-blue-500/40 dark:hover:bg-blue-950/20"
+        class="flex gap-2.5 rounded-xl border border-gray-200/80 bg-white p-3.5 text-left shadow-xs transition-colors hover:border-primary/20 hover:bg-primary/5 dark:border-gray-800 dark:bg-gray-900/40 dark:hover:border-primary/40 dark:hover:bg-primary-dark/20"
         @click="$emit('open-scenario', scenario)"
       >
         <span
-          class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+          class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
           aria-hidden="true"
         >
           <svg class="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -34,7 +34,7 @@
             <span class="truncate text-[13px] font-semibold text-gray-900 dark:text-gray-100">{{ scenario.name }}</span>
             <span
               v-if="scenario.recommended"
-              class="shrink-0 rounded bg-blue-50 px-1.5 py-px text-[10px] font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-400"
+              class="shrink-0 rounded bg-primary/5 px-1.5 py-px text-[10px] font-semibold text-primary-dark dark:bg-primary-dark/50 dark:text-primary"
             >推荐</span>
           </span>
           <span class="mt-0.5 line-clamp-2 block text-[11.5px] text-gray-400 dark:text-gray-500">{{ scenario.description }}</span>
@@ -54,7 +54,7 @@
       </p>
       <button
         type="button"
-        class="mt-3 text-[11.5px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+        class="mt-3 text-[11.5px] font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
         @click="$emit('view-all')"
       >
         浏览场景包市场

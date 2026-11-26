@@ -34,9 +34,9 @@ def test_group_state_helper_has_three_states():
 def test_mcp_group_header_highlights_fully_selected():
     assert "mcpGroupState(tools) === 'all'" in MCP_GROUPS
     assert "border-l-indigo-500" in MCP_GROUPS
-    assert "border-b-indigo-200" in MCP_GROUPS and "bg-indigo-100" in MCP_GROUPS
+    assert "border-b-indigo-200" in MCP_GROUPS and "bg-primary/10" in MCP_GROUPS
     # 实心徽章：一眼能从一排分组里挑出「这组已经全选」
-    assert "bg-indigo-600 font-bold text-white" in MCP_GROUPS
+    assert "bg-primary font-bold text-white" in MCP_GROUPS
 
 
 def test_partial_selection_is_distinguishable_from_none():

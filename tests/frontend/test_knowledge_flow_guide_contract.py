@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_knowledge_flow_guide_banner_contract():
     banner = _source("frontend/src/components/knowledge/KnowledgeFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     view = _source("frontend/src/views/KnowledgeBaseManagement.vue")
 
     # 1. 验证 5 步流程定义与前置环境依赖
@@ -28,7 +29,7 @@ def test_knowledge_flow_guide_banner_contract():
     assert "/dashboard/roles" in banner
     assert "/dashboard/agent-management" in banner
     assert "新建知识库" in banner
-    assert "不再提示" in banner
+    assert "不再提示" in strip
 
     # 3. 验证主视图中的组件引入与持久化机制
     assert "KnowledgeFlowGuideBanner" in view

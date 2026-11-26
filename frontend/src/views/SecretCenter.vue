@@ -1007,7 +1007,7 @@ onMounted(() => {
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="scope === 'mine' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+          :class="scope === 'mine' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
           @click="scope = 'mine'"
         >
           我的凭据 <span class="ml-1 text-xs text-gray-400">{{ counts.mine }}</span>
@@ -1027,7 +1027,7 @@ onMounted(() => {
       <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <button
           type="button"
-          class="order-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600 sm:order-1"
+          class="order-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary sm:order-1"
           title="这些凭据会被用在哪里"
           aria-label="查看凭据使用范围"
           @click="usageHelpOpen = true"
@@ -1036,12 +1036,12 @@ onMounted(() => {
           v-model="keyword"
           type="search"
           placeholder="搜索名称或标识"
-          class="order-1 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:order-2 sm:w-56"
+          class="order-1 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none sm:order-2 sm:w-56"
         />
         <button
           v-if="scope === 'mine'"
           type="button"
-          class="order-3 flex-1 whitespace-nowrap rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 sm:flex-none"
+          class="order-3 flex-1 whitespace-nowrap rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark sm:flex-none"
           @click="openCreate"
         >
           新建凭据
@@ -1173,12 +1173,12 @@ onMounted(() => {
           </p>
         </div>
 
-        <div class="rounded-lg bg-blue-50 p-3">
+        <div class="rounded-lg bg-primary/5 p-3">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="flex flex-wrap items-center gap-1.5 font-medium text-gray-800">
                 我的偏好：允许脚本读取我的凭据
-                <span class="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-normal text-blue-700">我能改</span>
+                <span class="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-normal text-primary-dark">我能改</span>
               </p>
               <p class="mt-0.5 text-[11px] text-gray-500">
                 与上面的平台策略取交集——两层都开才真正生效。
@@ -1200,7 +1200,7 @@ onMounted(() => {
                 :class="
                   prefs.allow_script_env
                     ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                    : 'border-blue-600 bg-white text-blue-700 hover:bg-blue-50'
+                    : 'border-primary bg-white text-primary-dark hover:bg-primary/5'
                 "
                 @click="savePrefs(!prefs.allow_script_env)"
               >
@@ -1251,10 +1251,10 @@ onMounted(() => {
         <button
           type="button"
           class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors"
-          :class="filterKind === 'all' ? 'bg-blue-50 font-medium text-blue-700' : 'text-gray-600 hover:bg-gray-50'"
+          :class="filterKind === 'all' ? 'bg-primary/5 font-medium text-primary-dark' : 'text-gray-600 hover:bg-gray-50'"
           @click="filterKind = 'all'"
         >
-          <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+          <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
           <span class="flex-1">所有凭据</span>
           <span class="text-[11px] text-gray-400">{{ scopedItems.length }}</span>
         </button>
@@ -1287,11 +1287,11 @@ onMounted(() => {
             type="button"
             class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors"
             :class="filterKind === 'category' && activeCategory === group.name
-              ? 'bg-violet-50 font-medium text-violet-700'
+              ? 'bg-primary/5 font-medium text-primary-dark'
               : 'text-gray-600 hover:bg-gray-50'"
             @click="activeCategory = group.name; filterKind = 'category'"
           >
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
             <span class="flex-1 truncate">{{ group.name }}</span>
             <span class="text-[11px] text-gray-400">{{ group.count }}</span>
           </button>
@@ -1331,7 +1331,7 @@ onMounted(() => {
           <p class="text-xs text-gray-500">没有符合当前筛选的凭据</p>
           <button
             type="button"
-            class="mt-2 text-xs text-blue-600 underline hover:text-blue-700"
+            class="mt-2 text-xs text-primary underline hover:text-primary-dark"
             @click="resetFilters"
           >
             清除筛选
@@ -1344,13 +1344,13 @@ onMounted(() => {
             :key="item.id"
             type="button"
             class="grid w-full grid-cols-[minmax(0,1fr)_84px_56px_84px] items-center gap-2 border-b border-gray-50 px-3 py-2.5 text-left transition-colors last:border-b-0"
-            :class="selected?.id === item.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'"
+            :class="selected?.id === item.id ? 'bg-primary/5' : 'hover:bg-gray-50'"
             @click="selectSecret(item)"
           >
           <div class="flex min-w-0 items-center gap-2">
             <span
               class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold"
-              :class="item.secret_type === 'variable' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'"
+              :class="item.secret_type === 'variable' ? 'bg-sky-100 text-primary-dark' : 'bg-primary/10 text-primary-dark'"
             >{{ item.secret_type === 'variable' ? '变' : '凭' }}</span>
             <div class="min-w-0">
               <div class="flex min-w-0 items-center gap-1">
@@ -1384,7 +1384,7 @@ onMounted(() => {
           <div class="flex items-start gap-2">
             <span
               class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
-              :class="selected.secret_type === 'variable' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'"
+              :class="selected.secret_type === 'variable' ? 'bg-sky-100 text-primary-dark' : 'bg-primary/10 text-primary-dark'"
             >{{ selected.secret_type === 'variable' ? '变' : '凭' }}</span>
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold text-gray-900">{{ selected.name }}</p>
@@ -1392,7 +1392,7 @@ onMounted(() => {
             </div>
           </div>
           <div class="mt-2 flex flex-wrap gap-1">
-            <span class="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+            <span class="rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark">
               {{ selected.secret_type === 'variable' ? '变量' : '凭证' }}
             </span>
             <span class="rounded px-1.5 py-0.5 text-[10px] font-medium" :class="statusTone(selected)">
@@ -1425,18 +1425,18 @@ onMounted(() => {
             </div>
             <div
               v-if="selected.value_format === 'json'"
-              class="mt-1.5 rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1.5"
+              class="mt-1.5 rounded-md border border-primary/10 bg-primary/5 px-2 py-1.5"
             >
-              <p class="text-[10px] font-medium text-indigo-700">
+              <p class="text-[10px] font-medium text-primary-dark">
                 结构化 · {{ credentialTemplateLabel(selected.value_template) }}
               </p>
               <p
                 v-if="selected.secret_type !== 'variable'"
-                class="mt-0.5 break-all font-mono text-[10.5px] leading-relaxed text-indigo-900"
+                class="mt-0.5 break-all font-mono text-[10.5px] leading-relaxed text-primary-dark"
               >
                 {{ selected.value_summary || '（没有可展示的非敏感字段）' }}
               </p>
-              <p class="mt-0.5 text-[10px] text-indigo-500">
+              <p class="mt-0.5 text-[10px] text-primary">
                 摘要由后端从已加密的 JSON 里挑非敏感字段生成，敏感字段不参与。
               </p>
             </div>
@@ -1479,7 +1479,7 @@ onMounted(() => {
                     @click.stop="copyReference(selected, field.name)"
                   >{{ copiedField === field.name ? '已复制' : '复制引用' }}</button>
                 </div>
-                <code class="mt-0.5 block break-all font-mono text-[10px] text-indigo-600">{{ referenceOf(selected, field.name) }}</code>
+                <code class="mt-0.5 block break-all font-mono text-[10px] text-primary">{{ referenceOf(selected, field.name) }}</code>
               </div>
               <p class="text-[10px] leading-relaxed text-gray-400">
                 绑定时在此选一个字段，注入层就只取那一段；不选会整段 JSON 注进去。
@@ -1572,13 +1572,13 @@ onMounted(() => {
                     >规则未命中时才用它</p>
                     <p
                       v-else-if="group.rule_shadow === 'model'"
-                      class="truncate text-[9px] text-sky-600"
+                      class="truncate text-[9px] text-primary"
                       title="这些槽位上有规则绑定；只有模型在编号字段里指定了这条凭据时才会用它。"
                     >需模型指定才用</p>
                   </div>
                   <span
                     class="shrink-0 rounded px-1 py-0.5 text-[9px]"
-                    :class="group.bound_by_me ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'"
+                    :class="group.bound_by_me ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-primary-dark'"
                   >{{ group.bound_by_me ? '我绑的' : '全局' }}</span>
                   <button
                     v-if="group.bound_by_me"
@@ -1806,7 +1806,7 @@ onMounted(() => {
               </ol>
             </div>
 
-            <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
+            <p class="rounded-lg bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
               值是加密存的，不落日志、不进对话历史。前面几项「注入」只在代发那一刻解密；<b>脚本通道不属于注入</b>——值会真的交到脚本手上，平台只留一条调用记录。你在页面上点「查看」同样会留记录。
             </p>
           </div>
@@ -1844,7 +1844,7 @@ onMounted(() => {
               </div>
             </div>
 
-            <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
+            <p class="rounded-lg bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
               helper 只能由平台在 Bash 里准备：票据每次执行前写入、执行完删除，所以它<b>不能</b>拿去本地或别的机器跑。
               值拿到之后平台就拦不住了，边界见「会被用在哪里」那一页。
             </p>
@@ -1938,7 +1938,7 @@ onMounted(() => {
                 <button
                   v-if="editForm.expires_at"
                   type="button"
-                  class="text-[11px] text-blue-600 hover:underline"
+                  class="text-[11px] text-primary hover:underline"
                   @click="editForm.expires_at = ''"
                 >设为长期有效</button>
               </div>
@@ -2229,7 +2229,7 @@ onMounted(() => {
         >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
-              <span class="text-blue-600">+</span> 新建凭据
+              <span class="text-primary">+</span> 新建凭据
             </h3>
             <p class="mt-0.5 text-xs text-gray-500">三步：说清楚是什么 → 划清楚能去哪 → 确认不可逆的部分</p>
           </div>
@@ -2239,11 +2239,11 @@ onMounted(() => {
             <template v-for="(label, index) in ['基本信息', '注入范围', '确认']" :key="label">
               <div
                 class="flex items-center gap-1.5 text-[11.5px] font-semibold"
-                :class="createStep === index + 1 ? 'text-blue-700' : (createStep > index + 1 ? 'text-emerald-700' : 'text-gray-400')"
+                :class="createStep === index + 1 ? 'text-primary-dark' : (createStep > index + 1 ? 'text-emerald-700' : 'text-gray-400')"
               >
                 <span
                   class="flex h-[19px] w-[19px] items-center justify-center rounded-full text-[10px]"
-                  :class="createStep === index + 1 ? 'bg-blue-600 text-white' : (createStep > index + 1 ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500')"
+                  :class="createStep === index + 1 ? 'bg-primary text-white' : (createStep > index + 1 ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500')"
                 >{{ createStep > index + 1 ? '✓' : index + 1 }}</span>
                 {{ label }}
               </div>
@@ -2263,7 +2263,7 @@ onMounted(() => {
                 <input
                   v-model="form.secret_key"
                   placeholder="jira.prod.token"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none"
                 />
                 <span class="mt-1 block text-[11px] text-gray-400">
                   小写字母、数字、点、下划线、连字符；会被拼进 <code>${secret:标识}</code>
@@ -2275,7 +2275,7 @@ onMounted(() => {
                 <input
                   v-model="form.name"
                   placeholder="留空则用标识"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
                 />
               </label>
 
@@ -2285,7 +2285,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
+                    :class="form.secret_type === 'credential' ? 'border-primary bg-primary/5' : 'border-gray-200'"
                     @click="form.secret_type = 'credential'"
                   >
                     <span class="block font-medium text-gray-900">凭证</span>
@@ -2294,7 +2294,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
+                    :class="form.secret_type === 'variable' ? 'border-primary bg-sky-50' : 'border-gray-200'"
                     @click="form.secret_type = 'variable'"
                   >
                     <span class="block font-medium text-gray-900">变量</span>
@@ -2309,7 +2309,7 @@ onMounted(() => {
                   v-model="form.category"
                   list="secret-category-options"
                   placeholder="第三方 API / 数据库 / 平台内部……"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
                 />
                 <datalist id="secret-category-options">
                   <option v-for="group in categoryGroups" :key="group.name" :value="group.name" />
@@ -2330,7 +2330,7 @@ onMounted(() => {
                 <span class="text-xs font-medium text-gray-700">备注</span>
                 <input
                   v-model="form.remark"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
                 />
               </label>
             </div>
@@ -2347,13 +2347,13 @@ onMounted(() => {
                     :disabled="!scene.wired"
                     class="flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors"
                     :class="scene.wired
-                      ? (form.allowed_scenarios.includes(scene.key) ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-gray-300')
+                      ? (form.allowed_scenarios.includes(scene.key) ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-gray-300')
                       : 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50 opacity-70'"
                     @click="scene.wired && toggleScene(scene.key)"
                   >
                     <span
                       class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] text-white"
-                      :class="form.allowed_scenarios.includes(scene.key) ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'"
+                      :class="form.allowed_scenarios.includes(scene.key) ? 'border-primary bg-primary' : 'border-gray-300 bg-white'"
                     >{{ form.allowed_scenarios.includes(scene.key) ? '✓' : '' }}</span>
                     <span class="min-w-0">
                       <span class="block text-xs font-medium" :class="scene.wired ? 'text-gray-900' : 'text-gray-400'">
@@ -2376,7 +2376,7 @@ onMounted(() => {
                 <input
                   v-model="form.allowed_hosts"
                   placeholder="api.example.com, *.atlassian.net"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none"
                 />
                 <span class="mt-1 block text-[11px] text-gray-400">
                   逗号分隔，支持 <code>*.</code> 通配子域。留空 = 只允许平台内部目标。这条是防「凭据被拼进任意 URL 带走」的闸门。
@@ -2389,21 +2389,21 @@ onMounted(() => {
                   <button
                     v-if="form.expires_at"
                     type="button"
-                    class="text-[11px] text-blue-600 hover:underline"
+                    class="text-[11px] text-primary hover:underline"
                     @click="form.expires_at = ''"
                   >设为长期有效</button>
                 </div>
                 <input
                   v-model="form.expires_at"
                   type="datetime-local"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
                 />
                 <span class="mt-1 block text-[11px] text-gray-400">
                   留空表示长期有效；过期后调用方会拒绝注入并保留记录。
                 </span>
               </div>
 
-              <div class="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
+              <div class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary-dark">
                 <b>不勾任何场景</b> = 这条凭据建完只是个仓库条目，任何工具都取不到。
                 绑定是白名单，不是黑名单。
               </div>
@@ -2435,7 +2435,7 @@ onMounted(() => {
                       <span
                         v-for="key in visibleFormScenarios"
                         :key="key"
-                        class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700"
+                        class="rounded bg-primary/5 px-1.5 py-0.5 text-[10px] text-primary-dark"
                       >{{ sceneLabelOf(key) }}</span>
                     </template>
                     <span v-else class="text-amber-600">一个都没勾 —— 建完也取不到</span>
@@ -2479,14 +2479,14 @@ onMounted(() => {
               <button
                 v-if="createStep < 3"
                 type="button"
-                class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark"
                 @click="nextCreateStep"
               >下一步</button>
               <button
                 v-else
                 type="button"
                 :disabled="createBusy"
-                class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-60"
                 @click="submitCreate"
               >{{ createBusy ? '创建中…' : '确认创建' }}</button>
             </div>
@@ -2512,11 +2512,11 @@ onMounted(() => {
               </p>
               <p
                 v-if="rotateTarget.value_format === 'json'"
-                class="mt-1 text-[11px] text-blue-700"
+                class="mt-1 text-[11px] text-primary-dark"
               >
                 这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget.value_template) }}），
                 结构已锁定：轮换只换值、不换模板。换模板会让别处已写好的
-                <code class="rounded bg-blue-50 px-1">${secret:标识.字段}</code> 引用全部失效。
+                <code class="rounded bg-primary/5 px-1">${secret:标识.字段}</code> 引用全部失效。
               </p>
               <div class="mt-3">
                 <p v-if="rotateStructureLoading" class="mb-1.5 text-[11px] text-gray-500">正在读取原来的字段结构…</p>
@@ -2543,14 +2543,14 @@ onMounted(() => {
                   v-model="rotateExpiresAt"
                   type="datetime-local"
                   :disabled="rotateClearExpires"
-                  class="block w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                  class="block w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
                   @input="rotateClearExpires = false"
                 />
                 <label class="flex items-center gap-1.5 text-[11px] text-gray-600">
                   <input
                     v-model="rotateClearExpires"
                     type="checkbox"
-                    class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    class="rounded border-gray-300 text-primary focus:ring-primary"
                     @change="rotateClearExpires && (rotateExpiresAt = '')"
                   />
                   <span>清除原截止时间，转为长期有效</span>
@@ -2566,7 +2566,7 @@ onMounted(() => {
                 <button
                   type="button"
                   :disabled="rotateBusy || !rotateValid"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                  class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-60"
                   @click="submitRotate"
                 >
                   {{ rotateBusy ? '轮换中…' : '确认轮换' }}

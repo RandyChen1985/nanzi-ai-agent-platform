@@ -584,7 +584,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
 
 <template>
   <div>
-    <p class="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700">
+    <p class="mb-3 rounded-lg bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary-dark">
       <span class="font-semibold">①</span> 定一条凭据（或一条挑凭据的规则）
       → <span class="font-semibold">②</span> 把它的字段分给各参数
       → <span class="font-semibold">③</span> 保存映射。
@@ -601,24 +601,24 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       <button
         type="button"
         class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
-        :class="source === 'fixed' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
+        :class="source === 'fixed' ? 'border-primary bg-primary/5 ring-2 ring-primary/10' : 'border-gray-300 bg-white hover:border-gray-400'"
         @click="pickSource('fixed')"
       >
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
           固定凭据
-          <span class="rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700">仅结构化</span>
+          <span class="rounded bg-primary/5 px-1 py-0.5 text-[10px] font-medium text-primary-dark">仅结构化</span>
         </div>
         <div class="mt-0.5 text-[11px] text-gray-600">选一条结构化凭据，它的字段就是下面的候选</div>
       </button>
       <button
         type="button"
         class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
-        :class="source === 'rule' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
+        :class="source === 'rule' ? 'border-primary bg-primary/5 ring-2 ring-primary/10' : 'border-gray-300 bg-white hover:border-gray-400'"
         @click="pickSource('rule')"
       >
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
           按规则匹配
-          <span class="rounded bg-violet-50 px-1 py-0.5 text-[10px] font-medium text-violet-700">按身份挑</span>
+          <span class="rounded bg-primary/5 px-1 py-0.5 text-[10px] font-medium text-primary-dark">按身份挑</span>
         </div>
         <div class="mt-0.5 text-[11px] text-gray-600">配一条规则决定用谁的凭据，凭证内容模板决定字段集</div>
       </button>
@@ -629,7 +629,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       <span class="mb-1 block text-[11px] font-semibold text-gray-700">选一条结构化凭据</span>
       <select
         v-model="secretId"
-        class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
         :disabled="!structured.length"
         @change="changeSecret"
       >
@@ -660,11 +660,11 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         </p>
         <template v-else>
           <p class="text-gray-700">
-            <span class="mr-1 rounded bg-violet-50 px-1 py-0.5 font-medium text-violet-700">{{ ruleIsModelChoice ? '配法' : '规则' }}</span>
+            <span class="mr-1 rounded bg-primary/5 px-1 py-0.5 font-medium text-primary-dark">{{ ruleIsModelChoice ? '配法' : '规则' }}</span>
             {{ ruleSummaryText }}
           </p>
-          <p v-if="ruleIsModelChoice" class="mt-1 text-indigo-700">
-            <span class="mr-1 rounded bg-indigo-50 px-1 py-0.5 font-medium text-indigo-700">怎么挑</span>
+          <p v-if="ruleIsModelChoice" class="mt-1 text-primary-dark">
+            <span class="mr-1 rounded bg-primary/5 px-1 py-0.5 font-medium text-primary-dark">怎么挑</span>
             由模型在可见凭据里挑一条（没有精确匹配规则，确定性低于按字段匹配）
           </p>
           <p v-else class="mt-1 text-gray-600">
@@ -672,7 +672,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
             {{ ruleMissText }}
           </p>
           <p class="mt-1 text-gray-600">
-            <span class="mr-1 rounded bg-indigo-50 px-1 py-0.5 font-medium text-indigo-700">取用字段</span>
+            <span class="mr-1 rounded bg-primary/5 px-1 py-0.5 font-medium text-primary-dark">取用字段</span>
             每条参数各自指定（见下表）
           </p>
           <p v-if="!ruleDraft.value_template" class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-amber-800">
@@ -716,7 +716,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
             v-model="ruleTemplate"
             :disabled="!ruleDraft"
             :title="ruleDraft ? '' : '先在上面加一条规则，模板要写在规则上'"
-            class="min-w-0 rounded-md border-gray-300 py-0.5 text-[11px] shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+            class="min-w-0 rounded-md border-gray-300 py-0.5 text-[11px] shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400"
           >
             <option value="">不限定（字段只能手填）</option>
             <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
@@ -742,7 +742,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
-          <tr v-for="name in params" :key="name" :class="picks[name] ? 'bg-blue-50/50' : ''">
+          <tr v-for="name in params" :key="name" :class="picks[name] ? 'bg-primary/5' : ''">
             <td class="px-3 py-1.5">
               <code class="font-mono text-gray-800">{{ name }}</code>
               <!-- 来源徽标：这个参数的值到底谁给。
@@ -767,7 +767,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
               <select
                 v-if="candidateFields.length"
                 v-model="picks[name]"
-                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
               >
                 <option value="">模型填写</option>
                 <option v-for="f in candidateFields" :key="f.name" :value="f.name">
@@ -782,7 +782,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
                 v-else
                 v-model="picks[name]"
                 placeholder="字段名（点分隔可取嵌套）"
-                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
               />
             </td>
           </tr>
@@ -807,10 +807,10 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       >清空全部</button>
       <button
         type="button"
-        class="shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+        class="shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50"
         :class="[
           pendingChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : '',
-          mappedCount ? 'bg-indigo-600' : 'bg-indigo-600/40',
+          mappedCount ? 'bg-primary' : 'bg-primary/40',
         ]"
         :disabled="busy || !params.length || !mappedCount"
         :title="mappedCount

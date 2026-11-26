@@ -503,7 +503,7 @@ const hint = computed(() =>
         <p v-if="!searchQuery.trim()" class="text-xs text-gray-400/80 mt-2 leading-relaxed">
           <template v-if="metaDatasetTab">
             前往
-            <a class="text-blue-600 hover:underline font-semibold" href="/dashboard/metadata" target="_blank" rel="noopener noreferrer" @click.stop>数据集管理</a>
+            <a class="text-primary hover:underline font-semibold" href="/dashboard/metadata" target="_blank" rel="noopener noreferrer" @click.stop>数据集管理</a>
             创建或申请数据集
           </template>
           <template v-else>

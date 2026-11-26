@@ -45,6 +45,23 @@ export type HistorySyncAction =
   | { kind: "ignore" };
 
 const text = (value: unknown): string => String(value ?? "");
+
+const SUSPENDED_RESUMABLE_STATUSES = new Set([
+  "awaiting_permission",
+  "awaiting_external_execution",
+]);
+
+/**
+ * 是否为「可同轮恢复」的挂起态（工具审批 / 外部执行）。
+ *
+ * 这类轮次在挂起当下即写入审计历史（防止用户放弃后记录消失），但它们不是终态：
+ * 当页面仍在等用户确认、或恢复流正以同一 `trace_id` 续跑时，不得把该记录当成
+ * 「已收敛终态」去清理本地审批卡快照或在途草稿。
+ */
+export function isSuspendedHistoryStatus(status?: string | null): boolean {
+  const normalized = text(status).trim().toLowerCase();
+  return SUSPENDED_RESUMABLE_STATUSES.has(normalized);
+}
 const roleOf = (message: HistorySyncMessage | null | undefined): string =>
   text(message?.role);
 const isSystemMessage = (message: HistorySyncMessage | null | undefined): boolean =>
@@ -129,6 +146,7 @@ export function planHistorySync(
   const traceId = text(latest?.trace_id).trim();
   const summary = text(latest?.summary);
   const query = text(latest?.query);
+  const suspendedResumable = isSuspendedHistoryStatus(latest?.status);
   // 服务端尚未落库终态内容（任务仍在跑）时不触碰界面。
   if (!traceId || !hasPersistedBody(latest)) return { kind: "ignore" };
 
@@ -137,6 +155,9 @@ export function planHistorySync(
   if (list.length === 0) return { kind: "reload" };
 
   const unsettled = options?.hasUnsettledDraft === true;
+  // 本地仍有未收敛草稿（如审批卡待确认、或恢复流正在跑）：服务端挂起态记录只是
+  // 前半段留痕，不是终态，必须等待恢复流写出真正的终态记录再收敛。
+  if (suspendedResumable && unsettled) return { kind: "ignore" };
   const lastMeaningfulAt = lastMeaningfulIndex(list);
   const lastMeaningful = lastMeaningfulAt >= 0 ? list[lastMeaningfulAt] : null;
   const lastUserAt = lastUserIndex(list);
@@ -163,6 +184,9 @@ export function planHistorySync(
       isAgentMessage(message) && text(message?.trace_id).trim() === traceId,
   );
   if (matchedIndex !== -1) {
+    // 本地已有该 trace_id 的消息且服务端仍是挂起态：保留本地现场（含可点审批卡），
+    // 不回写半段历史，更不能触发 finishRecoveredTurn 清掉快照。
+    if (suspendedResumable) return { kind: "ignore" };
     const current = list[matchedIndex];
     const currentContent = text(current?.content);
     // `unsettled` 只对「本轮草稿」有效。若命中的是上一轮的终态消息（在最后一条用户
@@ -183,6 +207,7 @@ export function planHistorySync(
   // 流式占位消息还没拿到 trace_id（或 trace 被嵌套子代理覆盖）：就地补全/覆盖，
   // 避免出现两个助手气泡。query 对得上是同一轮才敢写 trace，防止锁死上一轮的 trace。
   if (lastMeaningful && isAgentMessage(lastMeaningful) && lastMeaningful.isHistory !== true) {
+    if (suspendedResumable) return { kind: "ignore" };
     const draftTrace = text(lastMeaningful.trace_id).trim();
     if (!draftTrace) {
       const hasBody = Boolean(text(lastMeaningful.content).trim());

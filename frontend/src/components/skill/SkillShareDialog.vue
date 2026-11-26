@@ -196,7 +196,7 @@ async function submit() {
                 v-model="keyword"
                 type="search"
                 placeholder="搜索姓名或用户名"
-                class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900"
+                class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-900"
               />
             </div>
 
@@ -204,10 +204,10 @@ async function submit() {
               <span
                 v-for="user in selected"
                 :key="user.user_id"
-                class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                class="inline-flex items-center gap-1 rounded-full bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover"
               >
                 {{ displayName(user) }}
-                <button type="button" class="text-blue-400 hover:text-blue-600 dark:hover:text-blue-400" title="移除" @click="remove(user)">
+                <button type="button" class="text-primary hover:text-primary-dark dark:hover:text-primary" title="移除" @click="remove(user)">
                   <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -249,7 +249,7 @@ async function submit() {
               maxlength="200"
               rows="3"
               placeholder="说一句用途，比如：这个技能用来生成周报，你可以试试"
-              class="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900"
+              class="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-900"
             />
             <div class="mt-1 text-right text-[11px] text-gray-400 dark:text-gray-500">{{ message.length }}/200</div>
           </div>
@@ -258,7 +258,7 @@ async function submit() {
         <div class="flex items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/60 px-5 py-3 dark:border-gray-800 dark:bg-gray-800/60">
           <button
             type="button"
-            class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
             @click="emit('view-sent')"
           >
             已分享给 {{ sharedCount }} 人，查看我的分享 →
@@ -273,7 +273,7 @@ async function submit() {
             </button>
             <button
               type="button"
-              class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="!canSend"
               @click="submit"
             >

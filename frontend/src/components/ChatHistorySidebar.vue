@@ -636,7 +636,7 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                 <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 tracking-wider">
                   {{ group.title }}
                 </span>
-                <span class="text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.2 rounded-full">
+                <span class="text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-1.5 py-px rounded-full">
                   {{ group.items.length }}
                 </span>
               </div>
@@ -679,10 +679,10 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                   <div class="flex items-center gap-1.5 min-w-0">
                     <span
                       v-if="item.project_name"
-                      class="px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 text-[9px] font-bold truncate max-w-[90px]"
+                      class="px-1.5 py-0.5 rounded-md bg-primary/5 dark:bg-primary-dark/40 text-primary-dark dark:text-primary-hover border border-primary/10 dark:border-primary-dark/50 text-[9px] font-bold truncate max-w-[90px]"
                       :title="item.project_name"
                     >
-                      📁 {{ item.project_name }}
+                      {{ item.project_name }}
                     </span>
                     <span class="text-[10px] font-medium text-gray-400">
                       {{ formatDate(item.created_at) }}

@@ -104,13 +104,13 @@ const canonicalLineRows = [
     @close="emit('close')"
   >
     <div class="space-y-5 text-sm leading-relaxed text-gray-700">
-      <section class="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
-        <h4 class="font-bold text-indigo-900">它解决什么，不解决什么</h4>
-        <p class="mt-1 text-xs leading-relaxed text-indigo-800">
+      <section class="rounded-xl border border-primary/10 bg-primary/5 p-4">
+        <h4 class="font-bold text-primary-dark">它解决什么，不解决什么</h4>
+        <p class="mt-1 text-xs leading-relaxed text-primary-dark">
           开启后，平台对<strong>最终实际发出</strong>的请求计算 HMAC-SHA256。业务方用同一个共享密钥验签，
           可以确认请求确实来自平台、路径/查询参数/请求体没有被中途改动。
         </p>
-        <p class="mt-2 text-xs leading-relaxed text-indigo-800">
+        <p class="mt-2 text-xs leading-relaxed text-primary-dark">
           它<strong>不能</strong>阻止模型或用户把业务参数填错，也不能替代 HTTPS、权限校验和业务规则；
           重放防护需要业务方结合 Timestamp 与 Nonce 自行判断。密钥泄露后应立即轮换。
         </p>
@@ -176,7 +176,7 @@ const canonicalLineRows = [
             <span class="font-mono font-semibold text-gray-800">{{ row.field }}</span>
             <div class="col-span-2 min-w-0 sm:col-span-1">
               <p class="leading-relaxed text-gray-600">{{ row.description }}</p>
-              <code class="mt-0.5 block break-all font-mono text-[11px] text-indigo-700">{{ row.value }}</code>
+              <code class="mt-0.5 block break-all font-mono text-[11px] text-primary-dark">{{ row.value }}</code>
             </div>
           </div>
         </div>

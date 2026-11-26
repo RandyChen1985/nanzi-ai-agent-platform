@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  ChevronRightIcon,
-  SparklesIcon,
-} from '@heroicons/vue/24/outline'
+import { ChevronRightIcon } from '@heroicons/vue/24/outline'
 import { portalApi } from '../api/portal'
 import type { ScenarioTemplateInstanceSummary, ScenarioTemplateSummary } from '../api/portal'
 import { useToast } from '../composables/useToast'
@@ -93,8 +90,8 @@ const resourceSummary = (template: ScenarioTemplateSummary) => {
 }
 
 const categoryTone = (category: string) => {
-  if (category === 'ChatBI' || category === '数据分析') return 'bg-blue-50 text-blue-700 border-blue-100'
-  if (category === '知识库' || category === '知识问答') return 'bg-violet-50 text-violet-700 border-violet-100'
+  if (category === 'ChatBI' || category === '数据分析') return 'bg-primary/5 text-primary-dark border-primary/10'
+  if (category === '知识库' || category === '知识问答') return 'bg-violet-50 text-violet-700 border-violet-100 dark:bg-violet-900/30 dark:text-violet-300 dark:border-violet-800/50'
   if (category === '运维') return 'bg-amber-50 text-amber-700 border-amber-100'
   return 'bg-gray-50 text-gray-600 border-gray-100'
 }
@@ -105,73 +102,85 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-4 sm:space-y-5">
-    <section class="overflow-hidden rounded-2xl border border-blue-800/30 bg-blue-800 p-6 text-white shadow-sm">
-      <div class="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div class="max-w-3xl">
-          <p class="text-xs font-semibold uppercase tracking-[0.24em] text-blue-100">Solution Package</p>
-          <h1 class="mt-2 text-3xl font-bold text-white">场景包市场</h1>
-          <p class="mt-3 text-sm font-medium leading-6 text-blue-50">
-            按业务场景一键交付智能体：从方案说明、资源绑定、预检安装到调试验收，形成可复用的交付闭环。
-          </p>
-          <div class="mt-5 flex flex-wrap gap-2">
-            <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-800 shadow-sm">数据分析</span>
-            <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-800 shadow-sm">知识问答</span>
-            <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-800 shadow-sm">运维自动化</span>
-          </div>
+  <div class="space-y-4">
+    <!-- 轻量页头：标题 + 紧凑统计，首屏直达模板网格 -->
+    <header class="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-xs lg:flex-row lg:items-center lg:justify-between">
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2.5">
+          <h1 class="text-xl font-semibold tracking-tight text-gray-900">场景包市场</h1>
+          <span class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+            {{ templateStats.total }} 个方案 · 已交付 {{ templateStats.delivered }}
+          </span>
         </div>
-        <div class="grid min-w-[280px] grid-cols-3 gap-3">
-          <div class="rounded-xl bg-white p-4 text-center shadow-sm">
-            <div class="text-2xl font-bold text-blue-900">{{ templateStats.total }}</div>
-            <div class="mt-1 text-xs font-medium text-blue-700">模板总数</div>
-          </div>
-          <div class="rounded-xl bg-white p-4 text-center shadow-sm">
-            <div class="text-2xl font-bold text-blue-900">{{ templateStats.delivered }}</div>
-            <div class="mt-1 text-xs font-medium text-blue-700">已交付</div>
-          </div>
-          <div class="rounded-xl bg-white p-4 text-center shadow-sm">
-            <div class="text-2xl font-bold text-blue-900">{{ templateStats.recommended }}</div>
-            <div class="mt-1 text-xs font-medium text-blue-700">推荐场景</div>
-          </div>
+        <p class="mt-1 text-xs text-gray-500">
+          按业务场景一键交付智能体：从方案说明、资源绑定、预检安装到调试验收，形成可复用的交付闭环。
+        </p>
+      </div>
+      <div class="flex shrink-0 items-center divide-x divide-gray-100 rounded-lg border border-gray-200 bg-gray-50/70">
+        <div class="px-3.5 py-1.5 text-center">
+          <div class="text-sm font-semibold tabular-nums text-gray-900">{{ templateStats.total }}</div>
+          <div class="text-[11px] text-gray-500">模板总数</div>
+        </div>
+        <div class="px-3.5 py-1.5 text-center">
+          <div class="text-sm font-semibold tabular-nums text-primary">{{ templateStats.delivered }}</div>
+          <div class="text-[11px] text-gray-500">已交付</div>
+        </div>
+        <div class="px-3.5 py-1.5 text-center">
+          <div class="text-sm font-semibold tabular-nums text-emerald-600">{{ templateStats.recommended }}</div>
+          <div class="text-[11px] text-gray-500">推荐场景</div>
         </div>
       </div>
-    </section>
+    </header>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
-      <div class="grid gap-2" :class="canManageDelivery ? 'sm:grid-cols-2' : 'sm:grid-cols-1'">
+    <!-- 合并导航与分类筛选：单行紧凑控制栏 -->
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="inline-flex items-center rounded-lg border border-gray-200 bg-gray-100/80 p-0.5 self-start">
         <button
-          class="rounded-lg px-4 py-3 text-left transition"
-          :class="activeTab === 'templates' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100' : 'text-gray-500 hover:bg-gray-50'"
+          type="button"
+          class="rounded-md px-3.5 py-1.5 text-xs font-medium transition-all"
+          :class="activeTab === 'templates' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-800'"
           @click="activeTab = 'templates'"
         >
-          <span class="block text-sm font-bold">可交付模板</span>
-          <span class="mt-1 block text-xs">按业务场景选择模板，进入详情和交付向导。</span>
+          可交付模板
         </button>
         <button
           v-if="canManageDelivery"
-          class="rounded-lg px-4 py-3 text-left transition"
-          :class="activeTab === 'delivered' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100' : 'text-gray-500 hover:bg-gray-50'"
+          type="button"
+          class="rounded-md px-3.5 py-1.5 text-xs font-medium transition-all"
+          :class="activeTab === 'delivered' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-800'"
           @click="activeTab = 'delivered'"
         >
-          <span class="block text-sm font-bold">已交付场景</span>
-          <span class="mt-1 block text-xs">查看已安装实例、交付记录，并直接打开调试台。</span>
+          已交付场景
+          <span class="ml-1 tabular-nums text-[11px] text-gray-400">{{ templateStats.delivered }}</span>
         </button>
       </div>
-    </section>
 
-    <section v-if="activeTab === 'delivered'" class="rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+      <div v-if="activeTab === 'templates'" class="flex flex-wrap gap-1.5">
+        <button
+          v-for="category in categoryOptions"
+          :key="category"
+          type="button"
+          class="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+          :class="selectedCategory === category ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900'"
+          @click="selectedCategory = category"
+        >
+          {{ category }}
+        </button>
+      </div>
+    </div>
+
+    <section v-if="activeTab === 'delivered'" class="rounded-xl border border-gray-200 bg-white p-5 shadow-xs">
       <div class="flex items-center justify-between gap-3">
         <div>
-          <p class="text-xs font-semibold uppercase text-blue-600">Delivered</p>
-          <h2 class="mt-1 text-lg font-bold text-gray-900">已交付场景</h2>
-          <p class="mt-1 text-sm text-gray-500">这里可以继续查看已安装场景，并直接带着推荐问题打开调试台验收。</p>
+          <h2 class="text-base font-semibold text-gray-900">已交付场景</h2>
+          <p class="mt-0.5 text-xs text-gray-500">查看已安装实例，并直接带着推荐问题打开调试台验收。</p>
         </div>
       </div>
       <div v-if="installedInstances.length" class="mt-4 grid gap-3 xl:grid-cols-2">
         <article
           v-for="instance in installedInstances"
           :key="instance.id"
-          class="rounded-lg border border-gray-200 bg-gray-50 p-4"
+          class="rounded-xl border border-gray-200 bg-gray-50/50 p-4"
         >
           <div class="flex items-start justify-between gap-3">
             <div>
@@ -188,13 +197,13 @@ onMounted(async () => {
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
             <button
-              class="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+              class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-dark transition-colors"
               @click="openInstalledDebug(instance)"
             >
               打开调试台
             </button>
             <button
-              class="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
               @click="router.push({ name: 'ScenarioTemplateInstall', params: { templateId: instance.template_id }, query: { step: 'done', instance_id: instance.id } })"
             >
               查看交付记录
@@ -202,28 +211,8 @@ onMounted(async () => {
           </div>
         </article>
       </div>
-      <div v-else class="mt-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center text-sm text-gray-500">
+      <div v-else class="mt-4 rounded-xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center text-sm text-gray-500">
         暂无已交付场景。可以先切换到“可交付模板”选择一个场景完成安装。
-      </div>
-    </section>
-
-    <section v-if="activeTab === 'templates'" class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 class="text-lg font-bold text-gray-900">可交付场景模板</h2>
-          <p class="mt-1 text-sm text-gray-500">选择最接近业务目标的模板，再进入详情页查看交付物、资源要求和验收标准。</p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <button
-            v-for="category in categoryOptions"
-            :key="category"
-            class="rounded-full border px-3 py-1.5 text-xs font-medium transition"
-            :class="selectedCategory === category ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-200 hover:text-blue-600'"
-            @click="selectedCategory = category"
-          >
-            {{ category }}
-          </button>
-        </div>
       </div>
     </section>
 
@@ -231,18 +220,17 @@ onMounted(async () => {
       <article
         v-for="template in filteredTemplates"
         :key="template.id"
-        class="group flex min-h-[360px] flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+        class="group flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-xs transition-all hover:border-gray-300 hover:shadow-sm"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="rounded border px-2 py-0.5 text-xs font-medium" :class="categoryTone(template.category)">{{ template.category }}</span>
-              <span v-if="template.recommended" class="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">推荐</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="rounded border px-2 py-0.5 text-[11px] font-medium" :class="categoryTone(template.category)">{{ template.category }}</span>
+              <span v-if="template.recommended" class="rounded bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">推荐</span>
             </div>
-            <h2 class="mt-3 text-lg font-semibold text-gray-900">{{ template.name }}</h2>
-            <p class="mt-2 text-sm leading-6 text-gray-600">{{ template.description }}</p>
+            <h2 class="mt-2.5 text-base font-semibold text-gray-900">{{ template.name }}</h2>
+            <p class="mt-1.5 text-xs leading-5 text-gray-500">{{ template.description }}</p>
           </div>
-          <SparklesIcon class="h-5 w-5 flex-shrink-0 text-blue-500" />
         </div>
 
         <div class="mt-5 grid grid-cols-2 gap-2 text-xs">
@@ -288,7 +276,7 @@ onMounted(async () => {
         </div>
 
         <button
-          class="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          class="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
           @click="openDetail(template)"
         >
           查看方案

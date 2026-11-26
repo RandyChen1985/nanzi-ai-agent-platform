@@ -10,6 +10,7 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
  *   白名单是 fail-closed 的，黑名单一旦加表就会漏；
  * - 合并语义只在后端实现一次，前端「权限模拟」直接读后端结果，避免两套口径。
  */
+import { ExclamationTriangleIcon, PuzzlePieceIcon } from "@heroicons/vue/24/outline"
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import axios from '../../utils/axios'
 import { useToast } from '../../composables/useToast'
@@ -881,7 +882,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
   kind === 'all'
     ? 'bg-slate-100 text-slate-600 border-slate-200'
     : kind === 'role'
-      ? 'bg-indigo-50 text-indigo-600 border-indigo-200'
+      ? 'bg-primary/5 text-primary border-primary/20'
       : 'bg-emerald-50 text-emerald-600 border-emerald-200'
 </script>
 
@@ -926,7 +927,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
       v-if="!scopeSupported"
       class="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5 text-xs text-amber-800"
     >
-      <span class="mt-0.5">⚠️</span>
+      <ExclamationTriangleIcon class="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
       <div>
         <p class="font-semibold">表级 / 行级授权暂未生效</p>
         <p class="mt-0.5 text-amber-700">
@@ -975,7 +976,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
           限定范围 {{ tableScopeStats.listCount }} 条 · 全部表 {{ tableScopeStats.allCount }} 条
         </p>
       </div>
-      <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-violet-50/40 p-3.5">
+      <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-primary/5 p-3.5">
         <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
           字段级 · 能看哪些字段
           <button
@@ -1017,15 +1018,15 @@ const subjectBadgeClass = (kind: SubjectKind) =>
     <!-- 新表待确认 -->
     <div
       v-if="hasPendingConfirm"
-      class="rounded-xl border border-blue-200 bg-blue-50/60 px-3.5 py-2.5 text-xs text-blue-900"
+      class="rounded-xl border border-primary/20 bg-primary/5 px-3.5 py-2.5 text-xs text-primary-dark"
     >
       <div class="flex items-start gap-2">
-        <span class="mt-0.5">🧩</span>
+        <PuzzlePieceIcon class="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <div class="flex-1">
           <p class="font-semibold">
             有 {{ pendingTables.length }} 张表没有被任何「指定表」授权覆盖
           </p>
-          <p class="mt-0.5 text-blue-700">
+          <p class="mt-0.5 text-primary-dark">
             新建表默认跟随「全部表」授权；如果你的数据集里以「指定表」授权为主，
             这些表目前只有被「全部表」条目覆盖时才对成员可见，建议确认是否需要补充授权。
           </p>
@@ -1033,9 +1034,9 @@ const subjectBadgeClass = (kind: SubjectKind) =>
             <span
               v-for="t in pendingTables.slice(0, 8)"
               :key="t.id"
-              class="rounded-md border border-blue-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-blue-700"
+              class="rounded-md border border-primary/20 bg-white px-1.5 py-0.5 font-mono text-[10px] text-primary-dark"
             >{{ t.physical_name }}</span>
-            <span v-if="pendingTables.length > 8" class="text-[10px] text-blue-600">+{{ pendingTables.length - 8 }} 张</span>
+            <span v-if="pendingTables.length > 8" class="text-[10px] text-primary">+{{ pendingTables.length - 8 }} 张</span>
           </div>
         </div>
       </div>
@@ -1123,7 +1124,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                   ? 'border-gray-200 bg-white text-gray-500'
                   : grant.rowPolicy === 'none'
                     ? 'border-amber-200 bg-amber-50 text-amber-700'
-                    : 'border-indigo-200 bg-indigo-50 text-indigo-700'"
+                    : 'border-primary/20 bg-primary/5 text-primary-dark'"
               >{{ rowPolicyText(grant.rowPolicy) }}</span>
               <span v-if="grant.rowPolicy === 'custom' && grant.rowCondition" class="max-w-[18rem] truncate font-mono text-[10px] text-gray-400">
                 {{ grant.rowCondition }}
@@ -1326,7 +1327,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
         <ul class="mt-2 space-y-1.5 text-[11px] text-gray-600">
           <li><span class="font-semibold text-gray-700">继承数据集策略</span>（默认）：走数据集自身的行级配置（用户例外 → 角色策略 → 默认策略），在「数据行策略」里维护，改动对所有继承的人生效。</li>
           <li><span class="font-semibold text-amber-700">不做行级过滤</span>：跳过重写。只应给审计、运维这类需要看全量的个人授权，属于高风险选项。</li>
-          <li><span class="font-semibold text-indigo-700">自定义条件</span>：这条授权独立生效，不再叠加数据集策略。条件语法与行级配置一致，例如 <code class="font-mono">fact_task.dept_code = 'FIN'</code>。</li>
+          <li><span class="font-semibold text-primary-dark">自定义条件</span>：这条授权独立生效，不再叠加数据集策略。条件语法与行级配置一致，例如 <code class="font-mono">fact_task.dept_code = 'FIN'</code>。</li>
         </ul>
       </div>
 
@@ -1348,7 +1349,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
           </div>
           <span
             class="w-fit rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
-            :class="g.rowPolicy === 'none' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-indigo-200 bg-indigo-50 text-indigo-700'"
+            :class="g.rowPolicy === 'none' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-primary/20 bg-primary/5 text-primary-dark'"
           >{{ rowPolicyText(g.rowPolicy) }}</span>
           <code v-if="g.rowPolicy === 'custom'" class="truncate font-mono text-[10px] text-gray-600">{{ g.rowCondition }}</code>
           <span v-else class="text-[10px] italic text-gray-400">不附加 WHERE 条件</span>
@@ -1515,7 +1516,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                   </label>
                   <p v-if="!filteredTables.length" class="py-3 text-center text-[11px] text-gray-400">没有匹配的表</p>
                 </div>
-                <p class="rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-1.5 text-[10px] text-blue-800">
+                <p class="rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[10px] text-primary-dark">
                   白名单是 fail-closed 的：以后新加的表默认不在这条授权里，需要回来补勾。
                 </p>
               </template>
@@ -1749,14 +1750,14 @@ const subjectBadgeClass = (kind: SubjectKind) =>
               </ul>
             </div>
             <div>
-              <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-sky-600">什么原理</p>
+              <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-primary">什么原理</p>
               <ul class="space-y-1.5">
                 <li
                   v-for="(item, idx) in scopeHelp.principle"
                   :key="`principle-${idx}`"
                   class="flex gap-2 text-[12px] leading-relaxed text-gray-600"
                 >
-                  <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-sky-400"></span>
+                  <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary"></span>
                   <span>{{ item }}</span>
                 </li>
               </ul>
@@ -1915,7 +1916,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
 
         <div class="rounded-xl border border-gray-100 p-3.5">
           <p class="text-xs font-bold text-gray-800">③ 行级：{{ rowPolicyText(simResult.row_policy) }}</p>
-          <p v-if="simResult.row_policy === 'custom' && simResult.row_condition" class="mt-1 font-mono text-[11px] text-indigo-700">
+          <p v-if="simResult.row_policy === 'custom' && simResult.row_condition" class="mt-1 font-mono text-[11px] text-primary-dark">
             {{ simResult.row_condition }}
           </p>
           <p v-else-if="simResult.row_policy === 'none'" class="mt-1 text-[11px] text-amber-700">

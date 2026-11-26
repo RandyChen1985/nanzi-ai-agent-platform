@@ -15,11 +15,11 @@
         class="h-4 w-4 shrink-0 text-primary"
         aria-hidden="true"
       />
-      <span class="text-[11px] font-black text-primary tracking-wide">{{ title }}</span>
+      <span class="text-[11px] font-bold text-primary tracking-wide">{{ title }}</span>
       <span v-if="hint" class="text-[10px] text-gray-400">{{ hint }}</span>
       <span
         v-if="hasError"
-        class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 text-[9px] font-black leading-none text-white"
+        class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold leading-none text-white"
         aria-hidden="true"
       >!</span>
       <span class="ml-auto flex shrink-0 items-center gap-1 text-gray-400">

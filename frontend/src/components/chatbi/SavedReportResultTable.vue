@@ -61,7 +61,7 @@ const exportCsv = () => {
       <button
         v-if="columns.length && rows.length"
         type="button"
-        class="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-600 hover:border-blue-300 hover:bg-blue-50 dark:border-gray-700 dark:bg-gray-950 dark:text-blue-300"
+        class="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-primary hover:border-primary/25 hover:bg-primary/5 dark:border-gray-700 dark:bg-gray-950 dark:text-primary-hover"
         @click="exportCsv"
       >
         导出 CSV
@@ -77,7 +77,7 @@ const exportCsv = () => {
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-          <tr v-for="(row, rowIndex) in rows" :key="rowIndex" class="hover:bg-blue-50/40 dark:hover:bg-gray-900">
+          <tr v-for="(row, rowIndex) in rows" :key="rowIndex" class="hover:bg-primary/5 dark:hover:bg-gray-900">
             <td v-for="(column, columnIndex) in columns" :key="column.name" class="max-w-[18rem] whitespace-nowrap px-2.5 py-1.5 text-gray-600 dark:text-gray-300">
               {{ valueOf(row, column.name, columnIndex) }}
             </td>

@@ -456,7 +456,7 @@ const relationTypeLabel = (t?: string) => {
 }
 
 const sourceBadge = (source?: string) => {
-  if (source === 'FK') return { label: '外键确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
+  if (source === 'FK') return { label: '外键确认', bg: 'bg-primary/10', text: 'text-primary', border: 'border-primary/25' }
   return { label: 'AI 推断', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' }
 }
 
@@ -488,7 +488,7 @@ const findTableIdByPhysicalName = (name: string): number | null => {
   return found?.id ?? null
 }
 
-// ===== 🕸️ ER 图画布渲染与交互 =====
+// =====  ER 图画布渲染与交互 =====
 const initOrUpdateGraph = () => {
   if (!chartContainer.value) return
   if (!chartInstance.value) {
@@ -594,7 +594,7 @@ const initOrUpdateGraph = () => {
                   </div>
                   <div class="text-xs font-mono font-bold text-gray-800 bg-gray-100 p-1.5 rounded">${rel.condition}</div>
                   ${rel.description ? `<div class="text-xs text-gray-500 mt-1.5 leading-relaxed">📝 ${rel.description}</div>` : ''}
-                  <div class="text-[10px] text-blue-500 mt-1.5 font-sans">💡 点击此连线可直接切换勾选/取消采纳状态</div>`
+                  <div class="text-[10px] text-primary mt-1.5 font-sans"> 点击此连线可直接切换勾选/取消采纳状态</div>`
         }
         return ''
       },
@@ -731,7 +731,7 @@ const handleBackToConfig = () => {
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
       
         <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-emerald-50/50 via-teal-50/30 to-indigo-50/40">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-emerald-50/50 via-teal-50/30 to-primary/5">
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white shadow-lg shadow-emerald-200">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
@@ -1076,7 +1076,7 @@ const handleBackToConfig = () => {
               </div>
             </div>
 
-            <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
+            <div class="max-w-2xl rounded border border-primary/20 bg-primary/5 px-3 py-2 text-left text-[11px] leading-relaxed text-primary-dark">
               后端先读取数据库外键约束等结构化元数据，能确认的关系只调用一次 AI 生成业务描述；未确认候选按候选组交给 AI 复核，每个表对只推导一次。整个过程仅分析表结构与字段元数据，不查询业务数据行。
             </div>
 
@@ -1200,8 +1200,8 @@ const handleBackToConfig = () => {
                     <!-- Header: 源表 -> 目标表 + 关系类型 + 置信度 -->
                     <div class="flex flex-wrap items-center gap-2">
                       <!-- 源表 -->
-                      <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-800 font-mono text-xs font-bold shrink-0">
-                        <KeyIcon class="w-3 h-3 text-purple-400" />
+                      <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/25 text-primary font-mono text-xs font-bold shrink-0">
+                        <KeyIcon class="w-3 h-3 text-primary" />
                         <span>{{ item.source_table }}</span>
                       </span>
 
@@ -1221,7 +1221,7 @@ const handleBackToConfig = () => {
                       <!-- 关系类型 -->
                       <span 
                         class="px-2 py-0.5 text-[10px] font-bold rounded border"
-                        :class="item.relation_type === 'one_to_one' ? 'bg-blue-50 text-blue-700 border-blue-200' : (item.relation_type === 'one_to_many' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200')"
+                        :class="item.relation_type === 'one_to_one' ? 'bg-primary/5 text-primary-dark border-primary/20' : (item.relation_type === 'one_to_many' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200')"
                       >
                         {{ relationTypeLabel(item.relation_type) }}
                       </span>
@@ -1248,12 +1248,12 @@ const handleBackToConfig = () => {
                     <!-- Join Condition -->
                     <div class="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 font-mono text-xs text-gray-800 flex items-center gap-2">
                       <span class="text-gray-400 font-bold text-[11px] shrink-0">JOIN:</span>
-                      <span class="font-bold text-indigo-700 truncate select-all">{{ item.condition }}</span>
+                      <span class="font-bold text-primary truncate select-all">{{ item.condition }}</span>
                     </div>
 
                     <!-- Description -->
                     <p v-if="item.description" class="text-xs text-gray-500 leading-relaxed">
-                      📝 {{ item.description }}
+                      {{ item.description }}
                     </p>
                   </div>
                 </div>
@@ -1265,7 +1265,7 @@ const handleBackToConfig = () => {
               <div ref="chartContainer" class="w-full h-full"></div>
               <!-- Canvas Overlay Legend -->
               <div class="absolute bottom-3 left-3 bg-white/90 backdrop-blur-xs p-2 rounded-xl border border-gray-200/80 text-[10px] text-gray-500 flex items-center gap-3 pointer-events-none shadow-xs">
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-indigo-600"></span> 事实表</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary"></span> 事实表</span>
                 <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-600"></span> 维度表</span>
                 <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-emerald-600"></span> 已选推荐</span>
                 <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-slate-300 border-dashed border-t"></span> 未勾选</span>
@@ -1382,8 +1382,8 @@ const handleBackToConfig = () => {
               您可以描述具体的业务流转场景，例如：
             </p>
             <div class="space-y-1.5 font-mono text-[11px] text-gray-700 bg-white p-3 rounded-lg border border-gray-200">
-              <div>💡 <em>“重点分析 orders 订单表与 users 客户表、order_items 订单明细表的级联关联。”</em></div>
-              <div>💡 <em>“分析 assets 资产表与 departments 部门表在所属组织上的外键映射关系。”</em></div>
+              <div><em>“重点分析 orders 订单表与 users 客户表、order_items 订单明细表的级联关联。”</em></div>
+              <div><em>“分析 assets 资产表与 departments 部门表在所属组织上的外键映射关系。”</em></div>
             </div>
           </div>
 
@@ -1406,7 +1406,7 @@ const handleBackToConfig = () => {
                 <div class="flex items-center justify-between mb-1">
                   <div class="flex items-center gap-2">
                     <span class="font-bold text-gray-900 group-hover:text-emerald-700 transition-colors">{{ item.title }}</span>
-                    <span class="text-[10px] px-2 py-0.2 bg-gray-100 group-hover:bg-emerald-100 text-gray-600 group-hover:text-emerald-800 rounded font-medium">{{ item.badge }}</span>
+                    <span class="text-[10px] px-2 py-px bg-gray-100 group-hover:bg-emerald-100 text-gray-600 group-hover:text-emerald-800 rounded font-medium">{{ item.badge }}</span>
                   </div>
                   <span class="text-[10px] text-emerald-600 font-semibold group-hover:underline flex items-center gap-1">
                     应用此模式
@@ -1445,18 +1445,5 @@ const handleBackToConfig = () => {
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out;
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+
 </style>

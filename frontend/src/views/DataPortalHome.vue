@@ -4,7 +4,7 @@
       <!-- 左侧 Aside 垂直导航栏 -->
       <aside class="hidden border-r border-gray-100 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900 md:block">
         <div class="mb-5 flex items-center gap-2 px-2 text-sm font-bold text-gray-900 dark:text-gray-100">
-          <span class="grid h-8 w-8 place-items-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">▦</span>
+          <span class="grid h-8 w-8 place-items-center rounded-xl bg-primary text-white shadow-sm shadow-primary/20">▦</span>
           我的数据门户
         </div>
         <nav class="space-y-1">
@@ -15,7 +15,7 @@
             class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
             :class="
               activeSection === item.value
-                ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20'
+                ? 'bg-primary font-semibold text-white shadow-sm shadow-primary/20'
                 : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
             "
             @click="setSection(item.value)"
@@ -50,7 +50,7 @@
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:border-blue-200 hover:text-blue-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:border-primary/20 hover:text-primary disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 cursor-pointer"
               :disabled="homeLoading || sceneLoading || reportsLoading"
               @click="refresh"
             >
@@ -140,7 +140,7 @@
         :key="item.value"
         type="button"
         class="flex flex-col items-center gap-0.5 py-2 text-[11px]"
-        :class="activeSection === item.value ? 'font-medium text-blue-600' : 'text-gray-400'"
+        :class="activeSection === item.value ? 'font-medium text-primary' : 'text-gray-400'"
         @click="setSection(item.value)"
       >
         <span class="text-base">{{ item.icon }}</span>
@@ -167,9 +167,9 @@
           class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border border-gray-100 dark:border-gray-800"
         >
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-blue-50/40 dark:bg-gray-800/60">
+          <div class="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-primary/5 dark:bg-gray-800/60">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+              <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/20">
                 <span class="text-lg">▤</span>
               </div>
               <div>
@@ -189,7 +189,7 @@
               :key="tab"
               @click="activeSpecsTab = tab as any"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-              :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              :class="activeSpecsTab === tab ? 'border-primary text-primary-dark dark:text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
             >
               {{ tab === 'concept' ? '核心理念与价值 (Core Concept)' :
                  tab === 'workflow' ? '报表开发与沉淀流 (Development Workflow)' : '调度订阅与最佳实践 (Subscription & Best Practice)' }}
@@ -200,8 +200,8 @@
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50 dark:bg-gray-950/40 text-xs space-y-6">
             <!-- Tab 1: Concept -->
             <div v-if="activeSpecsTab === 'concept'" class="space-y-4 max-w-3xl">
-              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/20 border-l-4 border-blue-600 p-4 rounded-r-xl">
-                <h3 class="font-bold text-blue-900 dark:text-blue-200 mb-1">什么是「固化报表」？</h3>
+              <div class="bg-gradient-to-r from-primary/5 to-primary/5 dark:from-primary-dark/30 dark:to-primary-dark/20 border-l-4 border-primary p-4 rounded-r-xl">
+                <h3 class="font-bold text-primary-dark dark:text-primary-hover mb-1">什么是「固化报表」？</h3>
                 <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
                   固化报表（Saved Reports）是企业级数据资产的“标准件”。它将一次性、偶发性的 AI 即席查数（Ad-hoc Query）或专业数据分析师编写的高质量 SQL，经过验证后**“固化”**为具备明确业务口径、权限受控、可重复执行的标准报表。
                 </p>
@@ -210,7 +210,7 @@
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
                   <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                    <span class="text-blue-500">✦</span> 1. 双轨沉淀机制
+                    <span class="text-primary">✦</span> 1. 双轨沉淀机制
                   </h4>
                   <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
                     既支持在 ChatBI 对话查数成功后一键「添加固化报表」，也支持在报表中心直接点击「新建固化报表」手写 SQL 录入。
@@ -218,7 +218,7 @@
                 </div>
                 <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
                   <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                    <span class="text-indigo-500">✦</span> 2. 自动化调度与触达
+                    <span class="text-primary">✦</span> 2. 自动化调度与触达
                   </h4>
                   <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
                     可针对任意固化报表配置定时调度订阅，支持每日/每周/每月定时执行，并自动推送到站内信、企微群或邮件。
@@ -233,21 +233,21 @@
                 <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">标准化报表开发四步法</h4>
                 <div class="space-y-3">
                   <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">1</span>
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white font-bold text-[10px]">1</span>
                     <div>
                       <strong class="text-gray-800 dark:text-gray-200">数据源选择与权限校验</strong>
                       <p class="text-gray-500 dark:text-gray-400 mt-0.5">选择报表所针对的物理数据源连接或元数据数据集，系统自动进行只读鉴权反查。</p>
                     </div>
                   </div>
                   <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">2</span>
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white font-bold text-[10px]">2</span>
                     <div>
                       <strong class="text-gray-800 dark:text-gray-200">SQL 编写与在线试跑</strong>
                       <p class="text-gray-500 dark:text-gray-400 mt-0.5">在编辑器中输入 SELECT 语句，点击【▶ 试跑测试 SQL】校验语法并预览前 50 条真实数据。</p>
                     </div>
                   </div>
                   <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">3</span>
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white font-bold text-[10px]">3</span>
                     <div>
                       <strong class="text-gray-800 dark:text-gray-200">业务口径与标签打标</strong>
                       <p class="text-gray-500 dark:text-gray-400 mt-0.5">录入业务统计口径说明与分类标签（如“财务, 营收, 月报”），方便全员检索。</p>

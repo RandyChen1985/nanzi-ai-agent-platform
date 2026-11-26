@@ -3,7 +3,7 @@
     <!-- 只读节点行：菜单 / 子菜单 / 功能点共用一套结构，靠缩进与图标区分层级 -->
     <div
       class="flex items-center gap-1.5 rounded-md pr-2 transition-colors"
-      :class="node.granted ? 'hover:bg-blue-50/60' : 'bg-gray-50'"
+      :class="node.granted ? 'hover:bg-primary/5' : 'bg-gray-50'"
       :style="{ paddingLeft: `${8 + depth * 18}px` }"
       :data-permission-id="node.id"
       :data-granted="node.granted ? 'true' : 'false'"
@@ -11,7 +11,7 @@
       <button
         v-if="hasChildren"
         type="button"
-        class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :aria-expanded="!isCollapsed"
         :aria-label="isCollapsed ? `展开「${node.label}」` : `折叠「${node.label}」`"
         @click.stop="emit('toggle-collapse', node.id)"
@@ -32,7 +32,7 @@
       <svg
         v-if="node.kind === 'menu'"
         class="h-3.5 w-3.5 shrink-0"
-        :class="node.granted ? 'text-blue-600' : 'text-gray-300'"
+        :class="node.granted ? 'text-primary' : 'text-gray-300'"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -48,7 +48,7 @@
       <span
         v-else
         class="ml-[3px] h-1.5 w-1.5 shrink-0 rounded-full"
-        :class="node.granted ? 'bg-indigo-400' : 'bg-gray-300'"
+        :class="node.granted ? 'bg-primary' : 'bg-gray-300'"
         aria-hidden="true"
       ></span>
 
@@ -60,7 +60,7 @@
 
       <span
         v-if="isGrantedPage"
-        class="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-500"
+        class="shrink-0 rounded bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary"
         title="可以点进去的子菜单"
       >页面</span>
       <span

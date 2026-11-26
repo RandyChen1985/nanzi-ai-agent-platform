@@ -1,11 +1,11 @@
 <template>
   <transition
     enter-active-class="transition-all duration-200 ease-out"
-    enter-from-class="opacity-0 -translate-y-1 scale-98"
+    enter-from-class="opacity-0 -translate-y-1 scale-95"
     enter-to-class="opacity-100 translate-y-0 scale-100"
     leave-active-class="transition-all duration-200 ease-in"
     leave-from-class="opacity-100 translate-y-0 scale-100"
-    leave-to-class="opacity-0 -translate-y-1 scale-98"
+    leave-to-class="opacity-0 -translate-y-1 scale-95"
   >
     <div
       v-if="todo && !isDismissed"
@@ -104,7 +104,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 6v12M15 6v12" />
             </svg>
             <!-- 进行中：蓝色旋转图标 -->
-            <svg v-else-if="item.status === 'in_progress' && showLiveProgress" class="h-3.5 w-3.5 animate-spin text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-else-if="item.status === 'in_progress' && showLiveProgress" class="h-3.5 w-3.5 animate-spin text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             <!-- 待开始：柔和浅灰圆圈 -->
@@ -117,7 +117,7 @@
           </span>
           <span
             v-if="item.status === 'in_progress' && showLiveProgress"
-            class="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/60 dark:text-blue-400"
+            class="shrink-0 rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary dark:bg-primary-dark/60 dark:text-primary"
           >
             进行中
           </span>

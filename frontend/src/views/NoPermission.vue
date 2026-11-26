@@ -13,7 +13,7 @@
       </div>
 
       <div class="space-y-3">
-        <h1 class="text-2xl font-black text-gray-900 tracking-tight">暂无界面权限</h1>
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">暂无界面权限</h1>
         <p class="text-sm text-gray-500 leading-relaxed">
           您的账号尚未分配任何可访问的功能模块。<br/>
           请联系系统管理员为您配置权限后重新登录。
@@ -98,11 +98,5 @@ const refresh = async () => {
 </script>
 
 <style scoped>
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out forwards;
-}
+
 </style>

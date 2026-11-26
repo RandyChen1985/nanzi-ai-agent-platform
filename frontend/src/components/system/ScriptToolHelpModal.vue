@@ -157,15 +157,15 @@ const builtinTools = [
         <p class="text-xs leading-relaxed text-amber-800">{{ sandboxNotice }}</p>
       </div>
 
-      <section class="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
-        <h4 class="font-bold text-indigo-900">它是什么</h4>
-        <p class="mt-1 text-xs leading-relaxed text-indigo-800">
+      <section class="rounded-xl border border-primary/10 bg-primary/5 p-4">
+        <h4 class="font-bold text-primary-dark">它是什么</h4>
+        <p class="mt-1 text-xs leading-relaxed text-primary-dark">
           把一段 Python 脚本登记成工具后，模型在对话里就能调用它：你在「参数」里声明的字段会被模型自动填好，
           脚本在<strong>顶部「运行位置」提示所指的工作区</strong>里执行，输出直接回到对话里。
           它适合「文件转 base64」「算哈希」「文本脱敏」这类处理；不要假设它一定访问不到外部网络或平台内网，
           需要联网/访问外部系统时请改用 API 工具。
         </p>
-        <p class="mt-2 text-xs leading-relaxed text-indigo-800">
+        <p class="mt-2 text-xs leading-relaxed text-primary-dark">
           每条脚本只是<strong>一次短暂的命令执行</strong>：没有常驻进程，不能等待人工输入，也不能跨调用保存内存里的变量；
           需要留存的东西（文件、中间结果）一律写进工作区。
         </p>
@@ -201,10 +201,10 @@ const builtinTools = [
                 <td class="whitespace-nowrap px-3 py-2 align-top font-medium text-gray-800">{{ row.item }}</td>
                 <td class="px-3 py-2 align-top text-gray-600">
                   {{ row.rule }}
-                  <code class="mt-1 block break-all font-mono text-[11px] text-indigo-700 sm:hidden">{{ row.code }}</code>
+                  <code class="mt-1 block break-all font-mono text-[11px] text-primary-dark sm:hidden">{{ row.code }}</code>
                 </td>
                 <td class="hidden px-3 py-2 align-top sm:table-cell">
-                  <code class="block break-all font-mono text-[11px] text-indigo-700">{{ row.code }}</code>
+                  <code class="block break-all font-mono text-[11px] text-primary-dark">{{ row.code }}</code>
                 </td>
               </tr>
             </tbody>

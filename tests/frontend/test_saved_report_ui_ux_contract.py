@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -28,9 +29,9 @@ def test_quick_views_keep_title_area_readable_in_narrow_portal_panel():
 
     assert 'class="min-w-0 flex-1 truncate' in source
     assert 'class="mt-2 flex items-center justify-between' in source
-    assert 'class="min-h-9 shrink-0 rounded-lg border border-blue-200 bg-blue-50' in source
-    assert 'text-blue-700' in source
-    assert 'class="min-h-9 shrink-0 rounded-lg bg-blue-600' not in source
+    assert 'class="min-h-9 shrink-0 rounded-lg border border-primary/20 bg-primary/5' in source
+    assert 'text-primary-dark' in source
+    assert 'class="min-h-9 shrink-0 rounded-lg bg-primary' not in source
     assert 'class="mt-3 w-full' not in source
 
 
@@ -44,7 +45,7 @@ def test_saved_report_create_actions_use_svg_plus_and_keep_primary_blue_only():
 
     assert "➕" not in HOME.read_text(encoding="utf-8")
     quick_views = QUICK_VIEWS.read_text(encoding="utf-8")
-    assert "bg-blue-600" not in quick_views
+    assert not re.search(r"(?<![/\w-])bg-primary(?![/\w-])", quick_views), "快捷视图只用软主色（bg-primary/5），不能出现实心主色底"
 
 
 def test_data_portal_reports_tab_has_one_create_report_entrypoint():
@@ -72,7 +73,7 @@ def test_report_section_exposes_quick_views_and_shared_filter_semantics():
     for label in ("最近运行", "常用报表", "订阅中"):
         assert label in source
     assert "共享给我" in source
-    assert "border-blue-200 bg-blue-50 text-blue-700" in source
+    assert "border-primary/20 bg-primary/5 text-primary-dark" in source
     assert "activeFilter === option.value ?" in source
 
 

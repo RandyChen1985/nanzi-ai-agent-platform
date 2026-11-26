@@ -101,10 +101,10 @@ onMounted(load)
           <div class="min-w-0">
             <h1 class="flex flex-wrap items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
               <span class="truncate">{{ data.name }}</span>
-              <span class="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+              <span class="rounded-md bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary dark:bg-primary-dark/30 dark:text-primary">
                 {{ visibilityLabel }}
               </span>
-              <span class="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+              <span class="rounded-md bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary dark:bg-primary-dark/30 dark:text-primary">
                 只读
               </span>
             </h1>
@@ -128,7 +128,7 @@ onMounted(load)
       </div>
 
       <div
-        class="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-xs leading-6 text-gray-600 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-gray-300"
+        class="rounded-xl border border-primary/10 bg-primary/5 px-3 py-2.5 text-xs leading-6 text-gray-600 dark:border-primary-dark/40 dark:bg-primary-dark/20 dark:text-gray-300"
       >
         你拥有这个知识库的只读权限，可以浏览文档目录并在对话中检索；上传、删除文档或调整可见范围请联系管理员。出于审计要求，这里不提供原文下载。
       </div>

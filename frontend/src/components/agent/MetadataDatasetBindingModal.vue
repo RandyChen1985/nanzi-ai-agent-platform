@@ -133,7 +133,7 @@ const handleSave = () => {
     size="max-w-2xl"
   >
     <div class="space-y-5 py-1">
-      <div class="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-700">
+      <div class="rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 text-xs leading-5 text-primary-dark">
         限制 get_dataset_schema 只能检索选中的元数据集。未选择时沿用当前用户有权访问的数据集范围。
       </div>
 
@@ -202,13 +202,13 @@ const handleSave = () => {
           </div>
 
           <!-- 已选区：选错了不用回长列表里翻找 -->
-          <div v-if="selectedDatasets.length" class="rounded-lg border border-blue-100 bg-blue-50/60 px-2 py-1.5">
+          <div v-if="selectedDatasets.length" class="rounded-lg border border-primary/10 bg-primary/5 px-2 py-1.5">
             <div class="flex flex-wrap items-center gap-1.5">
-              <span class="text-[10px] font-bold text-blue-700">已选 {{ selectedDatasets.length }}</span>
+              <span class="text-[10px] font-bold text-primary-dark">已选 {{ selectedDatasets.length }}</span>
               <span
                 v-for="ds in selectedDatasets.slice(0, 6)"
                 :key="'sel-' + ds.id"
-                class="flex max-w-[160px] items-center gap-1 rounded-md border border-blue-100 bg-white pl-1.5 pr-0.5 text-[10.5px] font-semibold text-blue-700"
+                class="flex max-w-[160px] items-center gap-1 rounded-md border border-primary/10 bg-white pl-1.5 pr-0.5 text-[10.5px] font-semibold text-primary-dark"
                 :title="labelOf(ds)"
               >
                 <span class="truncate">{{ labelOf(ds) }}</span>
@@ -217,7 +217,7 @@ const handleSave = () => {
                   type="button"
                   :aria-label="`移除 ${labelOf(ds)}`"
                   @click="removeSelected(ds.id)"
-                  class="flex h-3.5 w-3.5 items-center justify-center rounded text-blue-600 opacity-60 hover:bg-blue-50 hover:opacity-100"
+                  class="flex h-3.5 w-3.5 items-center justify-center rounded text-primary opacity-60 hover:bg-primary/5 hover:opacity-100"
                 >
                   <svg class="h-2 w-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -236,11 +236,11 @@ const handleSave = () => {
             v-for="dataset in filteredDatasets"
             :key="dataset.id"
             class="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 hover:bg-gray-50"
-            :class="(localConfig.metadata_dataset_ids || []).includes(String(dataset.id)) ? 'border-blue-300 bg-blue-50/60' : 'bg-white'"
+            :class="(localConfig.metadata_dataset_ids || []).includes(String(dataset.id)) ? 'border-primary/25 bg-primary/5' : 'bg-white'"
           >
             <input
               type="checkbox"
-              class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              class="mt-1 rounded border-gray-300 text-primary focus:ring-primary"
               :disabled="readonly"
               :checked="(localConfig.metadata_dataset_ids || []).includes(String(dataset.id))"
               @change="toggleMetadataDataset(dataset.id)"

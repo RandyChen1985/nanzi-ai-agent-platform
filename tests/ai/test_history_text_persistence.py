@@ -30,12 +30,37 @@ from app.services.ai.audit_payload import (
 pytestmark = pytest.mark.no_infrastructure
 
 
-class _FakeSession:
-    """最小 AsyncSession 替身：只覆盖 save_history 会用到的方法。"""
+class _FakeExecuteResult:
+    def __init__(self, scalar_first=None, rows=None):
+        self._scalar_first = scalar_first
+        self._rows = list(rows or [])
 
-    def __init__(self, commit_error: BaseException | None = None):
+    def scalars(self):
+        first_item = self._scalar_first
+
+        class _Scalars:
+            def first(self):
+                return first_item
+
+        return _Scalars()
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeSession:
+    """最小 AsyncSession 替身：覆盖 save_history / save_trace_logs 的查改与提交。"""
+
+    def __init__(
+        self,
+        commit_error: BaseException | None = None,
+        existing_history=None,
+        existing_trace_rows=None,
+    ):
         self.added: list = []
         self._commit_error = commit_error
+        self._existing_history = existing_history
+        self._existing_trace_rows = list(existing_trace_rows or [])
         self.commit_calls = 0
 
     async def __aenter__(self):
@@ -47,13 +72,19 @@ class _FakeSession:
     def add(self, obj):
         self.added.append(obj)
 
+    def add_all(self, objs):
+        self.added.extend(objs)
+
     async def commit(self):
         self.commit_calls += 1
         if self._commit_error is not None:
             raise self._commit_error
 
     async def execute(self, *_args, **_kwargs):
-        raise RuntimeError("fake session 不支持查询")
+        return _FakeExecuteResult(
+            scalar_first=self._existing_history,
+            rows=self._existing_trace_rows,
+        )
 
 
 class _SessionFactory:
@@ -194,6 +225,241 @@ async def test_save_history_retries_once_on_transient_error_and_reports_failure(
 
     assert persisted is False
     assert len(factory.created) == 2
+
+
+@pytest.mark.asyncio
+async def test_save_history_upserts_existing_trace_and_preserves_query_when_blank():
+    """同 trace_id 再次落库必须原地更新，且恢复轮缺 query 时不得抹空挂起轮原始提问。"""
+    existing = AgentExecutionHistory(
+        trace_id="trace-upsert-1",
+        agent_id="agent-1",
+        conversation_id="conv-1",
+        user_id="7",
+        username="tester",
+        query="帮我执行部署检查",
+        summary="",
+        reasoning_content="审批前思考",
+        process_timeline=[{"kind": "log", "id": "step_1", "status": "pending"}],
+        status="awaiting_permission",
+        execution_time_ms=1200.0,
+        prompt_tokens=100,
+        completion_tokens=40,
+        total_tokens=140,
+        has_data_output=0,
+    )
+    session = _FakeSession(existing_history=existing)
+
+    with patch(
+        "app.services.ai.audit.AsyncSessionLocal", _SessionFactory([session])
+    ):
+        persisted = await AuditManager.save_history(
+            **_save_kwargs(
+                trace_id="trace-upsert-1",
+                query="",
+                summary="检查已完成",
+                reasoning_content="审批前思考\n\n审批后思考",
+                process_timeline=[{"kind": "log", "id": "step_1", "status": "success"}],
+                status="success",
+                execution_time_ms=800.0,
+                prompt_tokens=220,
+                completion_tokens=90,
+                total_tokens=310,
+                accumulate_tokens=False,
+                accumulate_duration=True,
+            )
+        )
+
+    assert persisted is True
+    assert session.added == [], "已存在同 trace_id 时应就地更新，不能重复 INSERT"
+    assert existing.query == "帮我执行部署检查"
+    assert existing.summary == "检查已完成"
+    assert existing.status == "success"
+    assert existing.execution_time_ms == 2000.0
+    assert (existing.prompt_tokens, existing.completion_tokens, existing.total_tokens) == (
+        220,
+        90,
+        310,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_history_accumulates_tokens_and_duration_on_cross_process_resume():
+    """跨进程恢复只掌握后半段 trace_buffer，必须把后半段 Token 与耗时累加到挂起轮。"""
+    existing = AgentExecutionHistory(
+        trace_id="trace-upsert-2",
+        agent_id="agent-1",
+        conversation_id="conv-1",
+        user_id="7",
+        query="跑一下巡检",
+        summary="",
+        status="awaiting_permission",
+        execution_time_ms=1500.0,
+        prompt_tokens=300,
+        completion_tokens=80,
+        total_tokens=380,
+    )
+    session = _FakeSession(existing_history=existing)
+
+    with patch(
+        "app.services.ai.audit.AsyncSessionLocal", _SessionFactory([session])
+    ):
+        persisted = await AuditManager.save_history(
+            **_save_kwargs(
+                trace_id="trace-upsert-2",
+                summary="巡检全部通过",
+                status="success",
+                execution_time_ms=900.0,
+                prompt_tokens=200,
+                completion_tokens=50,
+                total_tokens=250,
+                accumulate_tokens=True,
+                accumulate_duration=True,
+            )
+        )
+
+    assert persisted is True
+    assert existing.execution_time_ms == 2400.0
+    assert (existing.prompt_tokens, existing.completion_tokens, existing.total_tokens) == (
+        500,
+        130,
+        630,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_history_recovers_from_concurrent_unique_conflict_without_truncating():
+    """并发下首次 INSERT 撞唯一键（MySQL 1062 / PG 23505）时，必须重试转更新且不降级截断。"""
+    existing = AgentExecutionHistory(
+        trace_id="trace-race-1",
+        agent_id="agent-1",
+        conversation_id="conv-1",
+        user_id="7",
+        query="原始问题",
+        summary="",
+        status="awaiting_permission",
+        execution_time_ms=500.0,
+    )
+    conflict_session = _FakeSession(
+        commit_error=RuntimeError(
+            "(1062, \"Duplicate entry 'trace-race-1' for key 'ix_trace_id'\")"
+        )
+    )
+    update_session = _FakeSession(existing_history=existing)
+    long_summary = "结" * 20_000  # 60KB > FALLBACK_HISTORY_TEXT_BYTES(32KB)，用于证明未误降级截断
+
+    factory = _SessionFactory([conflict_session, update_session])
+    with patch("app.services.ai.audit.AsyncSessionLocal", factory):
+        persisted = await AuditManager.save_history(
+            **_save_kwargs(
+                trace_id="trace-race-1",
+                summary=long_summary,
+                status="success",
+            )
+        )
+
+    assert persisted is True
+    assert len(factory.created) == 2
+    assert existing.status == "success"
+    assert existing.summary == long_summary
+
+
+@pytest.mark.asyncio
+async def test_save_history_does_not_wipe_prior_content_on_empty_cancelled_resume():
+    """恢复流强制取消（未回捞前序快照）写入空内容时，不得抹空挂起轮已存正文与时间线。"""
+    prior_timeline = [{"kind": "log", "id": "prep_1", "status": "success"}]
+    existing = AgentExecutionHistory(
+        trace_id="trace-cancel-preserve-1",
+        agent_id="agent-1",
+        conversation_id="conv-1",
+        user_id="7",
+        query="帮我查一下",
+        summary="前半段已输出内容",
+        reasoning_content="前半段思考",
+        process_timeline=prior_timeline,
+        status="awaiting_permission",
+        execution_time_ms=600.0,
+    )
+    session = _FakeSession(existing_history=existing)
+
+    with patch("app.services.ai.audit.AsyncSessionLocal", _SessionFactory([session])):
+        persisted = await AuditManager.save_history(
+            **_save_kwargs(
+                trace_id="trace-cancel-preserve-1",
+                query="",
+                summary="",
+                reasoning_content=None,
+                process_timeline=None,
+                status="cancelled",
+                execution_time_ms=120.0,
+                accumulate_duration=True,
+            )
+        )
+
+    assert persisted is True
+    assert existing.status == "cancelled"
+    assert existing.query == "帮我查一下"
+    assert existing.summary == "前半段已输出内容"
+    assert existing.reasoning_content == "前半段思考"
+    assert existing.process_timeline == prior_timeline
+    assert existing.execution_time_ms == 720.0
+
+
+@pytest.mark.asyncio
+async def test_save_trace_logs_dedups_and_offsets_cross_process_steps():
+    """跨进程恢复写 trace：仅按非空 span_id 去重，span_id=None 的新步骤不被误删且步号严格顺延。"""
+    from datetime import datetime
+    from app.schemas.agent import AgentExecutionStep
+
+    existing_rows = [
+        (1, "tool_call", None),
+        (2, "model_call", "span-1"),
+    ]
+    session = _FakeSession(existing_trace_rows=existing_rows)
+
+    steps = [
+        # 与挂起轮同 span_id：去重跳过
+        AgentExecutionStep(
+            step_number=1,
+            event_type="model_call",
+            span_id="span-1",
+            timestamp=datetime.now(),
+        ),
+        # 跨进程重建 runner 从 step_number=1 重新编号且无 span_id：不得被误判重复而丢弃
+        AgentExecutionStep(
+            step_number=1,
+            event_type="tool_call",
+            span_id=None,
+            timestamp=datetime.now(),
+        ),
+        # TraceSpanContext 默认 step_number=0 的新 span：应单调顺延不撞号
+        AgentExecutionStep(
+            step_number=0,
+            event_type="agent_execution",
+            span_id="span-3",
+            timestamp=datetime.now(),
+        ),
+        AgentExecutionStep(
+            step_number=2,
+            event_type="model_call",
+            span_id="span-4",
+            timestamp=datetime.now(),
+        ),
+    ]
+
+    with patch("app.services.ai.audit.AsyncSessionLocal", _SessionFactory([session])):
+        await AuditManager.save_trace_logs(
+            "trace-dedup-1",
+            steps,
+            dedup_existing=True,
+            offset_step_number=True,
+        )
+
+    assert len(session.added) == 3
+    assert [(row.step_number, row.event_type, row.span_id) for row in session.added] == [
+        (3, "tool_call", None),
+        (4, "agent_execution", "span-3"),
+        (5, "model_call", "span-4"),
+    ]
 
 
 @pytest.mark.asyncio

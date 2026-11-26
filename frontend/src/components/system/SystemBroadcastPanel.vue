@@ -320,7 +320,7 @@ onMounted(() => {
     <div class="rounded-xl border border-gray-200/80 bg-white px-4 py-3 shadow-xs">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="min-w-0">
-          <h2 class="text-sm font-black text-gray-800">站内信群发</h2>
+          <h2 class="text-sm font-bold text-gray-800">站内信群发</h2>
           <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
             把同一条消息写入多个用户的门户消息中心（右上角铃铛）。
           </p>
@@ -336,7 +336,7 @@ onMounted(() => {
     <!-- 收件人：可折叠，折叠后只留一行范围摘要 -->
     <div class="rounded-xl border border-gray-200/80 bg-white p-4 shadow-xs">
       <div class="flex flex-wrap items-center justify-between gap-2" :class="audienceCollapsed ? '' : 'mb-3'">
-        <h3 class="text-xs font-black uppercase tracking-widest text-gray-400">收件人</h3>
+        <h3 class="text-xs font-bold uppercase tracking-widest text-gray-400">收件人</h3>
         <div class="flex items-center gap-2">
           <span class="text-[11px] font-bold text-gray-600">{{ audienceSummary }}</span>
           <button
@@ -430,7 +430,7 @@ onMounted(() => {
 
     <!-- 消息内容 -->
     <div class="rounded-xl border border-gray-200/80 bg-white p-4 shadow-xs">
-      <h3 class="mb-3 text-xs font-black uppercase tracking-widest text-gray-400">消息内容</h3>
+      <h3 class="mb-3 text-xs font-bold uppercase tracking-widest text-gray-400">消息内容</h3>
       <div class="space-y-3">
         <div>
           <label class="mb-1 block text-[11px] font-bold text-gray-600">标题</label>
@@ -523,7 +523,7 @@ onMounted(() => {
     <!-- 历史发送记录 -->
     <div class="rounded-xl border border-gray-200/80 bg-white p-4 shadow-xs">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-xs font-black uppercase tracking-widest text-gray-400">历史发送</h3>
+        <h3 class="text-xs font-bold uppercase tracking-widest text-gray-400">历史发送</h3>
         <div class="flex items-center gap-2">
           <span class="text-[11px] text-gray-400">共 {{ recordsTotal }} 次</span>
           <button
@@ -592,7 +592,7 @@ onMounted(() => {
       >
         <div class="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
           <div class="flex items-start justify-between gap-3">
-            <h3 class="min-w-0 text-sm font-black text-gray-800">{{ recordDetail.title }}</h3>
+            <h3 class="min-w-0 text-sm font-bold text-gray-800">{{ recordDetail.title }}</h3>
             <button
               type="button"
               class="shrink-0 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
@@ -630,7 +630,7 @@ onMounted(() => {
         @click.self="confirmOpen = false"
       >
         <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-          <h3 class="text-sm font-black text-gray-800">确认发送站内信？</h3>
+          <h3 class="text-sm font-bold text-gray-800">确认发送站内信？</h3>
           <p class="mt-2 text-xs leading-relaxed text-gray-500">
             将向 <b class="text-gray-800">{{ preview?.total ?? 0 }}</b> 个启用账号写入这条消息，发送后不可撤回。
           </p>

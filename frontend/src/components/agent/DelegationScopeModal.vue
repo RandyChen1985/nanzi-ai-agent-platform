@@ -504,7 +504,7 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
           </span>
           <span
             v-else-if="isTeamLead(agent) && isAuthorized(agent)"
-            class="shrink-0 whitespace-nowrap rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] text-teal-700"
+            class="shrink-0 whitespace-nowrap rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] text-teal-700 dark:text-teal-300"
             :title="`它在「${agent.team_name || agent.display_name}」里是主专家；被委派进来时深度已到上限，只能用个人能力，不会调度它的团成员。想要整个团的能力请改用成员。`"
           >
             团主 · 仅个人能力

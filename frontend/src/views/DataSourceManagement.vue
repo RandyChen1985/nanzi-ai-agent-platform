@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { WrenchScrewdriverIcon } from "@heroicons/vue/24/outline";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { metadataApi, type DbConnectionConfig } from '../api/metadata'
 import { useToast } from '../composables/useToast'
@@ -107,12 +108,12 @@ const setDbType = (type: string) => {
 }
 
 const dbTypeColor = (type: string) => {
-  if (type === 'mysql') return 'bg-blue-100 text-blue-700 border-blue-200'
+  if (type === 'mysql') return 'bg-primary/10 text-primary-dark border-primary/20'
   if (type === 'doris') return 'bg-amber-100 text-amber-700 border-amber-200'
-  if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 border-cyan-200'
+  if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 dark:text-cyan-300 border-cyan-200'
   if (type === 'oracle') return 'bg-red-100 text-red-700 border-red-200'
-  if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700 border-indigo-200'
-  if (type === 'postgresql' || type === 'postgres' || type === 'pg') return 'bg-purple-100 text-purple-700 border-purple-200'
+  if (type === 'sqlserver' || type === 'mssql') return 'bg-primary/10 text-primary-dark border-primary/20'
+  if (type === 'postgresql' || type === 'postgres' || type === 'pg') return 'bg-primary/10 text-primary-dark border-primary/20'
   return 'bg-gray-100 text-gray-600 border-gray-200'
 }
 
@@ -125,12 +126,12 @@ const dbTypeMeta = (type: string) => dbTypes.find((db) => db.id === normalizeDbT
 const dbTypeLabel = (type: string) => dbTypeMeta(type)?.name || String(type || '').toUpperCase()
 // 图标底色只取浅色底，避免和徽章的边框/文字色混在一起。
 const DB_TYPE_TINTS: Record<string, string> = {
-  mysql: 'bg-blue-50',
+  mysql: 'bg-primary/5',
   doris: 'bg-amber-50',
   clickhouse: 'bg-cyan-50',
   oracle: 'bg-red-50',
-  sqlserver: 'bg-indigo-50',
-  postgresql: 'bg-purple-50',
+  sqlserver: 'bg-primary/5',
+  postgresql: 'bg-primary/5',
 }
 const dbTypeTint = (type: string) => DB_TYPE_TINTS[normalizeDbType(type)] || 'bg-gray-50'
 
@@ -426,14 +427,14 @@ const displayConfigs = computed(() => {
 type ProfileTone = 'empty' | 'running' | 'done' | 'failed' | 'paused'
 const PROFILE_TONE_CLASS: Record<ProfileTone, string> = {
   empty: 'bg-gray-50 text-gray-500 border-gray-200',
-  running: 'bg-blue-50 text-blue-700 border-blue-100',
+  running: 'bg-primary/5 text-primary-dark border-primary/10',
   done: 'bg-emerald-50 text-emerald-700 border-emerald-100',
   failed: 'bg-red-50 text-red-600 border-red-100',
   paused: 'bg-amber-50 text-amber-700 border-amber-100',
 }
 const PROFILE_DOT_CLASS: Record<ProfileTone, string> = {
   empty: 'bg-gray-300',
-  running: 'bg-blue-500 animate-pulse',
+  running: 'bg-primary animate-pulse',
   done: 'bg-emerald-500',
   failed: 'bg-red-500',
   paused: 'bg-amber-500',
@@ -711,7 +712,6 @@ onUnmounted(() => {
           @click="openCreateForm"
           class="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-white text-sm font-bold shadow-lg shadow-primary/20 transition-all flex items-center gap-1.5"
         >
-          <span>➕</span>
           <span>添加数据源</span>
         </button>
         <button
@@ -733,7 +733,7 @@ onUnmounted(() => {
             <!-- Modal 头部 -->
             <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h3 class="text-base font-black text-gray-900">{{ editingId ? '编辑数据源' : '添加数据源' }}</h3>
+                <h3 class="text-base font-bold text-gray-900">{{ editingId ? '编辑数据源' : '添加数据源' }}</h3>
                 <p class="text-xs text-gray-500 mt-0.5">{{ editingId ? '修改后需重新测试连接，通过后保存更新。' : '测试通过后保存，元数据导入时会从这里选择读取。' }}</p>
               </div>
               <button @click="showFormModal = false" class="text-gray-400 hover:text-gray-600 transition-colors text-xl font-bold">
@@ -753,7 +753,7 @@ onUnmounted(() => {
                   :class="form.type === db.id ? 'border-primary bg-primary/5 text-primary' : 'border-gray-100 hover:border-gray-200 text-gray-700'"
                 >
                   <DbTypeIcon :type="db.id" :size="24" />
-                  <span class="text-[11px] font-black whitespace-nowrap">{{ db.name }}</span>
+                  <span class="text-[11px] font-bold whitespace-nowrap">{{ db.name }}</span>
                 </button>
                 </div>
               </div>
@@ -806,10 +806,10 @@ onUnmounted(() => {
 
               <div>
                 <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据库/库名 (Database)</label>
-                <input v-model="form.database" class="w-full border border-blue-200 bg-blue-50/20 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="e.g. metadata_db">
+                <input v-model="form.database" class="w-full border border-primary/20 bg-primary/5 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="e.g. metadata_db">
               </div>
 
-              <div v-if="form.type === 'clickhouse'" class="p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-[11px] text-blue-700 leading-relaxed">
+              <div v-if="form.type === 'clickhouse'" class="p-3 bg-primary/5 border border-primary/10 rounded-xl text-[11px] text-primary-dark leading-relaxed">
                 <p class="font-bold mb-1">ClickHouse 连接提示：</p>
                 <p>原生 TCP 常用端口为 9000；如果是 HTTP 端口 8123 请改为 9000。</p>
               </div>
@@ -824,7 +824,7 @@ onUnmounted(() => {
               <button
                 @click="testConnection"
                 :disabled="testing || !form.host || !form.database"
-                class="px-4 py-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100 text-xs font-bold disabled:opacity-50 transition-colors"
+                class="px-4 py-2 rounded-lg bg-primary/5 text-primary border border-primary/10 hover:bg-primary/10 text-xs font-bold disabled:opacity-50 transition-colors"
               >
                 {{ testing ? '正在连接...' : testPassed ? '连接成功' : '测试连接' }}
               </button>
@@ -848,7 +848,7 @@ onUnmounted(() => {
       <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-visible">
         <div class="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <h2 class="text-base font-black text-gray-900">已保存数据源</h2>
+            <h2 class="text-base font-bold text-gray-900">已保存数据源</h2>
             <p class="text-xs text-gray-500 mt-1">
               共 {{ configs.length }} 个数据源，元数据导入会读取这份列表。
               <span v-if="hasActiveFilter" class="text-gray-400">当前筛选出 {{ displayConfigs.length }} 个</span>
@@ -894,7 +894,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+                :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
                 v-tooltip="'卡片视图'"
                 aria-label="卡片视图"
                 :aria-pressed="viewMode === 'card'"
@@ -907,7 +907,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+                :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
                 v-tooltip="'列表视图'"
                 aria-label="列表视图"
                 :aria-pressed="viewMode === 'list'"
@@ -949,7 +949,7 @@ onUnmounted(() => {
           <button
             v-if="configs.length > 0"
             type="button"
-            class="mt-4 rounded-lg border border-blue-200 px-4 py-2 text-xs font-bold text-blue-600 transition-colors hover:bg-blue-50"
+            class="mt-4 rounded-lg border border-primary/20 px-4 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/5"
             @click="keyword = ''; typeFilter = 'all'"
           >
             清除筛选
@@ -987,8 +987,8 @@ onUnmounted(() => {
                   <DbTypeIcon :type="item.db_type" :size="viewMode === 'card' ? 22 : 18" />
                 </span>
                 <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                  <h3 class="truncate text-sm font-black text-gray-900">{{ item.name }}</h3>
-                  <span class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-black uppercase" :class="dbTypeColor(item.db_type)">{{ dbTypeLabel(item.db_type) }}</span>
+                  <h3 class="truncate text-sm font-bold text-gray-900">{{ item.name }}</h3>
+                  <span class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase" :class="dbTypeColor(item.db_type)">{{ dbTypeLabel(item.db_type) }}</span>
                   <span
                     class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold"
                     :class="PROFILE_TONE_CLASS[profileStates[item.id]?.tone || 'empty']"
@@ -1004,7 +1004,7 @@ onUnmounted(() => {
               <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <button
                   type="button"
-                  class="group/copy inline-flex min-w-0 items-center gap-1 rounded font-mono text-gray-600 transition-colors hover:text-blue-600"
+                  class="group/copy inline-flex min-w-0 items-center gap-1 rounded font-mono text-gray-600 transition-colors hover:text-primary"
                   v-tooltip="`点击复制 ${connectionText(item)}`"
                   @click="copyConnection(item)"
                 >
@@ -1138,7 +1138,7 @@ onUnmounted(() => {
                 v-if="canEditDataSource"
                 type="button"
                 class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition-colors hover:border-gray-200 hover:bg-gray-100"
-                :class="editingId === item.id ? 'border-primary/30 bg-primary/5 text-primary' : 'text-gray-500 hover:text-blue-600'"
+                :class="editingId === item.id ? 'border-primary/30 bg-primary/5 text-primary' : 'text-gray-500 hover:text-primary'"
                 v-tooltip="'编辑数据源'"
                 aria-label="编辑数据源"
                 @click="editConfig(item)"
@@ -1213,9 +1213,9 @@ onUnmounted(() => {
           <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-gray-100">
             <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="text-xl">🛠️</span>
+                <span class="text-xl"><WrenchScrewdriverIcon class="h-5 w-5" aria-hidden="true" /></span>
                 <div>
-                  <h3 class="text-base font-black text-gray-900">数据源直连调试: {{ debugTarget.name }}</h3>
+                  <h3 class="text-base font-bold text-gray-900">数据源直连调试: {{ debugTarget.name }}</h3>
                   <p class="text-xs text-gray-500 mt-0.5">本地直连驱动测试 · 仅允许执行只读 SELECT/WITH 查询</p>
                 </div>
               </div>
@@ -1257,15 +1257,15 @@ onUnmounted(() => {
 
               <!-- Error Banner -->
               <div v-if="debugError" class="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-700 font-mono leading-relaxed break-all">
-                <div class="font-bold mb-1">❌ SQL 执行错误:</div>
+                <div class="font-bold mb-1">SQL 执行错误:</div>
                 {{ debugError }}
               </div>
 
               <!-- Results Section -->
               <div v-if="debugResult" class="space-y-2">
                 <div class="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                  <span>📊 查询返回行数: <strong class="text-gray-900">{{ debugResult.rows.length }}</strong> 行</span>
-                  <span v-if="debugResult.execution_time_ms">⏱️ 数据库耗时: <strong class="text-gray-900">{{ debugResult.execution_time_ms.toFixed(2) }}</strong> ms</span>
+                  <span>查询返回行数: <strong class="text-gray-900">{{ debugResult.rows.length }}</strong> 行</span>
+                  <span v-if="debugResult.execution_time_ms">数据库耗时: <strong class="text-gray-900">{{ debugResult.execution_time_ms.toFixed(2) }}</strong> ms</span>
                 </div>
 
                 <div class="border border-gray-100 rounded-xl overflow-hidden max-h-[300px] overflow-y-auto overflow-x-auto custom-scrollbar">
@@ -1331,9 +1331,9 @@ onUnmounted(() => {
       <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
+               <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/20" style="background-color: #2563eb; color: #ffffff;">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                </div>
                <div>
@@ -1353,7 +1353,7 @@ onUnmounted(() => {
                :key="tab"
                @click="activeSpecsTab = tab as any"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-               :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeSpecsTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'concept' ? '核心架构与表画像流程 (Architecture & Profiling)' :
                   tab === 'security' ? '连接配置与安全隔离规范 (Security & Connections)' : '故障排查与最佳实践 (Best Practice)' }}
@@ -1364,9 +1364,9 @@ onUnmounted(() => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Architecture & Profiling -->
              <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
-                   <h3 class="font-bold text-blue-900 mb-1">物理连接与元数据中心解耦设计</h3>
-                   <p class="text-xs text-blue-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-primary/5 to-primary/5 border-l-4 border-primary p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">物理连接与元数据中心解耦设计</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       数据源管理是平台的底层物理连接层。在此配置好 MySQL、PostgreSQL、ClickHouse、Oracle、SQL Server 连接后，业务人员在「元数据中心」即可直接按库表一键导入语义，无需重复输入账号密码。
                    </p>
                 </div>
@@ -1374,7 +1374,7 @@ onUnmounted(() => {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-blue-500"></span> 1. 多类型数据库统一接入
+                         <span class="w-2 h-2 rounded-full bg-primary"></span> 1. 多类型数据库统一接入
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          支持 MySQL 5.7/8.0、PostgreSQL、ClickHouse、Oracle 11g/19c 与 Microsoft SQL Server，提供一键连通性测试与参数校验。
@@ -1390,7 +1390,7 @@ onUnmounted(() => {
                    </div>
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 3. 在线 SQL 调试沙箱
+                         <span class="w-2 h-2 rounded-full bg-primary"></span> 3. 在线 SQL 调试沙箱
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          内置 SQL 执行沙箱，支持对数据源进行即时采样查询（默认限制 Limit 100 条并统计执行毫秒），方便排查网络延迟与表结构可用性。
@@ -1409,10 +1409,10 @@ onUnmounted(() => {
 
              <!-- Tab 2: Security & Connections -->
              <div v-else-if="activeSpecsTab === 'security'" class="space-y-4 max-w-4xl mx-auto text-xs">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">安全配置与最小权限原则</h4>
                    <div class="p-4 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
-                      <span class="font-bold text-amber-900 text-sm">🔒 推荐配置：只读账号（Read-Only User）</span>
+                      <span class="font-bold text-amber-900 text-sm">推荐配置：只读账号（Read-Only User）</span>
                       <p class="text-gray-600">为防止误操作或 SQL 注入风险，强烈建议为平台分配仅包含 <code>SELECT</code>、<code>SHOW</code>、<code>DESCRIBE</code> 权限的数据库只读账号，严禁配置 <code>DROP</code>、<code>DELETE</code>、<code>ALTER</code> 权限。</p>
                    </div>
                    <div class="space-y-2">
@@ -1428,18 +1428,18 @@ onUnmounted(() => {
 
              <!-- Tab 3: Best Practice -->
              <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">常见连通性问题排查与最佳实践</h4>
                    <div class="space-y-3">
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">1. 连接超时 (Connection Timeout)</span>
                          <p class="text-gray-600 leading-relaxed">请检查数据库宿主机防火墙（iptables/Security Group）是否放行对应端口，以及数据库是否开启了远程登录授权（如 MySQL 的 <code>'user'@'%'</code>）。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">2. 字符集与中文乱码</span>
                          <p class="text-gray-600 leading-relaxed">建议数据库统一采用 <code>utf8mb4</code> 字符集，避免表注释或字段内容在画像摸排与大模型理解时产生乱码。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">3. 大库表摸排优化</span>
                          <p class="text-gray-600 leading-relaxed">若数据库表数量超过 500 张，表结构画像摸排将在后台异步队列执行，可在卡片中实时查看摸排进度条，无需停留在当前页面等待。</p>
                       </div>

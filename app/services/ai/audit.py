@@ -45,10 +45,25 @@ _LENGTH_ERROR_HINTS = (
     "22001",
 )
 
+# 数据库判定「唯一键冲突」的典型报错片段：MySQL 1062 / PG 23505 / SQLite UNIQUE。
+# 并发下两个事务同时没查到旧行并同时 INSERT 时命中，回滚后重走查改即可收敛。
+_UNIQUE_CONFLICT_HINTS = (
+    "duplicate entry",
+    "unique constraint",
+    "duplicate key value",
+    "1062",
+    "23505",
+)
+
 
 def _looks_like_length_error(exc: BaseException) -> bool:
     message = str(exc).lower()
     return any(hint in message for hint in _LENGTH_ERROR_HINTS)
+
+
+def _looks_like_unique_conflict(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(hint in message for hint in _UNIQUE_CONFLICT_HINTS)
 
 
 def aggregate_tokens_from_trace_buffer(trace_buffer: List[AgentExecutionStep]) -> tuple[int, int, int]:
@@ -104,6 +119,12 @@ class AuditManager:
         reasoning_content: Optional[str] = None,
         process_timeline: Optional[List[Dict[str, Any]]] = None,
         has_data_output: Optional[bool] = None,
+        *,
+        trace_logs_to_save: Optional[List[AgentExecutionStep]] = None,
+        accumulate_tokens: bool = False,
+        accumulate_duration: bool = False,
+        dedup_trace_logs: bool = False,
+        offset_trace_steps: bool = False,
     ) -> bool:
         """
         High-level method to handle all audit logging (Trace Logs + History).
@@ -112,10 +133,25 @@ class AuditManager:
         Returns ``True`` 表示本轮历史已落库；``False`` 表示未落库（无 agent_config
         或重试后仍失败）。调用方必须据此判断「历史是否可查」，不能默认成功。
         """
-        logger.info(f"[Audit] Starting transaction log for {trace_id}. Buffer size: {len(trace_buffer) if trace_buffer else 0}")
+        logs_to_persist = (
+            trace_buffer if trace_logs_to_save is None else trace_logs_to_save
+        )
+        logger.info(
+            f"[Audit] Starting transaction log for {trace_id}. "
+            f"Buffer size: {len(trace_buffer) if trace_buffer else 0}, "
+            f"Persist trace size: {len(logs_to_persist) if logs_to_persist else 0}"
+        )
         # 1. Save Trace Logs
-        if trace_buffer:
-            await AuditManager.save_trace_logs(trace_id, trace_buffer)
+        if logs_to_persist:
+            if dedup_trace_logs or offset_trace_steps:
+                await AuditManager.save_trace_logs(
+                    trace_id,
+                    logs_to_persist,
+                    dedup_existing=dedup_trace_logs,
+                    offset_step_number=offset_trace_steps,
+                )
+            else:
+                await AuditManager.save_trace_logs(trace_id, logs_to_persist)
         else:
             logger.warning(f"[Audit] No trace logs to save for {trace_id}")
 
@@ -150,6 +186,12 @@ class AuditManager:
                 aggregate_tokens_from_trace_buffer(trace_buffer) if trace_buffer else (0, 0, 0)
             )
 
+            extra_history_kwargs: Dict[str, Any] = {}
+            if accumulate_tokens:
+                extra_history_kwargs["accumulate_tokens"] = True
+            if accumulate_duration:
+                extra_history_kwargs["accumulate_duration"] = True
+
             return await AuditManager.save_history(
                 trace_id=trace_id,
                 agent_id=agent_id,
@@ -170,6 +212,7 @@ class AuditManager:
                 has_data_output=has_data_output,
                 agent_name=getattr(agent_config, "agent_name", None) or None,
                 agent_display_name=getattr(agent_config, "agent_display_name", None) or None,
+                **extra_history_kwargs,
             )
 
         logger.warning(
@@ -179,9 +222,20 @@ class AuditManager:
         return False
 
     @staticmethod
-    async def save_trace_logs(trace_id: str, logs: List[AgentExecutionStep]):
+    async def save_trace_logs(
+        trace_id: str,
+        logs: List[AgentExecutionStep],
+        *,
+        dedup_existing: bool = False,
+        offset_step_number: bool = False,
+    ):
         """
         Persists a list of execution steps to the database.
+
+        挂起轮先落前半段、恢复轮再补后半段时，调用方可传 ``dedup_existing=True``
+        跳过已存在的 ``(step_number, event_type, span_id)``，跨进程恢复重建空
+        ``trace_buffer`` 时另传 ``offset_step_number=True`` 顺延步骤号，避免轨迹
+        步骤重复或从 1 倒挂。
         """
         if not logs:
             return
@@ -197,11 +251,65 @@ class AuditManager:
 
         try:
             async with AsyncSessionLocal() as session:
+                existing_keys: set[tuple[Any, Any, Any]] = set()
+                existing_span_ids: set[str] = set()
+                max_existing_step = 0
+                if dedup_existing or offset_step_number:
+                    from sqlalchemy import select
+
+                    existing_rows = (
+                        await session.execute(
+                            select(
+                                AgentExecutionTrace.step_number,
+                                AgentExecutionTrace.event_type,
+                                AgentExecutionTrace.span_id,
+                            ).where(AgentExecutionTrace.trace_id == trace_id)
+                        )
+                    ).all()
+                    for row in existing_rows:
+                        existing_keys.add((row[0], row[1], row[2]))
+                        if row[2]:
+                            existing_span_ids.add(str(row[2]))
+                        step_val = int(row[0] or 0)
+                        if step_val > max_existing_step:
+                            max_existing_step = step_val
+
                 orm_objects = []
+                next_offset_step = max_existing_step
                 for log in logs:
+                    raw_step = int(getattr(log, "step_number", 0) or 0)
+                    span_id = getattr(log, "span_id", None)
+                    if dedup_existing:
+                        if offset_step_number:
+                            # 跨进程恢复重建 runner 后 step_number 从 0/1 重新起算，
+                            # 不能拿未偏移的 (raw_step, event_type, None) 跟挂起轮旧步骤判重，
+                            # 否则大量 span_id=None 的新步骤会被误判重复而静默丢弃；
+                            # 跨进程去重仅针对全局唯一的非空 span_id。
+                            if span_id and str(span_id) in existing_span_ids:
+                                continue
+                        elif (raw_step, log.event_type, span_id) in existing_keys:
+                            continue
+
+                    if offset_step_number and max_existing_step > 0:
+                        candidate = (
+                            max_existing_step + raw_step
+                            if raw_step > 0
+                            else next_offset_step + 1
+                        )
+                        step_number = max(candidate, next_offset_step + 1)
+                        next_offset_step = step_number
+                    else:
+                        step_number = log.step_number
+
+                    if dedup_existing:
+                        if span_id:
+                            existing_span_ids.add(str(span_id))
+                        if not offset_step_number:
+                            existing_keys.add((step_number, log.event_type, span_id))
+
                     orm_objects.append(AgentExecutionTrace(
                         trace_id=trace_id,
-                        step_number=log.step_number,
+                        step_number=step_number,
                         event_type=log.event_type,
                         agent_name=log.agent_name,
                         tool_name=log.tool_name,
@@ -227,13 +335,15 @@ class AuditManager:
                         prompt_tokens=getattr(log, 'prompt_tokens', 0) or 0,
                         completion_tokens=getattr(log, 'completion_tokens', 0) or 0,
                         total_tokens=getattr(log, 'total_tokens', 0) or 0,
-                        span_id=getattr(log, 'span_id', None),
+                        span_id=span_id,
                         parent_span_id=getattr(log, 'parent_span_id', None),
                         meta_info=scanner.mask_data(
                             redact_value(getattr(log, 'meta_info', None), log_hits=False)
                         ),
                         created_at=log.timestamp
                     ))
+                if not orm_objects:
+                    return
                 session.add_all(orm_objects)
                 await session.commit()
                 logger.info(f"Successfully saved {len(orm_objects)} trace logs for {trace_id}")
@@ -261,9 +371,16 @@ class AuditManager:
         has_data_output: Optional[bool] = None,
         agent_name: Optional[str] = None,
         agent_display_name: Optional[str] = None,
+        *,
+        accumulate_tokens: bool = False,
+        accumulate_duration: bool = False,
     ) -> bool:
         """
-        Saves the high-level conversation entry.
+        Saves or updates (idempotent upsert by ``trace_id``) the high-level conversation entry.
+
+        挂起轮（``awaiting_permission`` / ``awaiting_external_execution``）先落库，
+        恢复轮用同一 ``trace_id`` 再次调用时就地更新该行；若并发下同时插入触发唯一键冲突，
+        自动重试并转为更新。MySQL 与 PostgreSQL 共用同一套 ORM 先查后改语义，避免方言分裂。
 
         三处长文本（query / summary / reasoning_content）在落库前按 UTF-8 字节做
         保底截断；若数据库仍判定超长（MySQL 1406 / PG 22001），降级到更小阈值再试
@@ -273,6 +390,7 @@ class AuditManager:
             True: 已落库（极端情况下内容带截断标记）
             False: 重试后仍未落库，调用方必须按「历史不可查」处理
         """
+        from sqlalchemy import select
         from app.models.audit import AgentExecutionHistory
 
         try:
@@ -336,30 +454,90 @@ class AuditManager:
             reasoning_value: Optional[str],
         ) -> None:
             async with AsyncSessionLocal() as session:
-                history_entry = AgentExecutionHistory(
-                    trace_id=trace_id,
-                    agent_id=agent_id,
-                    conversation_id=conversation_id,
-                    user_id=history_user_id,
-                    username=username,
-                    query=query_value,
-                    summary=summary_value,
-                    reasoning_content=reasoning_value,
-                    process_timeline=safe_timeline,
-                    status=status,
-                    execution_time_ms=execution_time_ms,
-                    agent_version=agent_version,
-                    model_id=model_id,
-                    model_config_id=model_config_id,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=total_tokens,
-                    has_data_output=(1 if has_data_output else 0),
-                    # 身份快照：写入时刻固化，避免智能体删除/权限变化后历史失去署名
-                    agent_name=agent_name,
-                    agent_display_name=agent_display_name,
-                )
-                session.add(history_entry)
+                existing = (
+                    await session.execute(
+                        select(AgentExecutionHistory).where(
+                            AgentExecutionHistory.trace_id == trace_id
+                        )
+                    )
+                ).scalars().first()
+                if existing is not None:
+                    if agent_id:
+                        existing.agent_id = agent_id
+                    if conversation_id:
+                        existing.conversation_id = conversation_id
+                    if history_user_id and not existing.user_id:
+                        existing.user_id = history_user_id
+                    if username and not existing.username:
+                        existing.username = username
+                    # 恢复轮若异常缺少 user_query 或因强制取消跳过前序回捞，
+                    # 不能把挂起轮已落库的原始提问、前半段正文、思考或时间线抹空。
+                    if query_value:
+                        existing.query = query_value
+                    if summary_value:
+                        existing.summary = summary_value
+                    if reasoning_value:
+                        existing.reasoning_content = reasoning_value
+                    if safe_timeline:
+                        existing.process_timeline = safe_timeline
+                    existing.status = status
+                    if accumulate_duration:
+                        existing.execution_time_ms = float(
+                            existing.execution_time_ms or 0.0
+                        ) + float(execution_time_ms or 0.0)
+                    else:
+                        existing.execution_time_ms = execution_time_ms
+                    if agent_version is not None:
+                        existing.agent_version = agent_version
+                    if model_id is not None:
+                        existing.model_id = model_id
+                    if model_config_id is not None:
+                        existing.model_config_id = model_config_id
+                    if accumulate_tokens:
+                        existing.prompt_tokens = int(
+                            existing.prompt_tokens or 0
+                        ) + int(prompt_tokens or 0)
+                        existing.completion_tokens = int(
+                            existing.completion_tokens or 0
+                        ) + int(completion_tokens or 0)
+                        existing.total_tokens = int(
+                            existing.total_tokens or 0
+                        ) + int(total_tokens or 0)
+                    else:
+                        existing.prompt_tokens = prompt_tokens
+                        existing.completion_tokens = completion_tokens
+                        existing.total_tokens = total_tokens
+                    if has_data_output is not None:
+                        existing.has_data_output = 1 if has_data_output else 0
+                    if agent_name is not None:
+                        existing.agent_name = agent_name
+                    if agent_display_name is not None:
+                        existing.agent_display_name = agent_display_name
+                else:
+                    history_entry = AgentExecutionHistory(
+                        trace_id=trace_id,
+                        agent_id=agent_id,
+                        conversation_id=conversation_id,
+                        user_id=history_user_id,
+                        username=username,
+                        query=query_value,
+                        summary=summary_value,
+                        reasoning_content=reasoning_value,
+                        process_timeline=safe_timeline,
+                        status=status,
+                        execution_time_ms=execution_time_ms,
+                        agent_version=agent_version,
+                        model_id=model_id,
+                        model_config_id=model_config_id,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        has_data_output=(1 if has_data_output else 0),
+                        # 身份快照：写入时刻固化，避免智能体删除/权限变化后历史失去署名
+                        agent_name=agent_name,
+                        agent_display_name=agent_display_name,
+                    )
+                    session.add(history_entry)
                 await session.commit()
 
         try:
@@ -369,15 +547,22 @@ class AuditManager:
             )
             return True
         except Exception as first_error:
-            retry_max_bytes = (
-                FALLBACK_HISTORY_TEXT_BYTES
-                if _looks_like_length_error(first_error)
-                else MAX_HISTORY_TEXT_BYTES
-            )
-            logger.error(
-                f"[Audit] history 首次保存失败 {size_log} "
-                f"retry_budget={retry_max_bytes}B error={first_error}"
-            )
+            if _looks_like_unique_conflict(first_error):
+                logger.warning(
+                    f"[Audit] history 首次写入命中唯一键冲突，转为查改重试 {size_log} "
+                    f"error={first_error}"
+                )
+                retry_max_bytes = MAX_HISTORY_TEXT_BYTES
+            else:
+                retry_max_bytes = (
+                    FALLBACK_HISTORY_TEXT_BYTES
+                    if _looks_like_length_error(first_error)
+                    else MAX_HISTORY_TEXT_BYTES
+                )
+                logger.error(
+                    f"[Audit] history 首次保存失败 {size_log} "
+                    f"retry_budget={retry_max_bytes}B error={first_error}"
+                )
 
         retry_query, _ = truncate_text_bytes(safe_query, max_bytes=retry_max_bytes)
         retry_summary, _ = truncate_text_bytes(safe_summary, max_bytes=retry_max_bytes)
@@ -389,7 +574,7 @@ class AuditManager:
             await _write(retry_query, retry_summary, retry_reasoning)
             logger.warning(
                 f"[Audit] history 重试成功 {size_log} "
-                f"retry_budget={retry_max_bytes}B（内容可能已截断）"
+                f"retry_budget={retry_max_bytes}B（内容可能已截断或已转更新）"
             )
             return True
         except Exception as retry_error:
