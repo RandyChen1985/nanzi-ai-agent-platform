@@ -127,7 +127,7 @@ const submit = async () => {
 
         <div class="space-y-3 px-5 pb-4">
           <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-800">
-            ⚠ 下架后它<strong>不再是系统级</strong>：将从自动委派、路由与所有使用者的对话入口消失，
+            下架后它<strong>不再是系统级</strong>：将从自动委派、路由与所有使用者的对话入口消失，
             智能体归还给所有者并可继续编辑。授权记录会保留，重新上架后自动恢复。
           </div>
 

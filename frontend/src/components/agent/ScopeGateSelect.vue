@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
       @keydown.down.prevent="toggleMenu"
     >
       <svg
-        class="h-4 w-4 shrink-0 text-indigo-500"
+        class="h-4 w-4 shrink-0 text-primary"
         fill="none"
         stroke="currentColor"
         stroke-width="1.6"
@@ -209,12 +209,12 @@ onBeforeUnmount(() => {
           role="option"
           :aria-selected="option.value === normalizedValue"
           class="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-gray-50"
-          :class="option.value === normalizedValue ? 'bg-indigo-50/70' : ''"
+          :class="option.value === normalizedValue ? 'bg-primary/5' : ''"
           @click="selectOption(option)"
         >
           <svg
             class="mt-0.5 h-4 w-4 shrink-0"
-            :class="option.value === normalizedValue ? 'text-indigo-600' : 'text-gray-400'"
+            :class="option.value === normalizedValue ? 'text-primary' : 'text-gray-400'"
             fill="none"
             stroke="currentColor"
             stroke-width="1.6"
@@ -228,7 +228,7 @@ onBeforeUnmount(() => {
               <span class="text-xs font-semibold text-gray-900">{{ option.label }}</span>
               <svg
                 v-if="option.value === normalizedValue"
-                class="h-3.5 w-3.5 shrink-0 text-indigo-600"
+                class="h-3.5 w-3.5 shrink-0 text-primary"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2.5"

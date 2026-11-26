@@ -90,7 +90,7 @@
           <div v-for="(message, index) in content?.messages || []" :key="index" class="flex flex-col gap-1" :class="message.role === 'user' ? 'items-end' : 'items-start'">
             <span v-if="messageStamp(index)" class="px-1 text-[10px] leading-none text-gray-400">{{ messageStamp(index) }}</span>
             <div class="flex w-full gap-2.5" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
-              <div v-if="message.role === 'assistant'" class="mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-black text-primary">
+              <div v-if="message.role === 'assistant'" class="mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
                 AI
               </div>
               <div

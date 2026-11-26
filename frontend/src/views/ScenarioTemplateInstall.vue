@@ -286,19 +286,19 @@ onMounted(async () => {
 
     <div v-if="template" class="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
       <aside class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <p class="text-xs font-semibold uppercase text-blue-600">交付向导</p>
+        <p class="text-xs font-semibold uppercase text-primary">交付向导</p>
         <h1 class="mt-2 text-lg font-bold text-gray-900">{{ template.name }}</h1>
         <div class="mt-5 space-y-2">
           <button
             v-for="(step, index) in steps"
             :key="step.id"
             class="flex w-full items-start gap-3 rounded-md p-2 text-left transition"
-            :class="index === currentStepIndex ? 'bg-blue-50 text-blue-800' : 'hover:bg-gray-50'"
+            :class="index === currentStepIndex ? 'bg-primary/5 text-primary-dark' : 'hover:bg-gray-50'"
             @click="goStep(index)"
           >
             <span
               class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold"
-              :class="index <= currentStepIndex ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'"
+              :class="index <= currentStepIndex ? 'bg-primary text-white' : 'bg-gray-200 text-gray-500'"
             >
               {{ index + 1 }}
             </span>
@@ -312,7 +312,7 @@ onMounted(async () => {
 
       <main class="rounded-lg border border-gray-200 bg-white shadow-sm">
         <div class="border-b border-gray-200 p-5">
-          <div class="text-xs font-semibold text-blue-600">第 {{ currentStepIndex + 1 }} 步 / {{ steps.length }}</div>
+          <div class="text-xs font-semibold text-primary">第 {{ currentStepIndex + 1 }} 步 / {{ steps.length }}</div>
           <h2 class="mt-1 text-xl font-bold text-gray-900">{{ currentStep.title }}</h2>
           <p class="mt-1 text-sm text-gray-500">{{ currentStep.hint }}</p>
         </div>
@@ -325,19 +325,19 @@ onMounted(async () => {
               <div class="mt-5 grid gap-4 md:grid-cols-2">
                 <label class="block">
                   <span class="text-sm font-medium text-gray-700">实例标识</span>
-                  <input v-model="form.instance_name" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+                  <input v-model="form.instance_name" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10">
                 </label>
                 <label class="block">
                   <span class="text-sm font-medium text-gray-700">显示名称</span>
-                  <input v-model="form.display_name" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+                  <input v-model="form.display_name" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10">
                 </label>
                 <label class="block">
                   <span class="text-sm font-medium text-gray-700">负责人</span>
-                  <input v-model="form.owner" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="交付负责人或业务负责人">
+                  <input v-model="form.owner" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10" placeholder="交付负责人或业务负责人">
                 </label>
                 <label class="block md:col-span-2">
                   <span class="text-sm font-medium text-gray-700">说明</span>
-                  <textarea v-model="form.description" rows="4" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100" />
+                  <textarea v-model="form.description" rows="4" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10" />
                 </label>
               </div>
             </div>
@@ -367,7 +367,7 @@ onMounted(async () => {
                   >
                     <input
                       type="checkbox"
-                      class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      class="mt-1 rounded border-gray-300 text-primary focus:ring-primary"
                       :checked="(resourceBindings[resource.type] || []).includes(option.id)"
                       @change="toggleResourceBinding(resource.type, option.id)"
                     >
@@ -402,7 +402,7 @@ onMounted(async () => {
                   {{ prechecking ? '预检中' : '预检' }}
                 </button>
                 <button
-                  class="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                   :disabled="!canInstall || requiredMissing.length > 0 || installing"
                   @click="installTemplate"
                 >
@@ -474,7 +474,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="mt-4">
-                <div class="text-xs font-semibold uppercase text-emerald-700">next_steps</div>
+                <div class="text-xs font-semibold text-emerald-700">下一步建议</div>
                 <ul class="mt-2 space-y-2 text-sm text-emerald-800">
                   <li v-for="step in installResult.next_steps" :key="step" class="flex gap-2">
                     <span class="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500" />
@@ -508,7 +508,7 @@ onMounted(async () => {
             上一步
           </button>
           <button
-            class="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="currentStep.id !== 'done' && !canGoNext"
             @click="currentStep.id === 'done' ? openAgentCenter() : goNext()"
           >

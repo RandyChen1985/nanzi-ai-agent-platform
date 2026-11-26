@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { BoltIcon } from "@heroicons/vue/24/outline";
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { BookOpenIcon, CheckIcon, CircleStackIcon, ClipboardDocumentIcon, CpuChipIcon, EllipsisHorizontalIcon, KeyIcon, QueueListIcon } from '@heroicons/vue/24/outline'
@@ -1685,14 +1686,14 @@ onUnmounted(() => {
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div class="flex items-center gap-3">
-            <h1 class="text-3xl font-black tracking-tight">MCP 服务台</h1>
-            <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-700">NanZi Platform MCP</span>
+            <h1 class="text-2xl font-bold tracking-tight">MCP 服务台</h1>
+            <span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">NanZi Platform MCP</span>
           </div>
           <p class="mt-2 text-sm text-slate-500">支持人工生成当前用户 Token，也支持外部系统通过 OAuth2 调用 NanZi 平台能力。</p>
         </div>
         <button
           type="button"
-          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-primary/5 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="loading"
           :aria-busy="loading"
           :aria-label="loading ? '刷新中' : '刷新 MCP 服务台'"
@@ -1734,14 +1735,14 @@ onUnmounted(() => {
           v-for="tab in availableTabs"
           :key="tab.id"
           class="relative flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-bold transition-colors"
-          :class="activeTab === tab.id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'"
+          :class="activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-slate-500 hover:text-slate-700'"
           @click="activeTab = tab.id"
         >
           <span>{{ tab.label }}</span>
           <span
             v-if="tab.badge"
             class="rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors"
-            :class="activeTab === tab.id ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'"
+            :class="activeTab === tab.id ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-600'"
           >
             {{ tab.badge }}
           </span>
@@ -1759,10 +1760,10 @@ onUnmounted(() => {
 
       <section v-if="activeTab === 'guide' && canReadGuide" class="space-y-5">
         <!-- 动态配置注入与 Token 选择器 -->
-        <div class="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-blue-50/80 p-5 shadow-sm">
+        <div class="rounded-2xl border border-primary/25 bg-slate-50/70 p-5 shadow-sm">
           <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div class="flex items-center gap-3">
-              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 font-bold text-white shadow-sm">⚡</span>
+              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary font-bold text-white shadow-sm"><BoltIcon class="h-5 w-5" aria-hidden="true" /></span>
               <div>
                 <h3 class="text-sm font-bold text-slate-800">动态 Token 实时注入配置</h3>
                 <p class="mt-0.5 text-xs text-slate-500">
@@ -1775,7 +1776,7 @@ onUnmounted(() => {
                 <span class="text-xs text-slate-500">最近生成:</span>
                 <select
                   v-model="guideSelectedToken"
-                  class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 outline-none focus:border-primary focus:ring-1 focus:ring-primary/25"
                 >
                   <option value="">手动输入或使用占位符</option>
                   <option v-for="tok in activeSessionRecentTokens" :key="tok.token" :value="tok.token">
@@ -1785,7 +1786,7 @@ onUnmounted(() => {
               </div>
               <input
                 v-model="guideSelectedToken"
-                class="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-700 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                class="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-700 outline-none focus:border-primary focus:ring-1 focus:ring-primary/25"
                 placeholder="粘贴已生成的 Bearer Token"
               />
               <button
@@ -1803,7 +1804,7 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">推荐：人工 / 低代码客户端</h2>
+              <h2 class="text-lg font-semibold">推荐：人工 / 低代码客户端</h2>
               <p class="mt-1 text-sm text-slate-500">适合 Cursor、Claude Desktop、Dify、Coze、n8n 等需要手动填写 MCP 配置的客户端。</p>
             </div>
             <span class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">大多数接入优先使用</span>
@@ -1816,8 +1817,8 @@ onUnmounted(() => {
               ['复制 Token', 'Token 只显示本次，请立即复制保存。'],
               ['粘贴到客户端', '把 Token 放入 Authorization: Bearer Header。'],
             ]" :key="step[0]" class="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
-              <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-black text-white">{{ index + 1 }}</span>
-              <h3 class="mt-3 text-sm font-black text-slate-800">{{ step[0] }}</h3>
+              <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-semibold text-white">{{ index + 1 }}</span>
+              <h3 class="mt-3 text-sm font-semibold text-slate-800">{{ step[0] }}</h3>
               <p class="mt-1 text-xs leading-5 text-slate-500">{{ step[1] }}</p>
             </div>
           </div>
@@ -1831,19 +1832,19 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">复制配置到 Cursor / 低代码客户端</h2>
+              <h2 class="text-lg font-semibold">复制配置到 Cursor / 低代码客户端</h2>
               <p class="mt-1 text-sm text-slate-500">先在上面的 Client 卡片生成当前用户 Token，再把它设置到环境变量中；也可以替换为 OAuth2 动态获取的 Access Token。</p>
             </div>
-            <button type="button" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700" @click="copyMcpJson">{{ copied === 'mcp-json' ? '已复制' : '复制 MCP JSON' }}</button>
+            <button type="button" class="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary-dark" @click="copyMcpJson">{{ copied === 'mcp-json' ? '已复制' : '复制 MCP JSON' }}</button>
           </div>
           <pre class="mt-4 overflow-x-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-100"><code>{{ mcpJson }}</code></pre>
           <div class="mt-4 grid gap-3 md:grid-cols-2">
             <div class="rounded-xl border border-slate-200 p-4">
-              <h3 class="text-sm font-black">人工 Token 模式</h3>
+              <h3 class="text-sm font-semibold">人工 Token 模式</h3>
               <p class="mt-1 text-xs leading-5 text-slate-500">Cursor、Claude Desktop、Dify 等支持静态 Header 的客户端，使用服务台生成的当前用户 Token；到期后重新生成并替换环境变量。</p>
             </div>
             <div class="rounded-xl border border-slate-200 p-4">
-              <h3 class="text-sm font-black">支持 OAuth 自动发现的客户端</h3>
+              <h3 class="text-sm font-semibold">支持 OAuth 自动发现的客户端</h3>
               <p class="mt-1 text-xs leading-5 text-slate-500">程序化或支持 OAuth 的客户端可填写 MCP Endpoint，读取 Protected Resource Metadata，并通过 Authorization Code + PKCE 打开 NanZi 授权页。</p>
             </div>
           </div>
@@ -1853,10 +1854,10 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex items-center justify-between">
             <div>
-              <h2 class="text-lg font-black">主流客户端详细配置指南</h2>
+              <h2 class="text-lg font-semibold">主流客户端详细配置指南</h2>
               <p class="mt-1 text-sm text-slate-500">快速将 NanZi Platform MCP 接入你常用的桌面工具与工作流系统。</p>
             </div>
-            <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">配置路径 & 示例</span>
+            <span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">配置路径 & 示例</span>
           </div>
 
           <div class="mt-5 grid gap-4 md:grid-cols-2">
@@ -1884,20 +1885,20 @@ onUnmounted(() => {
             <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
               <div class="flex items-center gap-2">
                 <span class="text-base font-bold text-slate-800">Dify / Coze / n8n</span>
-                <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-800">工作流 / Agent</span>
+                <span class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">工作流 / Agent</span>
               </div>
               <p class="mt-1.5 text-xs text-slate-500">在工作流与低代码智能体编排平台中接入：</p>
               <ul class="mt-2 space-y-2 text-xs leading-5 text-slate-600">
                 <li class="flex items-start gap-1.5">
-                  <span class="font-bold text-indigo-600">•</span>
+                  <span class="font-bold text-primary">•</span>
                   <span><strong>Dify:</strong> 在「工具」-「自定义 MCP 工具」中填入本平台的 MCP SSE/HTTP 地址，鉴权 Header 选择 <code class="font-mono text-slate-800">Authorization: Bearer &lt;Token&gt;</code>。</span>
                 </li>
                 <li class="flex items-start gap-1.5">
-                  <span class="font-bold text-indigo-600">•</span>
+                  <span class="font-bold text-primary">•</span>
                   <span><strong>Coze / 扣子:</strong> 在插件/工具中配置外部 HTTP API，请求头携带当前用户签发的 Access Token。</span>
                 </li>
                 <li class="flex items-start gap-1.5">
-                  <span class="font-bold text-indigo-600">•</span>
+                  <span class="font-bold text-primary">•</span>
                   <span><strong>n8n:</strong> 使用 HTTP Request 节点调用 MCP JSON-RPC 接口或使用 Community MCP 节点，指定 Bearer Auth 凭据。</span>
                 </li>
               </ul>
@@ -1908,16 +1909,16 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">程序化系统接入</h2>
+              <h2 class="text-lg font-semibold">程序化系统接入</h2>
               <p class="mt-1 text-sm text-slate-500">适合 CRM、OA、后台服务和无人值守任务，通过标准 OAuth2 动态获取绑定用户的 Access Token。</p>
             </div>
-            <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">OAuth2 / OIDC 标准方向</span>
+            <span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">OAuth2 / OIDC 标准方向</span>
           </div>
           <div class="mt-5 grid gap-3 md:grid-cols-2">
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-black">需要关联用户</h3><p class="mt-1 text-xs leading-5 text-slate-500">使用 Authorization Code + PKCE，用户在 NanZi 授权页确认后，Access Token 会绑定对应 user_id。</p></div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-black">调用方式</h3><p class="mt-1 text-xs leading-5 text-slate-500">调用 MCP 时统一携带 Authorization: Bearer；NanZi 服务端校验 Token、Scope、Client 和当前用户角色权限。</p></div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-semibold">需要关联用户</h3><p class="mt-1 text-xs leading-5 text-slate-500">使用 Authorization Code + PKCE，用户在 NanZi 授权页确认后，Access Token 会绑定对应 user_id。</p></div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-semibold">调用方式</h3><p class="mt-1 text-xs leading-5 text-slate-500">调用 MCP 时统一携带 Authorization: Bearer；NanZi 服务端校验 Token、Scope、Client 和当前用户角色权限。</p></div>
           </div>
-          <div class="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+          <div class="mt-5 rounded-xl border border-primary/10 bg-primary/5 p-4 text-sm leading-6 text-primary-dark">
             <p class="font-bold">程序化流程</p>
             <p class="mt-1">注册 Client → 调用 OAuth2 Token Endpoint → 缓存 Access Token 到期时间 → 携带 Bearer 调用 MCP → 到期后重新获取。程序化系统不应把浏览器登录 Cookie 或 NanZi 用户 API Key 传给第三方。</p>
           </div>
@@ -1925,7 +1926,7 @@ onUnmounted(() => {
 
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div>
-            <h2 class="text-lg font-black">Client Secret 怎么用？</h2>
+            <h2 class="text-lg font-semibold">Client Secret 怎么用？</h2>
             <p class="mt-1 text-sm leading-6 text-slate-500">Client Secret 只用于获取 Access Token，是“外部系统证明自己是谁”的凭证；它不是 Bearer Token，也不直接发送给 MCP 接口。</p>
           </div>
           <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200">
@@ -1933,7 +1934,7 @@ onUnmounted(() => {
               <thead class="bg-slate-50 text-xs text-slate-500"><tr class="border-b border-slate-200"><th class="p-3">凭证</th><th class="p-3">放在哪里</th><th class="p-3">作用</th><th class="p-3">是否代表用户</th></tr></thead>
               <tbody>
                 <tr class="border-b border-slate-100"><td class="p-3 font-mono font-bold text-amber-700">client_id + client_secret</td><td class="p-3">业务方后端 Token Endpoint 请求</td><td class="p-3">证明外部 Client，并兑换用户授权后的 Access Token</td><td class="p-3">本身不代表用户；用户登录并同意授权后，兑换出的 Token 才绑定该用户</td></tr>
-                <tr><td class="p-3 font-mono font-bold text-indigo-700">Authorization: Bearer &lt;access_token&gt;</td><td class="p-3">每次 MCP 请求</td><td class="p-3">调用 NanZi Platform MCP</td><td class="p-3">始终代表完成 NanZi 登录授权的用户，并受该用户角色和权限限制</td></tr>
+                <tr><td class="p-3 font-mono font-bold text-primary">Authorization: Bearer &lt;access_token&gt;</td><td class="p-3">每次 MCP 请求</td><td class="p-3">调用 NanZi Platform MCP</td><td class="p-3">始终代表完成 NanZi 登录授权的用户，并受该用户角色和权限限制</td></tr>
               </tbody>
             </table>
           </div>
@@ -1949,10 +1950,10 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">示例一：发起授权 → 换 Token → 调用 MCP（curl）</h2>
+              <h2 class="text-lg font-semibold">示例一：发起授权 → 换 Token → 调用 MCP（curl）</h2>
               <p class="mt-1 text-sm text-slate-500">第 1 步生成 PKCE verifier 和 state 并打印授权地址；用户在浏览器同意后，回调里的 code 配合 verifier 与 Client Secret 换取用户 Token。</p>
             </div>
-            <button type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="copyValue('authorization-code-curl', authorizationCodeCurl)">{{ copied === 'authorization-code-curl' ? '已复制' : '复制 curl 示例' }}</button>
+            <button type="button" class="rounded-xl border border-primary/25 px-4 py-2 text-sm font-bold text-primary hover:bg-primary/20" @click="copyValue('authorization-code-curl', authorizationCodeCurl)">{{ copied === 'authorization-code-curl' ? '已复制' : '复制 curl 示例' }}</button>
           </div>
           <pre class="mt-4 max-h-96 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-100"><code>{{ authorizationCodeCurl }}</code></pre>
         </div>
@@ -1960,13 +1961,13 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">示例二：Python（httpx）完整授权流程</h2>
+              <h2 class="text-lg font-semibold">示例二：Python（httpx）完整授权流程</h2>
               <p class="mt-1 text-sm text-slate-500">从生成 PKCE 参数、拼授权地址，到回调换 Token、调用 MCP 的完整链路；所有步骤都运行在业务方后端，不能放在浏览器前端。</p>
             </div>
-            <button type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="copyValue('authorization-code-python', authorizationCodePython)">{{ copied === 'authorization-code-python' ? '已复制' : '复制 Python 示例' }}</button>
+            <button type="button" class="rounded-xl border border-primary/25 px-4 py-2 text-sm font-bold text-primary hover:bg-primary/20" @click="copyValue('authorization-code-python', authorizationCodePython)">{{ copied === 'authorization-code-python' ? '已复制' : '复制 Python 示例' }}</button>
           </div>
           <pre class="mt-4 max-h-96 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-100"><code>{{ authorizationCodePython }}</code></pre>
-          <div class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+          <div class="mt-4 rounded-xl border border-primary/10 bg-primary/5 p-4 text-sm leading-6 text-primary-dark">
             <p class="font-bold">这段流程的关键点</p>
             <p class="mt-1">Client Secret 证明“哪个业务系统”在换 Token；用户在 NanZi 授权页登录，证明“哪个用户”；NanZi 最终签发的 Access Token 同时绑定 Client、用户、Scope 和 MCP Resource。后续调用 MCP 时只发送 Bearer Token。</p>
           </div>
@@ -1974,12 +1975,12 @@ onUnmounted(() => {
         </div>
 
         <div class="rounded-2xl bg-white p-6 shadow-sm">
-          <h2 class="text-lg font-black">当前接入信息</h2>
+          <h2 class="text-lg font-semibold">当前接入信息</h2>
           <div class="mt-4 grid gap-3">
             <div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <div class="w-full sm:w-56"><div class="flex items-center gap-1.5 text-sm font-bold text-slate-700"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></div><div class="mt-1 text-xs text-slate-500">{{ item.description }}</div></div>
+              <div class="w-full sm:w-56"><div class="flex items-center gap-1.5 text-sm font-bold text-slate-700"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-primary/25 text-xs font-semibold text-primary hover:bg-primary/20" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></div><div class="mt-1 text-xs text-slate-500">{{ item.description }}</div></div>
               <code class="min-w-0 flex-1 break-all pr-10 text-xs text-slate-600">{{ item.value || '启动并完成配置后显示' }}</code>
-              <button v-if="item.value" type="button" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button>
+              <button v-if="item.value" type="button" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-primary opacity-0 shadow-sm transition-opacity hover:border-primary/25 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button>
             </div>
           </div>
         </div>
@@ -1989,7 +1990,7 @@ onUnmounted(() => {
         <div v-if="canReadAudit" class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">MCP 调用概览</h2>
+              <h2 class="text-lg font-semibold">MCP 调用概览</h2>
               <p class="mt-1 text-sm text-slate-500">基于你有权限查看的审计日志统计。</p>
             </div>
             <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600" aria-label="审计统计周期" :disabled="auditSummaryLoading" @change="handleAuditSummaryRangeChange">
@@ -1998,136 +1999,72 @@ onUnmounted(() => {
               <option value="30d">近 30 天</option>
             </select>
           </div>
-          <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="mt-4 grid divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x">
             <!-- 调用次数 -->
-            <div class="group rounded-2xl border border-slate-100 bg-slate-50/80 p-4 transition-all duration-200 hover:border-slate-300 hover:shadow-xs">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-bold text-slate-500">调用次数</span>
-                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-slate-500 shadow-2xs transition-transform group-hover:scale-110">
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="20" x2="18" y2="10" />
-                    <line x1="12" y1="20" x2="12" y2="4" />
-                    <line x1="6" y1="20" x2="6" y2="14" />
-                  </svg>
-                </span>
-              </div>
-              <div class="mt-2 text-2xl font-black text-slate-800">{{ auditSummary.total_calls ?? '—' }}</div>
+            <div class="p-4">
+              <div class="text-xs font-medium text-slate-500">调用次数</div>
+              <div class="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{{ auditSummary.total_calls ?? '—' }}</div>
             </div>
 
             <!-- 成功率 -->
-            <div class="group rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 transition-all duration-200 hover:border-emerald-300 hover:shadow-xs">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-bold text-emerald-800">成功率</span>
-                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-emerald-600 shadow-2xs transition-transform group-hover:scale-110">
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                    <polyline points="22 4 12 14.01 9 11.01" />
-                  </svg>
-                </span>
-              </div>
-              <div class="mt-2 text-2xl font-black text-emerald-700">{{ auditSummary.success_rate != null ? auditSummary.success_rate + '%' : '—' }}</div>
+            <div class="p-4">
+              <div class="text-xs font-medium text-slate-500">成功率</div>
+              <div class="mt-1.5 text-2xl font-semibold tabular-nums text-emerald-600">{{ auditSummary.success_rate != null ? auditSummary.success_rate + '%' : '—' }}</div>
             </div>
 
             <!-- 失败 / 拒绝 -->
-            <div class="group rounded-2xl border border-rose-100 bg-rose-50/60 p-4 transition-all duration-200 hover:border-rose-300 hover:shadow-xs">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-bold text-rose-800">失败 / 拒绝</span>
-                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-rose-600 shadow-2xs transition-transform group-hover:scale-110">
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                </span>
-              </div>
-              <div class="mt-2 text-2xl font-black text-rose-700">{{ auditSummary.failed_or_denied ?? '—' }}</div>
-              <div class="mt-1 text-[11px] text-rose-600">失败 {{ auditSummary.failed_calls ?? 0 }} · 拒绝 {{ auditSummary.denied_calls ?? 0 }}</div>
+            <div class="p-4">
+              <div class="text-xs font-medium text-slate-500">失败 / 拒绝</div>
+              <div class="mt-1.5 text-2xl font-semibold tabular-nums text-rose-600">{{ auditSummary.failed_or_denied ?? '—' }}</div>
+              <div class="mt-1 text-[11px] tabular-nums text-slate-400">失败 {{ auditSummary.failed_calls ?? 0 }} · 拒绝 {{ auditSummary.denied_calls ?? 0 }}</div>
             </div>
 
             <!-- P95 耗时 -->
-            <div class="group rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 transition-all duration-200 hover:border-indigo-300 hover:shadow-xs">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-bold text-indigo-800">P95 耗时</span>
-                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-indigo-600 shadow-2xs transition-transform group-hover:scale-110">
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                  </svg>
-                </span>
-              </div>
-              <div class="mt-2 text-2xl font-black text-indigo-700">{{ auditSummary.p95_latency_ms != null ? auditSummary.p95_latency_ms + ' ms' : '—' }}</div>
+            <div class="p-4">
+              <div class="text-xs font-medium text-slate-500">P95 耗时</div>
+              <div class="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{{ auditSummary.p95_latency_ms != null ? auditSummary.p95_latency_ms + ' ms' : '—' }}</div>
             </div>
           </div>
         </div>
 
-        <div class="grid gap-4 md:grid-cols-3">
+        <div class="grid divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs md:grid-cols-3 md:divide-x md:divide-y-0">
           <!-- 服务状态 -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-emerald-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">服务状态</div>
-              <div class="mt-1.5 flex items-center gap-2">
-                <span class="text-2xl font-black" :class="overview.platform_enabled ? 'text-emerald-600' : 'text-slate-400'">
-                  {{ overview.platform_enabled ? '已启用' : '已关闭' }}
-                </span>
-                <span
-                  class="inline-block h-2 w-2 rounded-full"
-                  :class="overview.platform_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'"
-                />
-              </div>
-              <div class="mt-1 text-xs text-slate-400">Platform MCP 核心入口</div>
+          <div class="p-5">
+            <div class="text-xs font-medium text-slate-500">服务状态</div>
+            <div class="mt-1.5 flex items-center gap-2">
+              <span
+                class="inline-block h-2 w-2 rounded-full"
+                :class="overview.platform_enabled ? 'bg-emerald-500' : 'bg-slate-300'"
+              />
+              <span class="text-xl font-semibold" :class="overview.platform_enabled ? 'text-emerald-600' : 'text-slate-500'">
+                {{ overview.platform_enabled ? '已启用' : '已关闭' }}
+              </span>
             </div>
-            <div
-              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-110"
-              :class="overview.platform_enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
-            >
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
-                <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
-                <line x1="6" y1="6" x2="6.01" y2="6" />
-                <line x1="6" y1="18" x2="6.01" y2="18" />
-              </svg>
-            </div>
+            <div class="mt-1 text-xs text-slate-400">Platform MCP 核心入口</div>
           </div>
 
           <!-- 活跃 Client -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-indigo-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">活跃 Client</div>
-              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.active_client_count ?? 0 }}</div>
-              <div class="mt-1 text-xs text-slate-400">外部系统与授权接入数</div>
-            </div>
-            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 transition-transform duration-200 group-hover:scale-110">
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            </div>
+          <div class="p-5">
+            <div class="text-xs font-medium text-slate-500">活跃 Client</div>
+            <div class="mt-1.5 text-xl font-semibold tabular-nums text-slate-900">{{ overview.active_client_count ?? 0 }}</div>
+            <div class="mt-1 text-xs text-slate-400">外部系统与授权接入数</div>
           </div>
 
           <!-- 已发布方法 -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-purple-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">已发布方法</div>
-              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.published_method_count ?? 0 }}</div>
-              <div class="mt-1 text-xs text-slate-400">平台提供的 MCP Tools</div>
-            </div>
-            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 transition-transform duration-200 group-hover:scale-110">
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
-            </div>
+          <div class="p-5">
+            <div class="text-xs font-medium text-slate-500">已发布方法</div>
+            <div class="mt-1.5 text-xl font-semibold tabular-nums text-slate-900">{{ overview.published_method_count ?? 0 }}</div>
+            <div class="mt-1 text-xs text-slate-400">平台提供的 MCP Tools</div>
           </div>
         </div>
 
-        <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all pr-10 text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button></div></div></div>
+        <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-semibold">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-primary/25 text-xs font-semibold text-primary hover:bg-primary/20" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all pr-10 text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-primary opacity-0 shadow-sm transition-opacity hover:border-primary/25 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button></div></div></div>
       </section>
 
       <section v-else-if="activeTab === 'config' && canReadConfig" class="space-y-5">
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
-            <div><h2 class="text-lg font-black">Platform MCP 服务配置</h2><p class="mt-1 text-sm text-slate-500">这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p></div>
+            <div><h2 class="text-lg font-semibold">Platform MCP 服务配置</h2><p class="mt-1 text-sm text-slate-500">这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p></div>
             <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500">总开关 → 能力组 → Client</span>
           </div>
           <div
@@ -2141,7 +2078,7 @@ onUnmounted(() => {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <span>
-              <b class="font-black">Platform MCP 服务已暂停。</b>当前不会向任何 Client 发布工具，所有调用都会返回
+              <b class="font-semibold">Platform MCP 服务已暂停。</b>当前不会向任何 Client 发布工具，所有调用都会返回
               <code class="rounded bg-white/70 px-1 py-0.5 font-mono text-[11px]">MCP_PLATFORM_DISABLED</code>；恢复总开关后按原配置立即生效。
             </span>
           </div>
@@ -2230,20 +2167,20 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div>
             <div class="flex items-center gap-2">
-              <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                 </svg>
               </span>
-              <h2 class="text-lg font-black text-slate-800">调用限流</h2>
+              <h2 class="text-lg font-semibold text-slate-800">调用限流</h2>
             </div>
             <p class="mt-1 text-sm text-slate-500">按固定一分钟窗口限制调用次数，单位：次/分钟；设置为 0 表示关闭对应限制。</p>
           </div>
           <div class="mt-4 grid gap-3 sm:grid-cols-2">
-            <label class="group rounded-xl border border-slate-200/80 bg-slate-50 p-4 text-sm font-bold text-slate-700 transition hover:border-indigo-200 hover:bg-slate-50/80">
+            <label class="group rounded-xl border border-slate-200/80 bg-slate-50 p-4 text-sm font-bold text-slate-700 transition hover:border-primary/25 hover:bg-slate-50/80">
               <div class="flex items-center justify-between">
                 <span>单个 Client 每分钟上限</span>
-                <span class="text-slate-400 group-hover:text-indigo-500 transition-colors">
+                <span class="text-slate-400 group-hover:text-primary transition-colors">
                   <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
                     <line x1="8" y1="21" x2="16" y2="21" />
@@ -2251,32 +2188,32 @@ onUnmounted(() => {
                   </svg>
                 </span>
               </div>
-              <span class="mt-2 flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100"><input v-model.number="config.rate_limit_client_per_minute" type="number" min="0" max="100000" class="min-w-0 flex-1 rounded-l-lg border-0 bg-transparent px-3 py-2 font-normal outline-none focus:ring-0" :disabled="!canEditConfig || saving" @change="updateRateLimit('rate_limit_client_per_minute')" /><span class="shrink-0 border-l border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">次/分钟</span></span>
+              <span class="mt-2 flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10"><input v-model.number="config.rate_limit_client_per_minute" type="number" min="0" max="100000" class="min-w-0 flex-1 rounded-l-lg border-0 bg-transparent px-3 py-2 font-normal outline-none focus:ring-0" :disabled="!canEditConfig || saving" @change="updateRateLimit('rate_limit_client_per_minute')" /><span class="shrink-0 border-l border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">次/分钟</span></span>
             </label>
-            <label class="group rounded-xl border border-slate-200/80 bg-slate-50 p-4 text-sm font-bold text-slate-700 transition hover:border-indigo-200 hover:bg-slate-50/80">
+            <label class="group rounded-xl border border-slate-200/80 bg-slate-50 p-4 text-sm font-bold text-slate-700 transition hover:border-primary/25 hover:bg-slate-50/80">
               <div class="flex items-center justify-between">
                 <span>单个用户每分钟上限</span>
-                <span class="text-slate-400 group-hover:text-indigo-500 transition-colors">
+                <span class="text-slate-400 group-hover:text-primary transition-colors">
                   <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                     <circle cx="12" cy="7" r="4" />
                   </svg>
                 </span>
               </div>
-              <span class="mt-2 flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100"><input v-model.number="config.rate_limit_user_per_minute" type="number" min="0" max="100000" class="min-w-0 flex-1 rounded-l-lg border-0 bg-transparent px-3 py-2 font-normal outline-none focus:ring-0" :disabled="!canEditConfig || saving" @change="updateRateLimit('rate_limit_user_per_minute')" /><span class="shrink-0 border-l border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">次/分钟</span></span>
+              <span class="mt-2 flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10"><input v-model.number="config.rate_limit_user_per_minute" type="number" min="0" max="100000" class="min-w-0 flex-1 rounded-l-lg border-0 bg-transparent px-3 py-2 font-normal outline-none focus:ring-0" :disabled="!canEditConfig || saving" @change="updateRateLimit('rate_limit_user_per_minute')" /><span class="shrink-0 border-l border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">次/分钟</span></span>
             </label>
           </div>
         </div>
         <div class="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-sm">
           <div class="flex items-center gap-2">
-            <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+            <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/5 text-primary">
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="16" x2="12" y2="12" />
                 <line x1="12" y1="8" x2="12.01" y2="8" />
               </svg>
             </span>
-            <h2 class="text-lg font-black text-slate-800">生效规则</h2>
+            <h2 class="text-lg font-semibold text-slate-800">生效规则</h2>
           </div>
           <p class="mt-3">Platform MCP 总开关开启后，只有已开启的能力组才会发布到 MCP 工具列表；具体调用仍需通过 Client 的 Scope、用户授权和资源权限校验。总开关关闭时，所有能力组一起暂停发布（各自配置保持不变），已签发的 Access Token 仍能通过认证，但任何调用都会返回 <code class="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">MCP_PLATFORM_DISABLED</code>。</p>
         </div>
@@ -2285,13 +2222,13 @@ onUnmounted(() => {
       <section v-else-if="activeTab === 'clients' && canReadClients" class="rounded-2xl bg-white p-6 shadow-sm">
         <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 class="text-lg font-black">外部 Client</h2>
+            <h2 class="text-lg font-semibold">外部 Client</h2>
             <p class="mt-1 text-sm text-slate-500">Secret 只在创建或重置时显示一次。</p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button v-if="canReadGrants" type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="showGrants = true; loadGrants()">已授权应用 (Grants)</button>
-            <button v-if="canReadGuide" type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="activeTab = 'guide'">？使用指南</button>
-            <button v-if="canManageClient" type="button" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700" @click="showCreate = true">创建 Client</button>
+            <button v-if="canReadGrants" type="button" class="rounded-xl border border-primary/25 px-4 py-2 text-sm font-bold text-primary hover:bg-primary/20" @click="showGrants = true; loadGrants()">已授权应用 (Grants)</button>
+            <button v-if="canReadGuide" type="button" class="rounded-xl border border-primary/25 px-4 py-2 text-sm font-bold text-primary hover:bg-primary/20" @click="activeTab = 'guide'">？使用指南</button>
+            <button v-if="canManageClient" type="button" class="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary-dark" @click="showCreate = true">创建 Client</button>
           </div>
         </div>
         <div class="mb-5 flex items-center justify-between gap-3">
@@ -2302,7 +2239,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                :class="clientViewMode === 'card' ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'"
+                :class="clientViewMode === 'card' ? 'border border-slate-200 bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-800'"
                 v-tooltip="'卡片视图'"
                 aria-label="卡片视图"
                 @click="clientViewMode = 'card'"
@@ -2314,7 +2251,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                :class="clientViewMode === 'list' ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'"
+                :class="clientViewMode === 'list' ? 'border border-slate-200 bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-800'"
                 v-tooltip="'列表视图'"
                 aria-label="列表视图"
                 @click="clientViewMode = 'list'"
@@ -2329,12 +2266,12 @@ onUnmounted(() => {
         <div v-if="showClientFilters" class="mb-5 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
           <input type="search" v-model="clientSearch" class="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-white pl-3 pr-7 py-2 text-sm" placeholder="搜索 Client 名称、ID 或所属用户" @keyup.enter="applyClientFilters" />
           <select v-model="clientStatus" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><option value="">全部状态</option><option value="active">启用</option><option value="disabled">停用</option></select>
-          <button type="button" class="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white" @click="applyClientFilters">查询</button>
+          <button type="button" class="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white" @click="applyClientFilters">查询</button>
           <span class="text-xs text-slate-500">共 {{ clientTotal }} 个</span>
         </div>
         <div v-if="!clients.length" class="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-10 text-center">
-          <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-2xl text-indigo-600 shadow-xs">
-            🔌
+          <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-2xl text-primary shadow-xs">
+            
           </div>
           <div class="mt-4 text-base font-bold text-slate-800">暂无外部 Client</div>
           <p class="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-500">
@@ -2344,7 +2281,7 @@ onUnmounted(() => {
             <button
               v-if="canManageClient"
               type="button"
-              class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700"
+              class="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-dark"
               @click="showCreate = true"
             >
               <span>+ 创建第一个 Client</span>
@@ -2352,8 +2289,13 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-else class="space-y-4">
-          <div v-if="clientViewMode === 'card'" class="space-y-3">
-          <div v-for="client in clients" :key="client.client_id" class="rounded-2xl border border-slate-200 p-5 transition-all hover:border-indigo-300 hover:shadow-xs">
+          <div v-if="clientViewMode === 'card'" class="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+          <div
+            v-for="client in clients"
+            :key="client.client_id"
+            class="rounded-xl border border-slate-200 border-l-[3px] bg-white p-5 transition-all hover:border-slate-300 hover:shadow-sm"
+            :class="client.status === 'active' ? 'border-l-emerald-500' : 'border-l-slate-300'"
+          >
             <div v-if="client.needs_token_regeneration" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
               <div><span class="font-bold">当前 Client 需要重新生成 MCP Access Token</span><span class="ml-1">原有 Access Token 已失效，请重新生成 MCP Access Token。</span></div>
               <button v-if="canIssueToken" type="button" class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">立即生成</button>
@@ -2361,9 +2303,9 @@ onUnmounted(() => {
             <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
-                  <span v-if="client.is_shared" class="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 shadow-xs">
-                    <svg class="h-3 w-3 text-indigo-500" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
+                  <div class="text-base font-semibold text-slate-800">{{ client.client_name }}</div>
+                  <span v-if="client.is_shared" class="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-0.5 text-[11px] font-bold text-primary shadow-xs">
+                    <svg class="h-3 w-3 text-primary" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
                     全员共享
                   </span>
                 </div>
@@ -2372,12 +2314,12 @@ onUnmounted(() => {
                   <span class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">Client ID</span>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-0.5 font-mono text-xs text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-0.5 font-mono text-xs text-slate-600 transition hover:border-primary/25 hover:bg-primary/20 hover:text-primary cursor-pointer"
                     v-tooltip="copied === 'client-id-' + client.client_id ? '已复制！' : '点击快速复制 Client ID'"
                     @click="copyValue('client-id-' + client.client_id, client.client_id)"
                   >
                     <code class="break-all">{{ client.client_id }}</code>
-                    <span class="text-[10px] font-bold" :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 group-hover:text-indigo-500'">
+                    <span class="text-[10px] font-bold" :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 group-hover:text-primary'">
                       {{ copied === 'client-id-' + client.client_id ? '✓ 已复制' : '复制' }}
                     </span>
                   </button>
@@ -2385,12 +2327,12 @@ onUnmounted(() => {
                 <p class="mt-1 text-xs text-slate-400">Client ID 用于 Token Endpoint，需配合 Client Secret 获取 Access Token；不能直接调用 MCP。</p>
               </div>
               <div data-testid="client-actions" class="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
-                <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
-                <button v-if="canReadClients" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openTokenDetails(client)">Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{{ client.token_total_count || 0 }}</span></button>
+                <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
+                <button v-if="canReadClients" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/20" @click="openTokenDetails(client)">Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{{ client.token_total_count || 0 }}</span></button>
                 <button type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" data-client-action-trigger @click="toggleClientActionMenu(client, $event)">更多操作 <span class="ml-1">⌄</span></button>
                 <button
                   type="button"
-                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-indigo-700 transition hover:bg-indigo-50 hover:text-indigo-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-primary transition hover:bg-primary/20 hover:text-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
                   :aria-label="expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'"
                   v-tooltip="expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'"
                   :aria-expanded="expandedClientIds.has(client.client_id)"
@@ -2404,12 +2346,12 @@ onUnmounted(() => {
                 </button>
                 <Teleport to="body">
                   <div v-if="clientActionMenuId === client.client_id && clientActionMenuAnchor" data-client-action-menu class="fixed z-[80] w-44 rounded-xl border border-slate-200 bg-white p-1.5 text-left shadow-xl" :style="clientActionMenuStyle">
-                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
-                    <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
-                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
-                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
-                    <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="closeClientActionMenu(); resetSecret(client)">重置 Secret</button>
-                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="closeClientActionMenu(); removeClient(client)">删除 Client</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
+                    <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
+                    <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-amber-700 hover:bg-amber-50" @click="closeClientActionMenu(); resetSecret(client)">重置 Secret</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-rose-700 hover:bg-rose-50" @click="closeClientActionMenu(); removeClient(client)">删除 Client</button>
                 </div>
                 </Teleport>
               </div>
@@ -2432,8 +2374,8 @@ onUnmounted(() => {
               <span class="rounded-full bg-orange-50 px-2.5 py-1 font-bold text-orange-700">已过期 {{ client.expired_token_count || 0 }}</span>
               <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold text-slate-500">已撤销 {{ client.revoked_token_count || 0 }}</span>
             </div>
-            <div class="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
-              <span class="mr-1 text-xs font-black text-slate-700">资源访问</span>
+            <div class="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2">
+              <span class="mr-1 text-xs font-semibold text-slate-700">资源访问</span>
               <template v-for="config in resourceWhitelistConfigs" :key="config.field">
                 <button v-if="canManageClientItem(client)" type="button" class="rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition" :class="resourcePolicyButtonClass(client, config.field)" v-tooltip="resourcePolicySummary(client, config.field)" @click="openResourceWhitelist(client, config)">{{ config.buttonLabel }}</button>
               </template>
@@ -2469,15 +2411,15 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="mt-4 grid gap-3 md:grid-cols-3">
-                <div v-for="config in resourceWhitelistConfigs" :key="config.field" class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                <div v-for="config in resourceWhitelistConfigs" :key="config.field" class="rounded-xl border border-primary/25 bg-primary/10 p-3">
                   <div class="text-xs font-bold text-slate-500">{{ config.title }}</div>
-                  <div class="mt-1 text-sm font-black text-slate-800">{{ resourcePolicySummary(client, config.field) }}</div>
+                  <div class="mt-1 text-sm font-semibold text-slate-800">{{ resourcePolicySummary(client, config.field) }}</div>
                   <p class="mt-1 text-[11px] leading-4 text-slate-500">实际权限仍受当前用户权限限制</p>
                 </div>
               </div>
-              <p class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">资源权限按“当前用户权限 ∩ Client 白名单”生效；未配置白名单时跟随用户权限，配置空白名单时表示该 Client 不可访问此类资源。</p>
+              <p class="mt-3 rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-5 text-primary-dark">资源权限按“当前用户权限 ∩ Client 白名单”生效；未配置白名单时跟随用户权限，配置空白名单时表示该 Client 不可访问此类资源。</p>
               <div class="mt-3 flex justify-end">
-                <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="openClientDetails(client)">查看权限详情 →</button>
+                <button type="button" class="text-xs font-bold text-primary hover:text-primary-dark" @click="openClientDetails(client)">查看权限详情 →</button>
               </div>
             </div>
             </div>
@@ -2523,15 +2465,15 @@ onUnmounted(() => {
                     <td class="px-4 py-3.5 align-middle">
                       <div class="flex items-center gap-2">
                         <span class="font-bold text-slate-800 text-sm">{{ client.client_name }}</span>
-                        <span v-if="client.is_shared" class="inline-flex items-center gap-0.5 rounded-full border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 shadow-xs">
-                          <svg class="h-2.5 w-2.5 text-indigo-500" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
+                        <span v-if="client.is_shared" class="inline-flex items-center gap-0.5 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-bold text-primary shadow-xs">
+                          <svg class="h-2.5 w-2.5 text-primary" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
                           全员共享
                         </span>
                         <!-- 列表视图不展示 Client ID 文本（过长挤占列宽），只保留复制入口，完整 ID 见 title -->
                         <button
                           type="button"
-                          class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-transparent transition hover:bg-indigo-50"
-                          :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 hover:text-indigo-600'"
+                          class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-transparent transition hover:bg-primary/20"
+                          :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 hover:text-primary'"
                           v-tooltip="copied === 'client-id-' + client.client_id ? '已复制！' : `复制 Client ID：${client.client_id}`"
                           :aria-label="copied === 'client-id-' + client.client_id ? 'Client ID 已复制' : '复制 Client ID'"
                           @click="copyValue('client-id-' + client.client_id, client.client_id)"
@@ -2556,7 +2498,7 @@ onUnmounted(() => {
                           </span>
                         </div>
                         <div v-if="client.needs_token_regeneration" class="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800" v-tooltip="'原有 Access Token 已失效，需重新生成'">
-                          <span>⚠️ 需重签 Token</span>
+                          <span>需重签 Token</span>
                         </div>
                       </div>
                     </td>
@@ -2564,7 +2506,7 @@ onUnmounted(() => {
                     <!-- Scope 授权 -->
                     <td class="px-4 py-3.5 align-middle">
                       <div class="max-w-[180px]">
-                        <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                        <span class="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
                           {{ client.allowed_scopes.length }} 项已授权
                         </span>
                         <div class="mt-1 truncate text-[11px] text-slate-500" v-tooltip="client.allowed_scopes.join('、')">
@@ -2639,7 +2581,7 @@ onUnmounted(() => {
                         <button
                           v-if="canIssueToken"
                           type="button"
-                          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
                           :disabled="client.status !== 'active' || !client.allowed_scopes.length"
                           :aria-label="`生成 MCP Access Token`"
                           v-tooltip="'生成 MCP Access Token'"
@@ -2650,13 +2592,13 @@ onUnmounted(() => {
                         <button
                           v-if="canReadClients"
                           type="button"
-                          class="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          class="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary hover:bg-primary/20"
                           :aria-label="`Token 管理，共 ${client.token_total_count || 0} 个`"
                           v-tooltip="`Token 管理 · 共 ${client.token_total_count || 0} 个`"
                           @click="openTokenDetails(client)"
                         >
                           <QueueListIcon class="h-4 w-4" aria-hidden="true" />
-                          <span class="absolute -right-1 -top-1 inline-flex min-w-4 items-center justify-center rounded-full border border-white bg-indigo-600 px-1 text-[9px] font-bold leading-4 text-white">{{ client.token_total_count || 0 }}</span>
+                          <span class="absolute -right-1 -top-1 inline-flex min-w-4 items-center justify-center rounded-full border border-white bg-primary px-1 text-[9px] font-bold leading-4 text-white">{{ client.token_total_count || 0 }}</span>
                         </button>
                         <button
                           type="button"
@@ -2675,10 +2617,10 @@ onUnmounted(() => {
                             class="fixed z-[80] w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl text-left"
                             :style="clientActionMenuStyle"
                           >
-                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
-                            <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
-                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
-                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-primary hover:bg-primary/20" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
+                            <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-primary hover:bg-primary/20" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-primary hover:bg-primary/20" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-primary hover:bg-primary/20" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
                             <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="closeClientActionMenu(); resetSecret(client)">重置 Secret</button>
                             <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="closeClientActionMenu(); removeClient(client)">删除 Client</button>
                             <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 border-t border-slate-100 mt-1" @click="closeClientActionMenu(); openClientDetails(client)">查看权限详情</button>
@@ -2697,7 +2639,7 @@ onUnmounted(() => {
 
       <section v-else-if="activeTab === 'methods' && canReadMethods" class="rounded-2xl bg-white p-4 shadow-sm sm:p-6">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-black">能力与 Scope</h2>
+          <h2 class="text-lg font-semibold">能力与 Scope</h2>
           <span class="text-xs text-slate-500">支持只读 MCP 方法在线探针测试</span>
         </div>
         <div class="mt-4 hidden overflow-x-auto md:block">
@@ -2706,12 +2648,12 @@ onUnmounted(() => {
             <tbody>
               <tr v-for="method in methods" :key="method.name" class="border-b last:border-0">
                 <td class="p-3 font-mono font-bold">{{ method.name }}</td>
-                <td class="p-3 font-mono text-indigo-700">{{ method.scope }}</td>
+                <td class="p-3 font-mono text-primary">{{ method.scope }}</td>
                 <td class="p-3">{{ method.capability_group }}</td>
                 <td class="p-3">必须用户授权</td>
                 <td class="p-3" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</td>
                 <td class="p-3">
-                  <button v-if="method.implemented && method.enabled" type="button" class="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openPlayground(method)">在线调试</button>
+                  <button v-if="method.implemented && method.enabled" type="button" class="rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary hover:bg-primary/20" @click="openPlayground(method)">在线调试</button>
                   <span v-else class="text-xs text-slate-400">—</span>
                 </td>
               </tr>
@@ -2720,9 +2662,9 @@ onUnmounted(() => {
         </div>
         <div class="mt-4 space-y-3 md:hidden">
           <article v-for="method in methods" :key="method.name" class="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-            <div class="break-all font-mono text-sm font-black text-slate-900">{{ method.name }}</div>
+            <div class="break-all font-mono text-sm font-semibold text-slate-900">{{ method.name }}</div>
             <div class="mt-3 flex flex-wrap gap-2 text-xs">
-              <code class="break-all rounded-full bg-indigo-50 px-2.5 py-1 font-bold text-indigo-700">{{ method.scope }}</code>
+              <code class="break-all rounded-full bg-primary/10 px-2.5 py-1 font-bold text-primary">{{ method.scope }}</code>
               <span class="rounded-full bg-slate-200 px-2.5 py-1 font-semibold text-slate-600">{{ method.capability_group }}</span>
             </div>
             <div class="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -2730,7 +2672,7 @@ onUnmounted(() => {
               <span class="font-bold" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</span>
             </div>
             <div v-if="method.implemented && method.enabled" class="mt-3 border-t border-slate-100 pt-2 flex justify-end">
-              <button type="button" class="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openPlayground(method)">在线调试</button>
+              <button type="button" class="rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary hover:bg-primary/20" @click="openPlayground(method)">在线调试</button>
             </div>
           </article>
         </div>
@@ -2739,7 +2681,7 @@ onUnmounted(() => {
       <section v-else-if="activeTab === 'audit' && canReadAudit" class="rounded-2xl bg-white p-6 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 class="text-lg font-black">MCP 入站调用审计</h2>
+            <h2 class="text-lg font-semibold">MCP 入站调用审计</h2>
             <p class="mt-1 text-sm text-slate-500">查看外部系统调用 NanZi Platform MCP 的记录；这里只展示审计字段，不展示 Token、Secret 或原始请求头。</p>
             <p class="mt-1 text-sm text-slate-500">仅展示当前账号发起的 MCP 入站调用记录。</p>
           </div>
@@ -2747,7 +2689,7 @@ onUnmounted(() => {
             <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
             <button
               type="button"
-              class="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+              class="rounded-lg border border-primary/25 bg-white px-3 py-2 text-xs font-bold text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="exportingAudit"
               @click="exportAudit"
             >
@@ -2761,12 +2703,12 @@ onUnmounted(() => {
             <template v-for="item in auditFilterOptions" :key="item.key">
               <span
                 v-if="auditFilters[item.key] && auditFilters[item.key].trim()"
-                class="inline-flex items-center gap-1 rounded-full border border-indigo-200/60 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700"
+                class="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
               >
                 <span>{{ item.label }}: {{ auditFilters[item.key] }}</span>
                 <button
                   type="button"
-                  class="ml-0.5 rounded-full px-1 font-bold text-indigo-500 hover:bg-indigo-200 hover:text-indigo-800"
+                  class="ml-0.5 rounded-full px-1 font-bold text-primary hover:bg-primary/20 hover:text-primary-dark"
                   :aria-label="`清除 ${item.label} 筛选`"
                   @click="removeAuditFilter(item.key)"
                 >×</button>
@@ -2780,7 +2722,7 @@ onUnmounted(() => {
             @click="showAuditFilters = !showAuditFilters"
           >
             <span>{{ showAuditFilters ? '收起筛选' : '展开筛选' }}</span>
-            <span v-if="activeAuditFilterCount" class="rounded-full bg-indigo-600 px-1.5 py-0.2 text-[10px] font-bold text-white">{{ activeAuditFilterCount }}</span>
+            <span v-if="activeAuditFilterCount" class="rounded-full bg-primary px-1.5 py-px text-[10px] font-bold text-white">{{ activeAuditFilterCount }}</span>
           </button>
         </div>
         <div v-if="showAuditFilters" class="mt-3 space-y-3">
@@ -2798,16 +2740,16 @@ onUnmounted(() => {
           <label class="shrink-0 text-xs font-bold text-slate-500">过滤值</label>
           <input v-if="selectedAuditFilterMeta.kind !== 'select'" v-model="selectedAuditFilterValue" :inputmode="selectedAuditFilterMeta.kind === 'number' ? 'numeric' : undefined" class="min-w-56 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm" :class="selectedAuditFilterMeta.key === 'method_name' ? 'font-mono' : ''" :placeholder="selectedAuditFilterMeta.placeholder" @keyup.enter="applyAuditFilters" />
           <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="resetAuditFilters">重置</button>
-          <button type="button" class="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
+          <button type="button" class="shrink-0 rounded-lg bg-primary px-4 py-2.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
           </div>
         </div>
 
-        <div class="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+        <div class="mt-5 rounded-xl border border-primary/25 bg-primary/10 p-4">
           <div class="flex items-center justify-between gap-3">
-            <h3 class="min-w-0 flex-1 text-sm font-black text-slate-800">
+            <h3 class="min-w-0 flex-1 text-sm font-semibold text-slate-800">
               <button
                 type="button"
-                class="flex w-full items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2"
+                class="flex w-full items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
                 aria-controls="audit-trend-content"
                 :aria-expanded="showAuditTrend"
                 @click="showAuditTrend = !showAuditTrend"
@@ -2823,7 +2765,7 @@ onUnmounted(() => {
           <div id="audit-trend-content" v-if="showAuditTrend">
             <div v-if="auditTrend.length" class="mt-4 flex h-28 items-end gap-1 overflow-x-auto">
               <div v-for="item in auditTrend" :key="item.at" class="flex min-w-8 flex-1 flex-col items-center justify-end gap-1" v-tooltip="formatAuditTime(item.at) + '：' + item.total + ' 次'">
-                <div class="flex h-20 w-full items-end"><div class="w-full rounded-t bg-indigo-400 transition-[height]" :style="{ height: trendBarHeight(item.total) }" /></div>
+                <div class="flex h-20 w-full items-end"><div class="w-full rounded-t bg-primary transition-[height]" :style="{ height: trendBarHeight(item.total) }" /></div>
                 <span class="text-[9px] text-slate-400">{{ item.total }}</span>
               </div>
             </div>
@@ -2832,7 +2774,7 @@ onUnmounted(() => {
         </div>
 
         <div class="mt-5 rounded-xl border border-amber-100 bg-amber-50/40 p-4">
-          <h3 class="text-sm font-black text-slate-800">
+          <h3 class="text-sm font-semibold text-slate-800">
             <button
               type="button"
               class="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2"
@@ -2854,7 +2796,7 @@ onUnmounted(() => {
             <div v-else class="mt-3 overflow-x-auto">
               <table class="min-w-[720px] w-full text-left text-xs">
                 <thead class="border-b border-amber-100 text-slate-500"><tr><th class="p-2">时间</th><th class="p-2">事件</th><th class="p-2">Client</th><th class="p-2">用户</th><th class="p-2">结果</th></tr></thead>
-                <tbody><tr v-for="log in securityAuditLogs" :key="log.id" class="border-b border-amber-100/60 last:border-0"><td class="whitespace-nowrap p-2 text-slate-500">{{ formatAuditTime(log.created_at) }}</td><td class="p-2 font-mono text-indigo-700">{{ log.event_type }}</td><td class="p-2 font-mono">{{ log.client_id || '—' }}</td><td class="p-2">{{ log.user_id || log.actor_user_id || '—' }}</td><td class="p-2">{{ log.result_status }}</td></tr></tbody>
+                <tbody><tr v-for="log in securityAuditLogs" :key="log.id" class="border-b border-amber-100/60 last:border-0"><td class="whitespace-nowrap p-2 text-slate-500">{{ formatAuditTime(log.created_at) }}</td><td class="p-2 font-mono text-primary">{{ log.event_type }}</td><td class="p-2 font-mono">{{ log.client_id || '—' }}</td><td class="p-2">{{ log.user_id || log.actor_user_id || '—' }}</td><td class="p-2">{{ log.result_status }}</td></tr></tbody>
               </table>
               <div class="mt-2 flex items-center justify-between text-xs text-slate-500">
                 <span>第 {{ securityAuditPage }} / {{ securityAuditPageCount }} 页</span>
@@ -2876,12 +2818,12 @@ onUnmounted(() => {
               <tr v-for="log in auditLogs" :key="log.id" class="border-b border-slate-100 last:border-0">
                 <td class="p-3 whitespace-nowrap text-xs text-slate-500">{{ formatAuditTime(log.created_at) }}</td>
                 <td class="p-3"><div class="font-bold text-slate-700">{{ log.client_id }}</div><div class="mt-1 text-xs text-slate-500">{{ log.user_id ? `user_id=${log.user_id}` : '历史记录无用户身份' }}</div></td>
-                <td class="p-3 font-mono text-xs font-bold text-indigo-700">{{ log.method_name }}</td>
+                <td class="p-3 font-mono text-xs font-bold text-primary">{{ log.method_name }}</td>
                 <td class="p-3 text-xs text-slate-500"><div v-if="log.agent_id">agent={{ log.agent_id }}</div><div v-if="log.conversation_id">conversation={{ log.conversation_id }}</div><div v-if="log.dataset_id">dataset={{ log.dataset_id }}</div><span v-if="!log.agent_id && !log.conversation_id && !log.dataset_id">—</span></td>
                 <td class="p-3 text-xs text-slate-500"><div>{{ auditAuthTypeLabel(log.auth_type) }}</div><div class="mt-1 max-w-48 break-words text-[11px]">{{ log.scopes.join('、') || '—' }}</div></td>
                 <td class="p-3"><span class="rounded-full px-2 py-1 text-xs font-bold" :class="log.result_status === 'completed' ? 'bg-emerald-100 text-emerald-700' : (log.result_status === 'denied' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')">{{ auditResultLabel(log.result_status) }} {{ log.status_code }}</span><div v-if="log.error_code" class="mt-1 text-xs text-rose-600">{{ log.error_code }}</div></td>
                 <td class="p-3 whitespace-nowrap text-xs text-slate-500">{{ log.latency_ms ?? '—' }}{{ log.latency_ms != null ? ' ms' : '' }}</td>
-                <td class="p-3"><button type="button" class="whitespace-nowrap text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="selectedAudit = log">查看详情</button></td>
+                <td class="p-3"><button type="button" class="whitespace-nowrap text-xs font-bold text-primary hover:text-primary-dark" @click="selectedAudit = log">查看详情</button></td>
               </tr>
             </tbody>
           </table>
@@ -2902,7 +2844,7 @@ onUnmounted(() => {
             <div class="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl bg-white shadow-2xl">
               <header class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-6 py-5">
                 <div class="min-w-0">
-                  <h2 class="text-xl font-black text-slate-800">使用统计</h2>
+                  <h2 class="text-xl font-semibold text-slate-800">使用统计</h2>
                   <p class="mt-1 break-all text-sm text-slate-500">{{ clientUsageTarget.client_name }} · {{ clientUsageTarget.client_id }}</p>
                   <p class="mt-1 text-xs text-slate-400">仅统计当前用户发起的调用</p>
                 </div>
@@ -2919,25 +2861,25 @@ onUnmounted(() => {
               <div v-if="clientUsageLoading" class="px-6 py-16 text-center text-sm text-slate-500">使用统计加载中…</div>
               <div v-else-if="clientUsageError" class="px-6 py-16 text-center">
                 <p class="text-sm text-rose-600">{{ clientUsageError }}</p>
-                <button type="button" class="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700" @click="loadClientUsage">重新加载</button>
+                <button type="button" class="mt-4 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white hover:bg-primary-dark" @click="loadClientUsage">重新加载</button>
               </div>
               <div v-else-if="clientUsage" class="space-y-5 px-6 py-5">
                 <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h17"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-3"/></svg>调用总量</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.total_calls }}</div></div>
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>成功率</div><div class="mt-1 text-lg font-black text-emerald-600">{{ clientUsage.summary.success_rate }}%</div></div>
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>失败 / 拒绝</div><div class="mt-1 text-lg font-black text-rose-600">{{ clientUsage.summary.failed_calls }} / {{ clientUsage.summary.denied_calls }}</div></div>
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>活跃用户</div><div class="mt-1 text-lg font-black text-indigo-600">{{ clientUsage.summary.active_user_count }}</div></div>
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>平均耗时</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.average_latency_ms == null ? '—' : `${clientUsage.summary.average_latency_ms} ms` }}</div></div>
-                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15a8 8 0 1 1 16 0"/><path d="M12 15 16 9"/><path d="M4 19h16"/></svg>P95 耗时</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.p95_latency_ms == null ? '—' : `${clientUsage.summary.p95_latency_ms} ms` }}</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h17"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-3"/></svg>调用总量</div><div class="mt-1 text-lg font-semibold text-slate-800">{{ clientUsage.summary.total_calls }}</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>成功率</div><div class="mt-1 text-lg font-semibold text-emerald-600">{{ clientUsage.summary.success_rate }}%</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>失败 / 拒绝</div><div class="mt-1 text-lg font-semibold text-rose-600">{{ clientUsage.summary.failed_calls }} / {{ clientUsage.summary.denied_calls }}</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>活跃用户</div><div class="mt-1 text-lg font-semibold text-primary">{{ clientUsage.summary.active_user_count }}</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>平均耗时</div><div class="mt-1 text-lg font-semibold text-slate-800">{{ clientUsage.summary.average_latency_ms == null ? '—' : `${clientUsage.summary.average_latency_ms} ms` }}</div></div>
+                  <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15a8 8 0 1 1 16 0"/><path d="M12 15 16 9"/><path d="M4 19h16"/></svg>P95 耗时</div><div class="mt-1 text-lg font-semibold text-slate-800">{{ clientUsage.summary.p95_latency_ms == null ? '—' : `${clientUsage.summary.p95_latency_ms} ms` }}</div></div>
                 </div>
 
                 <div class="grid gap-5 lg:grid-cols-2">
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-black text-slate-800">每日调用趋势</h3><div class="flex gap-2 text-[10px] text-slate-500"><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-indigo-400" />成功</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400" />失败</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />拒绝</span></div></div>
+                    <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-semibold text-slate-800">每日调用趋势</h3><div class="flex gap-2 text-[10px] text-slate-500"><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-primary" />成功</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400" />失败</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />拒绝</span></div></div>
                     <div v-if="!clientUsage.daily_trend.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
                     <div v-else ref="clientUsageTrendRef" class="mt-4 flex h-44 items-end gap-1 overflow-x-auto">
                       <div v-for="item in clientUsage.daily_trend" :key="item.date" class="flex min-w-8 flex-none flex-col items-center justify-end gap-1" v-tooltip="`${item.date}：${item.total} 次`">
-                        <div class="flex h-32 w-full items-end"><div class="flex w-full flex-col justify-end overflow-hidden rounded-t transition-[height]" :style="{ height: `${Math.max(item.total ? 8 : 0, Math.round(item.total / clientUsageMax * 120))}px` }"><div class="w-full bg-indigo-400" :style="{ height: `${item.total ? item.completed / item.total * 100 : 0}%` }" /><div class="w-full bg-rose-400" :style="{ height: `${item.total ? item.failed / item.total * 100 : 0}%` }" /><div class="w-full bg-amber-400" :style="{ height: `${item.total ? item.denied / item.total * 100 : 0}%` }" /></div></div>
+                        <div class="flex h-32 w-full items-end"><div class="flex w-full flex-col justify-end overflow-hidden rounded-t transition-[height]" :style="{ height: `${Math.max(item.total ? 8 : 0, Math.round(item.total / clientUsageMax * 120))}px` }"><div class="w-full bg-primary" :style="{ height: `${item.total ? item.completed / item.total * 100 : 0}%` }" /><div class="w-full bg-rose-400" :style="{ height: `${item.total ? item.failed / item.total * 100 : 0}%` }" /><div class="w-full bg-amber-400" :style="{ height: `${item.total ? item.denied / item.total * 100 : 0}%` }" /></div></div>
                         <span class="text-[10px] text-slate-500">{{ item.total }}</span><span class="text-[9px] text-slate-400">{{ item.date.slice(5) }}</span>
                       </div>
                     </div>
@@ -2945,35 +2887,35 @@ onUnmounted(() => {
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="text-sm font-black text-slate-800">按方法分布</h3>
+                    <h3 class="text-sm font-semibold text-slate-800">按方法分布</h3>
                     <div v-if="!clientUsage.method_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
                     <div v-else class="mt-4 space-y-3">
-                      <div v-for="item in clientUsage.method_distribution" :key="item.name"><div class="flex items-center justify-between gap-3 text-xs"><code class="min-w-0 break-all font-bold text-indigo-700">{{ item.name }}</code><span class="shrink-0 text-slate-500">{{ item.total }} 次 · {{ item.success_rate }}%</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-indigo-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div>
+                      <div v-for="item in clientUsage.method_distribution" :key="item.name"><div class="flex items-center justify-between gap-3 text-xs"><code class="min-w-0 break-all font-bold text-primary">{{ item.name }}</code><span class="shrink-0 text-slate-500">{{ item.total }} 次 · {{ item.success_rate }}%</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-primary" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div>
                     </div>
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="text-sm font-black text-slate-800">结果状态分布</h3>
+                    <h3 class="text-sm font-semibold text-slate-800">结果状态分布</h3>
                     <div v-if="!clientUsage.status_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
                     <div v-else class="mt-4 space-y-3"><div v-for="item in clientUsage.status_distribution" :key="item.name"><div class="flex items-center justify-between text-xs"><span class="font-bold text-slate-700">{{ usageStatusLabel(item.name) }}</span><span class="text-slate-500">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-emerald-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div></div>
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="text-sm font-black text-slate-800">认证类型分布</h3>
+                    <h3 class="text-sm font-semibold text-slate-800">认证类型分布</h3>
                     <div v-if="!clientUsage.auth_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
-                    <div v-else class="mt-4 space-y-3"><div v-for="item in clientUsage.auth_distribution" :key="item.name"><div class="flex items-center justify-between text-xs"><span class="font-bold text-slate-700">{{ usageAuthLabel(item.name) }}</span><span class="text-slate-500">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-purple-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div></div>
+                    <div v-else class="mt-4 space-y-3"><div v-for="item in clientUsage.auth_distribution" :key="item.name"><div class="flex items-center justify-between text-xs"><span class="font-bold text-slate-700">{{ usageAuthLabel(item.name) }}</span><span class="text-slate-500">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-primary" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div></div>
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="text-sm font-black text-slate-800">用户调用排行</h3>
+                    <h3 class="text-sm font-semibold text-slate-800">用户调用排行</h3>
                     <div v-if="!clientUsage.user_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
-                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.user_distribution.slice(0, 10)" :key="item.user_id" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 truncate text-slate-700" v-tooltip="`${item.display_name} · user_id=${item.user_id}`"><span class="font-bold">{{ item.display_name }}</span><span v-if="item.real_name && item.user_name" class="ml-1 text-slate-400">@{{ item.user_name }}</span></span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div></div>
+                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.user_distribution.slice(0, 10)" :key="item.user_id" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 truncate text-slate-700" v-tooltip="`${item.display_name} · user_id=${item.user_id}`"><span class="font-bold">{{ item.display_name }}</span><span v-if="item.real_name && item.user_name" class="ml-1 text-slate-400">@{{ item.user_name }}</span></span><span class="shrink-0 font-bold text-primary">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div></div>
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="text-sm font-black text-slate-800">资源关联排行</h3>
+                    <h3 class="text-sm font-semibold text-slate-800">资源关联排行</h3>
                     <div v-if="!clientUsage.resource_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
-                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.resource_distribution.slice(0, 10)" :key="`${item.type}-${item.name}`" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 break-all text-slate-700"><span class="mr-1 rounded bg-indigo-50 px-1.5 py-0.5 font-bold text-indigo-700">{{ item.type }}</span>{{ usageResourceLabel(item.name) }}</span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次</span></div></div>
+                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.resource_distribution.slice(0, 10)" :key="`${item.type}-${item.name}`" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 break-all text-slate-700"><span class="mr-1 rounded bg-primary/10 px-1.5 py-0.5 font-bold text-primary">{{ item.type }}</span>{{ usageResourceLabel(item.name) }}</span><span class="shrink-0 font-bold text-primary">{{ item.total }} 次</span></div></div>
                   </section>
                 </div>
               </div>
@@ -2992,7 +2934,7 @@ onUnmounted(() => {
             <div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
               <div class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black text-slate-800">权限详情</h2>
+                  <h2 class="text-xl font-semibold text-slate-800">权限详情</h2>
                   <p class="mt-1 text-sm text-slate-500">{{ clientDetails.client_name }} · {{ clientDetails.client_id }}</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭权限详情" @click="clientDetails = null">×</button>
@@ -3006,18 +2948,18 @@ onUnmounted(() => {
                 <div class="rounded-xl border border-slate-200 p-4">
                   <div class="text-xs font-bold text-slate-400">允许 Scope（{{ clientDetails.allowed_scopes.length }} 项）</div>
                   <div class="mt-2 flex flex-wrap gap-2">
-                    <code v-for="scope in clientDetails.allowed_scopes" :key="scope" class="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700">{{ scope }}</code>
+                    <code v-for="scope in clientDetails.allowed_scopes" :key="scope" class="rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-bold text-primary">{{ scope }}</code>
                     <span v-if="!clientDetails.allowed_scopes.length" class="text-xs text-slate-500">未配置</span>
                   </div>
                 </div>
-                <div class="rounded-xl border border-blue-100 bg-blue-50 p-4">
-                  <div class="text-xs font-bold text-blue-700">资源权限</div>
-                  <p class="mt-2 text-sm leading-6 text-blue-950">智能体、知识库、元数据集等资源，按当前登录用户权限与 Client 白名单的交集判断。</p>
-                  <p class="mt-2 text-xs leading-5 text-blue-800">未配置白名单时跟随用户权限；配置空白名单时，该 Client 对此类资源没有访问权限。</p>
+                <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
+                  <div class="text-xs font-bold text-primary-dark">资源权限</div>
+                  <p class="mt-2 text-sm leading-6 text-primary-dark">智能体、知识库、元数据集等资源，按当前登录用户权限与 Client 白名单的交集判断。</p>
+                  <p class="mt-2 text-xs leading-5 text-primary-dark">未配置白名单时跟随用户权限；配置空白名单时，该 Client 对此类资源没有访问权限。</p>
                 </div>
               </div>
               <div class="flex justify-end border-t border-slate-100 px-6 py-4">
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="clientDetails = null">知道了</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="clientDetails = null">知道了</button>
               </div>
             </div>
           </div>
@@ -3034,7 +2976,7 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">创建 Confidential Client</h2>
+                  <h2 class="text-xl font-semibold">创建 Confidential Client</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">先配置外部系统允许使用的授权方式和能力范围。</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭创建 Client 弹框" @click="showCreate = false">×</button>
@@ -3045,11 +2987,11 @@ onUnmounted(() => {
                   <label class="block text-sm font-bold">接入名称<input v-model="form.client_name" class="mt-2 w-full rounded-xl border border-slate-200 p-3" placeholder="例如 CRM 系统" /></label>
                   <div>
                     <div class="text-sm font-bold">允许授权模式</div>
-                    <div class="mt-2 flex items-start gap-2 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm"><span class="mt-0.5 text-indigo-600">✓</span><span><span class="block font-bold text-indigo-950">用户授权（Authorization Code + PKCE）</span><span class="mt-1 block text-xs font-normal text-indigo-800">唯一授权方式；Access Token 始终绑定完成 NanZi 登录授权的用户。</span></span></div>
+                    <div class="mt-2 flex items-start gap-2 rounded-xl border border-primary/25 bg-primary/10 p-3 text-sm"><span class="mt-0.5 text-primary">✓</span><span><span class="block font-bold text-primary-dark">用户授权（Authorization Code + PKCE）</span><span class="mt-1 block text-xs font-normal text-primary">唯一授权方式；Access Token 始终绑定完成 NanZi 登录授权的用户。</span></span></div>
                   </div>
                   <label class="block text-sm font-bold">Redirect URI（每行一个）<span class="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">选填</span><textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">未填写时使用默认回调地址 https://localhost/oauth/callback；人工手动生成 Token 可留空。程序 OAuth 使用真实业务回调时，请填写并保持地址完全一致。</span></label>
                   <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm font-bold text-slate-700">
-                    <input v-model="form.is_shared" type="checkbox" class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                    <input v-model="form.is_shared" type="checkbox" class="h-4 w-4 rounded text-primary focus:ring-primary/25" />
                     <div>
                       <span>全员共享 Client</span>
                       <span class="mt-0.5 block text-xs font-normal text-slate-500">勾选后，平台其他用户在外部 Client 列表中可见，并能为该 Client 签发个人 Token。</span>
@@ -3061,7 +3003,7 @@ onUnmounted(() => {
                         <div class="text-sm font-bold">允许 Scope</div>
                         <p class="mt-1 text-xs font-normal text-slate-500">勾选后，外部系统只能申请这些能力。</p>
                       </div>
-                      <span class="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{{ form.allowed_scopes.length }} 项</span>
+                      <span class="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{{ form.allowed_scopes.length }} 项</span>
                     </div>
                     <div class="mt-2 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div class="grid gap-2 sm:grid-cols-2">
@@ -3069,13 +3011,13 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </div>
-                  <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-blue-900">创建 Client 后，可在 Client 卡片的资源访问区域配置白名单；实际调用仍会按 Access Token 代表的当前用户权限取交集。</div>
+                  <div class="rounded-xl border border-primary/10 bg-primary/5 p-4 text-xs leading-5 text-primary-dark">创建 Client 后，可在 Client 卡片的资源访问区域配置白名单；实际调用仍会按 Access Token 代表的当前用户权限取交集。</div>
                 </div>
               </div>
 
               <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
                 <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="showCreate = false">取消</button>
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !form.client_name || !form.allowed_grant_types.length || !form.allowed_scopes.length" @click="createClient">创建并显示 Secret</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !form.client_name || !form.allowed_grant_types.length || !form.allowed_scopes.length" @click="createClient">创建并显示 Secret</button>
               </div>
             </div>
           </div>
@@ -3092,7 +3034,7 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">编辑 Client Scope</h2>
+                  <h2 class="text-xl font-semibold">编辑 Client Scope</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">调整这个 Client 可以申请的 MCP 方法范围。</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑 Scope 弹框" :disabled="saving" @click="closeClientScopeEdit">×</button>
@@ -3101,7 +3043,7 @@ onUnmounted(() => {
               <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                 <div class="space-y-4">
                   <div class="rounded-xl bg-slate-50 p-4">
-                    <div class="text-sm font-black text-slate-800">{{ clientScopeEditTarget.client_name }}</div>
+                    <div class="text-sm font-semibold text-slate-800">{{ clientScopeEditTarget.client_name }}</div>
                     <code class="mt-1 block break-all text-xs text-slate-500">{{ clientScopeEditTarget.client_id }}</code>
                   </div>
                   <div>
@@ -3110,7 +3052,7 @@ onUnmounted(() => {
                         <div class="text-sm font-bold">允许 Scope</div>
                         <p class="mt-1 text-xs text-slate-500">外部系统只能在这里勾选的 Scope 中申请用户 Token。</p>
                       </div>
-                      <span class="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{{ clientScopeEditForm.scopes.length }} 项</span>
+                      <span class="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{{ clientScopeEditForm.scopes.length }} 项</span>
                     </div>
                     <div class="mt-2 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div class="grid gap-2 sm:grid-cols-2">
@@ -3130,7 +3072,7 @@ onUnmounted(() => {
 
               <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
                 <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="closeClientScopeEdit">取消</button>
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !clientScopeEditForm.scopes.length" @click="saveClientScopes">{{ saving ? '保存中…' : '保存 Scope' }}</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !clientScopeEditForm.scopes.length" @click="saveClientScopes">{{ saving ? '保存中…' : '保存 Scope' }}</button>
               </div>
             </div>
           </div>
@@ -3147,7 +3089,7 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">编辑{{ resourceWhitelistModal.title }}</h2>
+                  <h2 class="text-xl font-semibold">编辑{{ resourceWhitelistModal.title }}</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">{{ resourceWhitelistModal.target.client_name }} · 当前用户可访问资源候选</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭资源白名单弹框" :disabled="saving" @click="() => closeResourceWhitelistModal()">×</button>
@@ -3156,19 +3098,19 @@ onUnmounted(() => {
               <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                 <div class="space-y-4">
                   <div class="grid gap-2 sm:grid-cols-2">
-                    <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm">
-                      <input :checked="resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-indigo-600 focus:ring-indigo-500" @change="resourceWhitelistModal.unrestricted = true" />
-                      <span><span class="block font-bold text-indigo-950">跟随用户权限（推荐）</span><span class="mt-1 block text-xs font-normal text-indigo-800">不额外限制 Client；每个用户仍只能访问自己的授权资源。</span></span>
+                    <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-primary/25 bg-primary/10 p-4 text-sm">
+                      <input :checked="resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-primary focus:ring-primary/25" @change="resourceWhitelistModal.unrestricted = true" />
+                      <span><span class="block font-bold text-primary-dark">跟随用户权限（推荐）</span><span class="mt-1 block text-xs font-normal text-primary">不额外限制 Client；每个用户仍只能访问自己的授权资源。</span></span>
                     </label>
                     <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm">
-                      <input :checked="!resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-indigo-600 focus:ring-indigo-500" @change="resourceWhitelistModal.unrestricted = false" />
+                      <input :checked="!resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-primary focus:ring-primary/25" @change="resourceWhitelistModal.unrestricted = false" />
                       <span><span class="block font-bold text-slate-800">仅允许指定资源</span><span class="mt-1 block text-xs font-normal text-slate-500">只允许下方勾选的资源；一个都不选则全部禁止。</span></span>
                     </label>
                   </div>
                   <div class="flex flex-wrap items-center gap-2">
                     <input type="search" v-model="resourceWhitelistModal.search" class="min-w-0 flex-1 rounded-lg border border-slate-200 pl-3 pr-7 py-2 text-sm" placeholder="搜索资源名称或 ID" @keyup.enter="loadResourceOptions()" />
                     <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="loadResourceOptions()">查询</button>
-                    <button type="button" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50" :disabled="resourceWhitelistModal.unrestricted" @click="selectAllCurrentResourceOptions">勾选当前搜索结果</button>
+                    <button type="button" class="rounded-lg border border-primary/25 bg-primary/10 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50" :disabled="resourceWhitelistModal.unrestricted" @click="selectAllCurrentResourceOptions">勾选当前搜索结果</button>
                     <button type="button" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100" @click="restoreAllAccessibleResources">取消限制，跟随用户权限</button>
                   </div>
                   <div class="flex items-center justify-between text-xs text-slate-500">
@@ -3179,50 +3121,52 @@ onUnmounted(() => {
                     <div v-if="resourceWhitelistModal.loading && !resourceWhitelistModal.options.length" class="py-8 text-center text-xs text-slate-400">加载中…</div>
                     <div v-else-if="!resourceWhitelistModal.options.length" class="py-8 text-center text-xs text-slate-400">当前用户暂无可选资源</div>
                     <label v-for="item in resourceWhitelistModal.options" v-else :key="item.id" class="flex items-start gap-3 rounded-lg bg-white p-3 text-xs shadow-sm" :class="resourceWhitelistModal.unrestricted ? 'opacity-60' : ''">
-                      <input v-model="resourceWhitelistModal.selectedIds" type="checkbox" :value="item.id" :disabled="resourceWhitelistModal.unrestricted" class="mt-0.5 h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                      <input v-model="resourceWhitelistModal.selectedIds" type="checkbox" :value="item.id" :disabled="resourceWhitelistModal.unrestricted" class="mt-0.5 h-4 w-4 rounded text-primary focus:ring-primary/25" />
                       <span class="min-w-0"><span class="block font-bold text-slate-700">{{ item.name }}</span><code class="mt-1 block break-all text-[11px] text-slate-400">{{ item.id }}</code><span v-if="item.description" class="mt-1 block text-slate-500">{{ item.description }}</span></span>
                     </label>
-                    <button v-if="resourceWhitelistModal.hasMore" type="button" class="mt-3 w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50" :disabled="resourceWhitelistModal.loading" @click="loadMoreResourceOptions">{{ resourceWhitelistModal.loading ? '加载中…' : '加载更多' }}</button>
+                    <button v-if="resourceWhitelistModal.hasMore" type="button" class="mt-3 w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-bold text-primary hover:bg-primary/20 disabled:opacity-50" :disabled="resourceWhitelistModal.loading" @click="loadMoreResourceOptions">{{ resourceWhitelistModal.loading ? '加载中…' : '加载更多' }}</button>
                   </div>
                 </div>
               </div>
 
               <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
                 <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50 disabled:opacity-50" :disabled="saving" @click="() => closeResourceWhitelistModal()">取消</button>
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="saveResourceWhitelist">{{ saving ? '保存中…' : '保存白名单' }}</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="saveResourceWhitelist">{{ saving ? '保存中…' : '保存白名单' }}</button>
               </div>
             </div>
           </div>
         </div>
       </Teleport>
 
-      <div
-        v-if="resourceWhitelistConfirm.visible"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="resource-whitelist-confirm-title"
-      >
-        <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl">
-          <div class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
-            <div>
-              <h2 id="resource-whitelist-confirm-title" class="text-lg font-black text-slate-800">确认禁止全部资源</h2>
-              <p class="mt-1 text-sm text-slate-500">正在设置：{{ resourceWhitelistConfirm.resourceLabel }}</p>
+      <Teleport to="body">
+        <div
+          v-if="resourceWhitelistConfirm.visible"
+          class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="resource-whitelist-confirm-title"
+        >
+          <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 id="resource-whitelist-confirm-title" class="text-lg font-semibold text-slate-800">确认禁止全部资源</h2>
+                <p class="mt-1 text-sm text-slate-500">正在设置：{{ resourceWhitelistConfirm.resourceLabel }}</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭确认弹框" @click="cancelResourceWhitelistConfirm">×</button>
             </div>
-            <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭确认弹框" @click="cancelResourceWhitelistConfirm">×</button>
-          </div>
-          <div class="px-6 py-5">
-            <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-900">
-              确定禁止该 Client 访问全部{{ resourceWhitelistConfirm.resourceLabel }}吗？
-              <div class="mt-1 text-xs text-rose-700">保存后，该 Client 将无法访问此类资源；如需恢复，可选择“跟随用户权限”。</div>
+            <div class="px-6 py-5">
+              <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-900">
+                确定禁止该 Client 访问全部{{ resourceWhitelistConfirm.resourceLabel }}吗？
+                <div class="mt-1 text-xs text-rose-700">保存后，该 Client 将无法访问此类资源；如需恢复，可选择“跟随用户权限”。</div>
+              </div>
             </div>
-          </div>
-          <div class="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
-            <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="cancelResourceWhitelistConfirm">取消</button>
-            <button type="button" class="rounded-xl bg-rose-600 px-5 py-2 font-bold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="confirmResourceWhitelistSave">{{ saving ? '保存中…' : '确认禁止' }}</button>
+            <div class="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="cancelResourceWhitelistConfirm">取消</button>
+              <button type="button" class="rounded-xl bg-rose-600 px-5 py-2 font-bold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="confirmResourceWhitelistSave">{{ saving ? '保存中…' : '确认禁止' }}</button>
+            </div>
           </div>
         </div>
-      </div>
+      </Teleport>
 
       <Teleport to="body">
         <div
@@ -3234,20 +3178,20 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">{{ tokenWizardStep === 1 ? '生成 MCP Access Token' : 'Token 已生成，复制配置' }}</h2>
+                  <h2 class="text-xl font-semibold">{{ tokenWizardStep === 1 ? '生成 MCP Access Token' : 'Token 已生成，复制配置' }}</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">{{ tokenWizardStep === 1 ? '生成后只能代表当前登录用户，不支持选择或代发其他用户身份。' : '可以单独复制 Access Token，也可以复制完整 MCP JSON 直接粘贴到客户端。' }}</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭生成用户 Token 弹框" @click="closeTokenWizard">×</button>
               </div>
               <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                 <div class="mb-5 flex items-center gap-2 text-xs font-bold">
-                  <span class="rounded-full px-3 py-1.5" :class="tokenWizardStep === 1 ? 'bg-indigo-600 text-white' : 'bg-emerald-100 text-emerald-700'">1. 配置并生成</span>
+                  <span class="rounded-full px-3 py-1.5" :class="tokenWizardStep === 1 ? 'bg-primary text-white' : 'bg-emerald-100 text-emerald-700'">1. 配置并生成</span>
                   <span class="h-px w-8 bg-slate-200" />
-                  <span class="rounded-full px-3 py-1.5" :class="tokenWizardStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'">2. 复制并使用</span>
+                  <span class="rounded-full px-3 py-1.5" :class="tokenWizardStep === 2 ? 'bg-primary text-white' : 'bg-slate-100 text-slate-400'">2. 复制并使用</span>
                 </div>
 
                 <div v-if="tokenWizardStep === 1" class="space-y-4">
-                  <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                  <div class="rounded-xl border border-primary/10 bg-primary/5 p-4 text-sm leading-6 text-primary-dark">
                     <div class="font-bold">当前登录用户身份</div>
                     <p class="mt-1">后端从当前登录会话读取 user_id。管理员登录生成管理员 Token，demo 用户登录生成 demo 用户 Token。</p>
                   </div>
@@ -3267,7 +3211,7 @@ onUnmounted(() => {
                         <div class="text-sm font-bold">本次允许的 Scope</div>
                         <p class="mt-1 text-xs font-normal text-slate-500">只能从当前 Client 已配置的 Scope 中选择。</p>
                       </div>
-                      <span class="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{{ tokenForm.scopes.length }} 项</span>
+                      <span class="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{{ tokenForm.scopes.length }} 项</span>
                     </div>
                     <div class="mt-2 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <label v-for="scope in (tokenClient?.allowed_scopes || [])" :key="scope" class="flex items-start gap-2 rounded-lg bg-white p-3 text-xs shadow-sm">
@@ -3287,18 +3231,18 @@ onUnmounted(() => {
                   <div class="rounded-xl border border-slate-200 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div class="font-bold">Access Token</div>
-                      <button type="button" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700" @click="copyValue('access-token', oneTimeAccessToken)">{{ copied === 'access-token' ? '已复制' : '复制 Access Token' }}</button>
+                      <button type="button" class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark" @click="copyValue('access-token', oneTimeAccessToken)">{{ copied === 'access-token' ? '已复制' : '复制 Access Token' }}</button>
                     </div>
                     <code class="mt-3 block max-h-24 overflow-y-auto break-all rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100">{{ oneTimeAccessToken }}</code>
                     <p class="mt-2 text-xs leading-5 text-slate-500">单独调用时使用：<code>Authorization: Bearer &lt;access_token&gt;</code></p>
                   </div>
-                  <div class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <div class="rounded-xl border border-primary/25 bg-primary/10 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div class="font-bold">MCP JSON 配置</div>
                         <p class="mt-1 text-xs text-slate-500">已写入当前 Endpoint 和刚生成的 Token，可直接复制粘贴。</p>
                       </div>
-                      <button type="button" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700" @click="copyGeneratedMcpJson">{{ copied === 'generated-mcp-json' ? '已复制' : '复制 MCP JSON' }}</button>
+                      <button type="button" class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark" @click="copyGeneratedMcpJson">{{ copied === 'generated-mcp-json' ? '已复制' : '复制 MCP JSON' }}</button>
                     </div>
                     <pre class="mt-3 max-h-56 overflow-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>{{ generatedMcpJson }}</code></pre>
                   </div>
@@ -3308,8 +3252,8 @@ onUnmounted(() => {
               <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
                 <button v-if="tokenWizardStep === 1" type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="closeTokenWizard">取消</button>
                 <button v-else type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="tokenWizardStep = 1">上一步</button>
-                <button v-if="tokenWizardStep === 1" type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !tokenForm.scopes.length" @click="issueCurrentUserToken">生成并进入下一步</button>
-                <button v-else type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="closeTokenWizard">完成</button>
+                <button v-if="tokenWizardStep === 1" type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !tokenForm.scopes.length" @click="issueCurrentUserToken">生成并进入下一步</button>
+                <button v-else type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="closeTokenWizard">完成</button>
               </div>
             </div>
           </div>
@@ -3323,7 +3267,7 @@ onUnmounted(() => {
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
                   <div class="flex items-center gap-3">
-                    <h2 class="text-xl font-black">Token 生命周期</h2>
+                    <h2 class="text-xl font-semibold">Token 生命周期</h2>
                     <button
                       v-if="canRevokeAllClientTokens(tokenDetailsClient) && clientTokens.some(t => getTokenStatus(t) === 'active')"
                       type="button"
@@ -3382,14 +3326,6 @@ onUnmounted(() => {
                     </button>
                   </div>
                   <div class="flex flex-wrap items-center gap-2">
-                    <label class="text-xs font-bold text-slate-500">筛选状态</label>
-                    <select v-model="tokenStatusFilter" class="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-600">
-                      <option value="all">全部</option>
-                      <option value="active">有效</option>
-                      <option value="expiring">24 小时内到期</option>
-                      <option value="expired">已过期</option>
-                      <option value="revoked">已撤销</option>
-                    </select>
                     <button
                       v-if="selectedDeletableTokens.length"
                       type="button"
@@ -3420,7 +3356,7 @@ onUnmounted(() => {
                         <td class="p-3"><input type="checkbox" :checked="selectedTokenIds.includes(token.id)" :disabled="!canDeleteClientToken(token) || tokenDeleteLoading" :aria-label="`选择 Token ${token.id}`" @change="toggleTokenSelection(token)" /></td>
                         <td class="p-3">
                           <div class="flex max-w-[200px] flex-wrap gap-1">
-                            <span v-for="sc in (token.scopes || [])" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>
+                            <span v-for="sc in (token.scopes || [])" :key="sc" class="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{{ sc }}</span>
                             <span v-if="!(token.scopes || []).length" class="text-slate-400">—</span>
                           </div>
                         </td>
@@ -3447,7 +3383,7 @@ onUnmounted(() => {
                   </table>
                 </div>
               </div>
-              <div class="flex shrink-0 justify-end border-t border-slate-100 px-6 py-4"><button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white" @click="showTokenDetails = false">关闭</button></div>
+              <div class="flex shrink-0 justify-end border-t border-slate-100 px-6 py-4"><button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white" @click="showTokenDetails = false">关闭</button></div>
             </div>
           </div>
         </div>
@@ -3464,7 +3400,7 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black text-slate-800">编辑 Client 基本信息</h2>
+                  <h2 class="text-xl font-semibold text-slate-800">编辑 Client 基本信息</h2>
                   <p class="mt-1 text-xs text-slate-500">{{ clientEditTarget.client_name }} · {{ clientEditTarget.client_id }}</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑" :disabled="saving" @click="() => closeClientEdit()">×</button>
@@ -3481,7 +3417,7 @@ onUnmounted(() => {
                     <span class="mt-1 block text-xs font-normal text-slate-500">外部系统 OAuth 回调地址，需保持精确匹配。</span>
                   </label>
                   <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm font-bold text-slate-700">
-                    <input v-model="clientEditForm.is_shared" type="checkbox" class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                    <input v-model="clientEditForm.is_shared" type="checkbox" class="h-4 w-4 rounded text-primary focus:ring-primary/25" />
                     <div>
                       <span>全员共享 Client</span>
                       <span class="mt-0.5 block text-xs font-normal text-slate-500">勾选后，平台其他普通用户也能复用该 Client 并生成个人 Token。</span>
@@ -3491,7 +3427,7 @@ onUnmounted(() => {
               </div>
               <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
                 <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" :disabled="saving" @click="() => closeClientEdit()">取消</button>
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="saving || !clientEditForm.client_name.trim()" @click="saveClientEdit">{{ saving ? '保存中…' : '保存修改' }}</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:opacity-50" :disabled="saving || !clientEditForm.client_name.trim()" @click="saveClientEdit">{{ saving ? '保存中…' : '保存修改' }}</button>
               </div>
             </div>
           </div>
@@ -3509,7 +3445,7 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black text-slate-800">已授权的外部应用 (OAuth Grants)</h2>
+                  <h2 class="text-xl font-semibold text-slate-800">已授权的外部应用 (OAuth Grants)</h2>
                   <p class="mt-1 text-xs text-slate-500">展示当前账号已同意授权访问 NanZi 平台的外部系统</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭授权管理" @click="showGrants = false">×</button>
@@ -3537,7 +3473,7 @@ onUnmounted(() => {
                         </td>
                         <td class="p-3">
                           <div class="flex max-w-[220px] flex-wrap gap-1">
-                            <span v-for="sc in grant.scopes" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>
+                            <span v-for="sc in grant.scopes" :key="sc" class="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{{ sc }}</span>
                           </div>
                         </td>
                         <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(grant.consented_at) }}</td>
@@ -3564,7 +3500,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="flex shrink-0 justify-end border-t border-slate-100 px-6 py-4">
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="showGrants = false">关闭</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="showGrants = false">关闭</button>
               </div>
             </div>
           </div>
@@ -3583,8 +3519,8 @@ onUnmounted(() => {
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
                   <div class="flex items-center gap-2">
-                    <h2 class="text-xl font-black text-slate-800">MCP 在线探针调试</h2>
-                    <span class="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs font-bold text-indigo-700">{{ playgroundMethod.name }}</span>
+                    <h2 class="text-xl font-semibold text-slate-800">MCP 在线探针调试</h2>
+                    <span class="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-bold text-primary">{{ playgroundMethod.name }}</span>
                   </div>
                   <p class="mt-1 text-xs text-slate-500">发起真实的 JSON-RPC 2.0 探针调用并测试只读方法回显，实时检验鉴权与数据响应。</p>
                 </div>
@@ -3594,7 +3530,7 @@ onUnmounted(() => {
                 <div class="grid gap-3 sm:grid-cols-3">
                   <div class="rounded-xl bg-slate-50 p-3">
                     <span class="text-xs font-bold text-slate-400">所需 Scope</span>
-                    <div class="mt-1 font-mono text-xs font-bold text-indigo-700">{{ playgroundMethod.scope }}</div>
+                    <div class="mt-1 font-mono text-xs font-bold text-primary">{{ playgroundMethod.scope }}</div>
                   </div>
                   <div class="rounded-xl bg-slate-50 p-3">
                     <span class="text-xs font-bold text-slate-400">所属能力组</span>
@@ -3619,7 +3555,7 @@ onUnmounted(() => {
                     <div class="min-w-[240px] flex-1">
                       <select
                         v-model="playgroundToken"
-                        class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
+                        class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 outline-none transition focus:border-primary focus:bg-white focus:ring-1 focus:ring-primary/25 disabled:bg-gray-100"
                       >
                         <option value="">-- 选择有效状态的 Token 或下方手动粘贴 --</option>
                         <option
@@ -3645,7 +3581,7 @@ onUnmounted(() => {
                   <div class="mt-2">
                     <input
                       v-model="playgroundToken"
-                      class="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-mono text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                      class="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-mono text-xs outline-none focus:border-primary focus:ring-1 focus:ring-primary/25"
                       placeholder="或在此手动粘贴你已生成的 MCP Access Token"
                     />
                   </div>
@@ -3658,7 +3594,7 @@ onUnmounted(() => {
                       :key="tok.token"
                       type="button"
                       class="inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-mono text-[11px] transition"
-                      :class="playgroundToken === tok.token ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-bold' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'"
+                      :class="playgroundToken === tok.token ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-primary/25 hover:bg-primary/20'"
                       v-tooltip="tok.token"
                       @click="playgroundToken = tok.token"
                     >
@@ -3678,7 +3614,7 @@ onUnmounted(() => {
                       </span>
                       <button
                         type="button"
-                        class="text-xs font-bold text-indigo-700 underline hover:text-indigo-900"
+                        class="text-xs font-bold text-primary underline hover:text-primary-dark"
                         @click="playgroundMethod = null; activeTab = 'clients'"
                       >
                         前往「外部 Client」签发 ➔
@@ -3698,7 +3634,7 @@ onUnmounted(() => {
                   <textarea
                     v-model="playgroundParams"
                     rows="4"
-                    class="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-900 p-3 font-mono text-xs text-slate-100 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    class="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-900 p-3 font-mono text-xs text-slate-100 outline-none focus:border-primary focus:ring-1 focus:ring-primary/25"
                     placeholder="{}"
                   />
                 </div>
@@ -3721,7 +3657,7 @@ onUnmounted(() => {
                 <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="showPlayground = false">关闭</button>
                 <button
                   type="button"
-                  class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark disabled:opacity-50"
                   :disabled="playgroundTesting"
                   @click="executePlaygroundTest"
                 >
@@ -3743,7 +3679,7 @@ onUnmounted(() => {
             <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
               <div class="flex items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">{{ clientConfirmAction === 'reset-secret' ? '确认重置 Client Secret' : (clientConfirmAction === 'delete' ? '确认删除 Client' : '确认停用 Client') }}</h2>
+                  <h2 class="text-xl font-semibold">{{ clientConfirmAction === 'reset-secret' ? '确认重置 Client Secret' : (clientConfirmAction === 'delete' ? '确认删除 Client' : '确认停用 Client') }}</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">请确认你了解本次操作对已有凭证的影响。</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭确认弹框" :disabled="saving" @click="closeClientConfirm">×</button>
@@ -3785,24 +3721,24 @@ onUnmounted(() => {
             <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">如何使用 MCP Token？</h2>
+                  <h2 class="text-xl font-semibold">如何使用 MCP Token？</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">人工登录可直接生成用户 Token；程序化系统使用 OAuth2 Authorization Code + PKCE 获取用户 Token。</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭 Token 使用帮助" @click="showTokenHelp = false">×</button>
               </div>
               <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm leading-6 text-slate-600">
                 <div class="space-y-4">
-                  <section class="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
-                    <h3 class="font-black text-indigo-950">方式一：人工登录后直接生成</h3>
+                  <section class="rounded-xl border border-primary/25 bg-primary/10 p-4">
+                    <h3 class="font-semibold text-primary-dark">方式一：人工登录后直接生成</h3>
                     <ol class="mt-2 list-decimal space-y-1 pl-5">
                       <li>使用目标用户登录 NanZi，进入“外部 Client”，点击“生成 MCP Access Token”。</li>
                       <li>选择有效期和 Scope，生成结果只显示本次，请复制保存。</li>
                       <li>调用 MCP 时，把它放到请求头：<code>Authorization: Bearer &lt;access_token&gt;</code>。</li>
                     </ol>
-                    <p class="mt-2 text-xs text-indigo-800">这个 Token 的 user_id 由当前登录会话确定；页面没有用户选择框，因此不能用管理员页面替 demo 用户发 Token。</p>
+                    <p class="mt-2 text-xs text-primary">这个 Token 的 user_id 由当前登录会话确定；页面没有用户选择框，因此不能用管理员页面替 demo 用户发 Token。</p>
                   </section>
                   <section class="rounded-xl border border-slate-200 p-4">
-                    <h3 class="font-black text-slate-900">方式二：程序化用户授权（OAuth2）</h3>
+                    <h3 class="font-semibold text-slate-900">方式二：程序化用户授权（OAuth2）</h3>
                     <p class="mt-1">CRM 或门户系统先引导用户打开 NanZi 授权页并登录。下面两个变量不是服务台生成的，而是你自己的授权流程产生的：<code class="rounded bg-slate-100 px-1">code_verifier</code> 是你在跳转前生成的随机串（只存业务后端），<code class="rounded bg-slate-100 px-1">code</code> 是用户点同意后 NanZi 302 回你登记的回调地址时带回来的。</p>
                     <p class="mt-2 font-bold text-slate-800">第一步：把用户跳到授权页（PKCE 必填）</p>
                     <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>GET {{ overview.authorization_server || '/oauth' }}/oauth/authorize
@@ -3829,7 +3765,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="flex shrink-0 justify-end border-t border-slate-100 bg-white px-6 py-4">
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="showTokenHelp = false">知道了</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="showTokenHelp = false">知道了</button>
               </div>
             </div>
           </div>
@@ -3846,17 +3782,17 @@ onUnmounted(() => {
             <div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
               <div class="flex items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h2 class="text-xl font-black">{{ endpointHelp.label }} 是什么？</h2>
+                  <h2 class="text-xl font-semibold">{{ endpointHelp.label }} 是什么？</h2>
                   <p class="mt-1 text-xs font-normal text-slate-500">{{ endpointHelp.description }}</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" :aria-label="`关闭${endpointHelp.label}说明`" @click="showEndpointHelp = false">×</button>
               </div>
               <div class="space-y-4 px-6 py-5 text-sm leading-6 text-slate-600">
-                <div class="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
-                  <div class="font-bold text-indigo-950">当前地址</div>
+                <div class="rounded-xl border border-primary/25 bg-primary/10 p-4">
+                  <div class="font-bold text-primary-dark">当前地址</div>
                   <div class="mt-2 flex items-start gap-2">
                     <code class="min-w-0 flex-1 break-all rounded-lg bg-white p-3 text-xs text-slate-700">{{ endpointHelp.value || '启动并完成配置后显示' }}</code>
-                    <button v-if="endpointHelp.value" type="button" class="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700" @click="copyValue(`help-${endpointHelp.key}`, endpointHelp.value)">{{ copied === `help-${endpointHelp.key}` ? '已复制' : '复制地址' }}</button>
+                    <button v-if="endpointHelp.value" type="button" class="shrink-0 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white hover:bg-primary-dark" @click="copyValue(`help-${endpointHelp.key}`, endpointHelp.value)">{{ copied === `help-${endpointHelp.key}` ? '已复制' : '复制地址' }}</button>
                   </div>
                 </div>
                 <div class="rounded-xl bg-slate-50 p-4">
@@ -3867,7 +3803,7 @@ onUnmounted(() => {
                 <div v-else-if="endpointHelp.key === 'resource'" class="rounded-xl border border-amber-100 bg-amber-50 p-4 text-xs text-amber-900">它通常和 MCP Endpoint 的值一致，但用途不同：Endpoint 是发请求的地址，Resource 是 OAuth2 用来限定 Token 目标的标识。</div>
               </div>
               <div class="flex justify-end border-t border-slate-100 bg-white px-6 py-4">
-                <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="showEndpointHelp = false">知道了</button>
+                <button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="showEndpointHelp = false">知道了</button>
               </div>
             </div>
           </div>
@@ -3883,7 +3819,7 @@ onUnmounted(() => {
           <div class="flex min-h-full items-center justify-center">
             <div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
               <div class="flex items-center justify-between border-b border-slate-100 px-6 py-5">
-                <div><h2 class="text-xl font-black">审计详情</h2><p class="mt-1 text-xs text-slate-500">仅显示本次调用的业务审计信息。</p></div>
+                <div><h2 class="text-xl font-semibold">审计详情</h2><p class="mt-1 text-xs text-slate-500">仅显示本次调用的业务审计信息。</p></div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭审计详情" @click="selectedAudit = null">×</button>
               </div>
               <div class="grid gap-3 px-6 py-5 text-sm sm:grid-cols-2">
@@ -3898,9 +3834,9 @@ onUnmounted(() => {
                 <div class="sm:col-span-2"><span class="text-slate-500">Scope</span><code class="mt-1 block break-all text-xs">{{ selectedAudit.scopes.join('、') || '—' }}</code></div>
                 <div v-if="selectedAudit.client_request_id" class="sm:col-span-2"><span class="text-slate-500">外部请求 ID</span><code class="mt-1 block break-all text-xs">{{ selectedAudit.client_request_id }}</code></div>
                 <div v-if="selectedAudit.error_code" class="sm:col-span-2"><span class="text-slate-500">错误码</span><code class="mt-1 block break-all text-xs text-rose-600">{{ selectedAudit.error_code }}</code></div>
-                <div class="sm:col-span-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-900">安全提示：审计页面和接口均不展示 Access Token、Client Secret、Refresh Token、用户密码或原始请求 Header。</div>
+                <div class="sm:col-span-2 rounded-xl border border-primary/10 bg-primary/5 p-3 text-xs leading-5 text-primary-dark">安全提示：审计页面和接口均不展示 Access Token、Client Secret、Refresh Token、用户密码或原始请求 Header。</div>
               </div>
-              <div class="flex justify-end border-t border-slate-100 px-6 py-4"><button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="selectedAudit = null">关闭</button></div>
+              <div class="flex justify-end border-t border-slate-100 px-6 py-4"><button type="button" class="rounded-xl bg-primary px-5 py-2 font-bold text-white hover:bg-primary-dark" @click="selectedAudit = null">关闭</button></div>
             </div>
           </div>
         </div>

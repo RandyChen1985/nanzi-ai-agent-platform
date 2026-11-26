@@ -31,7 +31,7 @@ const summaryParts = computed(() => {
 <template>
   <div class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20">
     <div class="flex items-center gap-2 shrink-0 min-w-0 flex-1">
-      <span class="font-bold shrink-0">{{ projectName ? `📁 ${projectName}` : '📌 会话固定资源' }}</span>
+      <span class="font-bold shrink-0">{{ projectName ? `${projectName}` : '会话固定资源' }}</span>
       <button
         type="button"
         class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary dark:border-gray-700 dark:hover:border-primary shrink-0"

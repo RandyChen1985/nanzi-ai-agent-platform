@@ -760,7 +760,7 @@ onUnmounted(() => {
         <ChevronDownIcon class="ml-auto h-4 w-4 text-gray-400 transition" :class="contractOpen ? 'rotate-180' : ''" />
       </button>
       <div v-if="contractOpen" class="border-t border-gray-100 px-3.5 py-3 text-xs leading-relaxed text-gray-600">
-        <div class="mb-2 flex items-start gap-1.5 rounded-lg bg-sky-50 px-2.5 py-2 text-[11.5px] text-sky-900">
+        <div class="mb-2 flex items-start gap-1.5 rounded-lg bg-sky-50 px-2.5 py-2 text-[11.5px] text-primary-dark">
           <InformationCircleIcon class="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div>
             QPS / P95 / 5xx / 并发是<b>本节点</b>最近 60 秒的进程内指标；在线用户数是共享 Redis 里的<b>全平台</b>值，因此每个实例上显示的是同一个数。

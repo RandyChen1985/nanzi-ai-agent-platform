@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { ShieldCheckIcon,
+  ExclamationTriangleIcon,
+} from "@heroicons/vue/24/outline";
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import axios from '../utils/axios'
 import Toast from '../components/Toast.vue'
@@ -38,7 +41,7 @@ const passwordExpireWarningClass = computed(() => {
     if (!info?.has_password) return 'bg-amber-50/60 border-amber-200/80 text-amber-900'
     if (info.is_expired) return 'bg-rose-50/70 border-rose-200 text-rose-900'
     if (info.days_until_next_change <= 7) return 'bg-amber-50/70 border-amber-200 text-amber-900'
-    return 'bg-blue-50/50 border-blue-100 text-blue-900'
+    return 'bg-primary/5 border-primary/10 text-primary-dark'
 })
 
 const passwordExpireIconClass = computed(() => {
@@ -46,7 +49,7 @@ const passwordExpireIconClass = computed(() => {
     if (!info?.has_password) return 'bg-amber-100 text-amber-700'
     if (info.is_expired) return 'bg-rose-100 text-rose-700'
     if (info.days_until_next_change <= 7) return 'bg-amber-100 text-amber-700'
-    return 'bg-blue-100 text-blue-700'
+    return 'bg-primary/10 text-primary-dark'
 })
 
 const passwordExpireBadgeClass = computed(() => {
@@ -54,7 +57,7 @@ const passwordExpireBadgeClass = computed(() => {
     if (!info?.has_password) return 'bg-amber-100 text-amber-800'
     if (info.is_expired) return 'bg-rose-100 text-rose-800 font-bold'
     if (info.days_until_next_change <= 7) return 'bg-amber-100 text-amber-800 font-bold'
-    return 'bg-blue-100 text-blue-800'
+    return 'bg-primary/10 text-primary-dark'
 })
 
 const passwordExpireTextClass = computed(() => {
@@ -62,7 +65,7 @@ const passwordExpireTextClass = computed(() => {
     if (!info?.has_password) return 'text-amber-700'
     if (info.is_expired) return 'text-rose-700 font-medium'
     if (info.days_until_next_change <= 7) return 'text-amber-700 font-medium'
-    return 'text-blue-700/90'
+    return 'text-primary-dark/90'
 })
 
 const passwordExpireButtonClass = computed(() => {
@@ -70,7 +73,7 @@ const passwordExpireButtonClass = computed(() => {
     if (!info?.has_password) return 'bg-amber-600 hover:bg-amber-700 text-white border-transparent'
     if (info.is_expired) return 'bg-rose-600 hover:bg-rose-700 text-white border-transparent'
     if (info.days_until_next_change <= 7) return 'bg-amber-600 hover:bg-amber-700 text-white border-transparent'
-    return 'bg-white hover:bg-blue-50 text-blue-700 border-blue-200'
+    return 'bg-white hover:bg-primary/5 text-primary-dark border-primary/20'
 })
 
 // 2FA Two-Factor Authentication Logic
@@ -1093,7 +1096,7 @@ onMounted(() => {
                     @click="activeTab = 'info'"
                     :class="[
                         activeTab === 'info'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1104,7 +1107,7 @@ onMounted(() => {
                     @click="activeTab = 'permissions'"
                     :class="[
                         activeTab === 'permissions'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1115,7 +1118,7 @@ onMounted(() => {
                     @click="activeTab = 'secrets'"
                     :class="[
                         activeTab === 'secrets'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1126,7 +1129,7 @@ onMounted(() => {
                     @click="activeTab = 'memory'"
                     :class="[
                         activeTab === 'memory'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1137,7 +1140,7 @@ onMounted(() => {
                     @click="activeTab = 'tokens'"
                     :class="[
                         activeTab === 'tokens'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1148,7 +1151,7 @@ onMounted(() => {
                     @click="activeTab = 'data'"
                     :class="[
                         activeTab === 'data'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1159,7 +1162,7 @@ onMounted(() => {
                     @click="activeTab = 'skills'"
                     :class="[
                         activeTab === 'skills'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1170,7 +1173,7 @@ onMounted(() => {
                     @click="activeTab = 'mcp'"
                     :class="[
                         activeTab === 'mcp'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1181,7 +1184,7 @@ onMounted(() => {
                     @click="activeTab = 'tasks'"
                     :class="[
                         activeTab === 'tasks'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1192,7 +1195,7 @@ onMounted(() => {
                     @click="activeTab = 'notifications'"
                     :class="[
                         activeTab === 'notifications'
-                            ? 'border-blue-500 text-blue-600'
+                            ? 'border-primary text-primary font-semibold'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
@@ -1207,9 +1210,9 @@ onMounted(() => {
         <div v-if="activeTab === 'info'" class="grid grid-cols-1 overflow-hidden bg-white md:grid-cols-[200px_minmax(0,1fr)] min-h-[560px]">
             <!-- 左侧 Aside 垂直导航栏 -->
             <aside class="border-b md:border-b-0 md:border-r border-gray-100 bg-gray-50/70 p-3 sm:p-4">
-                <div class="mb-4 hidden md:flex items-center gap-2 px-2 text-sm font-bold text-gray-900">
-                    <span class="grid h-8 w-8 place-items-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">
-                        <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div class="mb-3 hidden md:flex items-center gap-2 px-2 text-sm font-semibold text-gray-900">
+                    <span class="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                         </svg>
                     </span>
@@ -1219,8 +1222,8 @@ onMounted(() => {
                     <button
                         type="button"
                         @click="infoSubTab = 'profile'"
-                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
-                        :class="infoSubTab === 'profile' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'profile' ? 'bg-primary/10 font-semibold text-primary' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
                     >
                         <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
@@ -1230,8 +1233,8 @@ onMounted(() => {
                     <button
                         type="button"
                         @click="infoSubTab = 'security'"
-                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
-                        :class="infoSubTab === 'security' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'security' ? 'bg-primary/10 font-semibold text-primary' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
                     >
                         <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -1241,8 +1244,8 @@ onMounted(() => {
                     <button
                         type="button"
                         @click="infoSubTab = 'browser'"
-                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
-                        :class="infoSubTab === 'browser' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'browser' ? 'bg-primary/10 font-semibold text-primary' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
                     >
                         <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
@@ -1254,23 +1257,22 @@ onMounted(() => {
                         type="button"
                         data-user-sub-tab="preferences"
                         @click="infoSubTab = 'preferences'"
-                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
-                        :class="infoSubTab === 'preferences' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'preferences' ? 'bg-primary/10 font-semibold text-primary' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
                     >
                         <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5z" />
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 9.5h16M9.5 9.5V20" />
                         </svg>
                         <span>界面偏好</span>
-                        <span class="ml-auto rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">新</span>
                     </button>
                     <!-- 登录页风格：8 套主题可选，默认 F1，账号级存 Redis -->
                     <button
                         type="button"
                         data-user-sub-tab="login-theme"
                         @click="infoSubTab = 'login-theme'"
-                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
-                        :class="infoSubTab === 'login-theme' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'login-theme' ? 'bg-primary/10 font-semibold text-primary' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
                     >
                         <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 109 9c0-.9-.7-1.5-1.5-1.5h-2.1a1.5 1.5 0 01-1.4-2l.4-1.2A3 3 0 0013.5 3H12z" />
@@ -1279,7 +1281,6 @@ onMounted(() => {
                             <circle cx="7.5" cy="14.5" r="1" fill="currentColor" stroke="none" />
                         </svg>
                         <span>登录页风格</span>
-                        <span class="ml-auto rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">新</span>
                     </button>
                 </nav>
             </aside>
@@ -1318,7 +1319,7 @@ onMounted(() => {
                                         type="button"
                                         :disabled="avatarUploading || removingAvatar"
                                         @click="pickAvatarFile"
-                                        class="text-[10px] font-medium text-gray-500 transition-colors hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 sm:text-[9px] sm:text-white sm:hover:text-blue-200"
+                                        class="text-[10px] font-medium text-gray-500 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-60 sm:text-[9px] sm:text-white sm:hover:text-primary/20"
                                     >
                                         {{ avatarUploading ? '上传中…' : '更换头像' }}
                                     </button>
@@ -1341,11 +1342,11 @@ onMounted(() => {
                                 />
                             </div>
                             <div class="ml-4 min-w-0">
-                                <p class="text-md sm:text-lg font-bold text-gray-900 truncate">{{ userInfo.real_name || userInfo.user_name }}</p>
+                                <p class="text-base sm:text-lg font-bold text-gray-900 truncate">{{ userInfo.real_name || userInfo.user_name }}</p>
                                 <div class="flex flex-wrap items-center gap-2 mt-1">
                                     <span class="text-xs text-gray-500 font-mono">@{{ userInfo.user_name }}</span>
                                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium" 
-                                        :class="userInfo.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'"
+                                        :class="userInfo.role === 'admin' ? 'bg-primary/10 text-primary-dark' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'"
                                     >
                                         {{ userInfo.role === 'admin' ? '管理员' : '普通用户' }}
                                     </span>
@@ -1488,7 +1489,7 @@ onMounted(() => {
                                     type="button"
                                     :disabled="emailSaving || !!emailInputFormatError || emailCheckBlocksSave"
                                     @click="saveEmail"
-                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-primary hover:bg-primary-dark transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                                 >
                                     {{ emailSaving ? '保存中…' : '保存' }}
                                 </button>
@@ -1618,7 +1619,6 @@ onMounted(() => {
                     <div class="p-5 border border-gray-200/80 rounded-xl bg-white shadow-2xs space-y-4">
                         <div class="flex items-center justify-between">
                             <h3 class="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                <span>🔑</span>
                                 <span>修改登录密码</span>
                             </h3>
                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
@@ -1630,14 +1630,14 @@ onMounted(() => {
                         </div>
 
                         <!-- 等保密码复杂度规则文案说明 -->
-                        <div class="p-3 bg-blue-50/70 border border-blue-100 rounded-lg text-xs space-y-1.5">
-                            <div class="flex items-center gap-1.5 font-semibold text-blue-900">
-                                <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div class="p-3 bg-primary/5 border border-primary/10 rounded-lg text-xs space-y-1.5">
+                            <div class="flex items-center gap-1.5 font-semibold text-primary-dark">
+                                <svg class="w-4 h-4 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                 </svg>
                                 <span>密码复杂度规则说明</span>
                             </div>
-                            <p class="text-blue-800/90 leading-relaxed pl-5">
+                            <p class="text-primary-dark/90 leading-relaxed pl-5">
                                 为符合网络安全等级保护要求，密码长度须为 <strong>8-32 位</strong>，且必须至少包含以下 4 种类型中的 <strong>3 种</strong>：<strong>大写字母 (A-Z)</strong>、<strong>小写字母 (a-z)</strong>、<strong>数字 (0-9)</strong>、<strong>特殊符号</strong>（如 !@#$%^&* 等），且不能包含空格或用户名。
                             </p>
                         </div>
@@ -1703,7 +1703,6 @@ onMounted(() => {
 
                             <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
                                 <span class="flex min-w-0 items-center gap-1 text-[11px] text-amber-600">
-                                    <span>⚠</span>
                                     <span>修改密码后需重新登录（现有 API Key 依然有效）</span>
                                 </span>
                                 <!-- shrink-0 + whitespace-nowrap：窄屏时让左边的提示文字先换行，
@@ -1711,7 +1710,7 @@ onMounted(() => {
                                 <button 
                                     type="submit" 
                                     :disabled="loadingPassword || !newPassword || !passwordPolicyResult.valid || newPassword !== confirmPassword"
-                                    class="shrink-0 whitespace-nowrap py-2 px-4 border border-transparent rounded-lg shadow-xs text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                    class="shrink-0 whitespace-nowrap py-2 px-4 border border-transparent rounded-lg shadow-xs text-xs sm:text-sm font-bold text-white bg-primary hover:bg-primary-dark active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                                 >
                                     {{ loadingPassword ? '提交中...' : '修改密码' }}
                                 </button>
@@ -1725,7 +1724,6 @@ onMounted(() => {
                             <div class="space-y-1">
                                 <div class="flex items-center gap-2">
                                     <h3 class="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                        <span>🛡</span>
                                         <span>Google 两步验证 (2FA)</span>
                                     </h3>
                                     <span 
@@ -1746,7 +1744,7 @@ onMounted(() => {
                                 v-if="!twoFactorEnabled"
                                 type="button"
                                 @click="openSetupModal"
-                                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold rounded-lg shadow-xs transition-all flex-shrink-0 cursor-pointer"
+                                class="px-4 py-2 bg-primary hover:bg-primary-dark text-white text-xs sm:text-sm font-bold rounded-lg shadow-xs transition-all flex-shrink-0 cursor-pointer"
                             >
                                 立即开启
                             </button>
@@ -1779,7 +1777,7 @@ onMounted(() => {
                             :class="isUiModeBlocked(option.value)
                                 ? 'border-dashed border-gray-200 bg-gray-50/60'
                                 : uiMode === option.value
-                                    ? 'border-blue-500 bg-blue-50/40 shadow-[0_0_0_3px_rgba(22,119,255,0.09)]'
+                                    ? 'border-primary bg-primary/5 shadow-[0_0_0_3px_rgba(22,119,255,0.09)]'
                                     : 'border-gray-200 bg-white hover:border-gray-300'"
                             :disabled="switchingUiMode || isUiModeBlocked(option.value)"
                             @click="handleSwitchUiMode(option.value)"
@@ -1795,7 +1793,7 @@ onMounted(() => {
                                 >管理员已禁用</span>
                                 <span
                                     v-else-if="uiMode === option.value"
-                                    class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+                                    class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark"
                                 >当前</span>
                             </div>
                             <p
@@ -1864,7 +1862,7 @@ onMounted(() => {
                                 </li>
                             </ul>
                             <div class="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg text-xs">
-                                🛡 <strong>安全保证：</strong>此操作仅清理沙箱内部的浏览器临时会话，绝不影响您的本地 Chrome/Edge 浏览器、平台账号会话、对话历史或工作区文件。
+                                <strong>安全保证：</strong>此操作仅清理沙箱内部的浏览器临时会话，绝不影响您的本地 Chrome/Edge 浏览器、平台账号会话、对话历史或工作区文件。
                             </div>
                         </div>
 
@@ -1907,11 +1905,11 @@ onMounted(() => {
             <template v-if="permissionSubTab === 'requests'">
             <div class="mb-3 flex items-center justify-between">
                 <p class="text-xs text-gray-500">你提交的知识库访问申请。审批通过后授权自动生效，无需再找归属人手工加。</p>
-                <button type="button" class="text-xs text-blue-600 hover:underline disabled:opacity-50" :disabled="loadingMyRequests" @click="fetchMyRequests">刷新</button>
+                <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" :disabled="loadingMyRequests" @click="fetchMyRequests">刷新</button>
             </div>
 
             <div v-if="loadingMyRequests" class="flex justify-center py-10">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
             <div v-else-if="!myRequests.length" class="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
                 还没有提交过申请。可以在「我的工作台 → 资源广场」里找到需要的知识库或数据集，点「申请访问」。
@@ -1929,7 +1927,7 @@ onMounted(() => {
                                 >{{ requestResourceName(item) }}</button>
                                 <span
                                     class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                                    :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                                    :class="item.resource_type === 'dataset' ? 'bg-primary/5 text-primary' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'"
                                 >{{ requestResourceLabel(item) }}</span>
                                 <span
                                     v-if="item.resource_exists === false"
@@ -1963,7 +1961,7 @@ onMounted(() => {
 
             <template v-else>
             <div v-if="loadingPermissions" class="flex justify-center py-10">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
             
             <div v-else class="space-y-4 sm:space-y-6">
@@ -1972,14 +1970,14 @@ onMounted(() => {
                         <button
                             @click="permissionsSubTab = 'list'"
                             class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors"
-                            :class="permissionsSubTab === 'list' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                            :class="permissionsSubTab === 'list' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
                         >
                             权限清单
                         </button>
                         <button
                             @click="permissionsSubTab = 'about'"
                             class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors"
-                            :class="permissionsSubTab === 'about' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                            :class="permissionsSubTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
                         >
                             关于
                         </button>
@@ -1987,7 +1985,7 @@ onMounted(() => {
                 </div>
 
                 <div v-if="permissionsSubTab === 'about' && showAboutTab" class="bg-gray-50 border border-gray-100 rounded-xl p-4 sm:p-6">
-                    <div class="markdown-body prose prose-sm max-w-none text-gray-700 break-words" v-html="contactHtml"></div>
+                    <div class="markdown-body max-w-none text-gray-700 break-words" v-html="contactHtml"></div>
                 </div>
 
                 <template v-else>
@@ -1999,8 +1997,8 @@ onMounted(() => {
                     <div>
                         <p class="font-bold text-gray-900">权限清单</p>
                         <p class="mt-1">列出您当前拥有的所有系统资源访问权限。</p>
-                        <p v-if="userInfo.role === 'admin'" class="mt-2 text-purple-600 font-bold">
-                            ✨ 您是超级管理员，拥有全局最高权限。
+                        <p v-if="userInfo.role === 'admin'" class="mt-2 text-primary font-bold">
+                            您是超级管理员，拥有全局最高权限。
                         </p>
                         <div v-if="permissions.roles && permissions.roles.length" class="mt-2 flex flex-wrap gap-2 items-center">
                             <span class="text-gray-500">角色标识:</span>
@@ -2017,7 +2015,7 @@ onMounted(() => {
                         <p class="text-[10px] text-gray-400">点击分类标题可折叠；折叠状态在本次会话内保留，刷新后恢复全展开。</p>
                         <button
                             type="button"
-                            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 transition-colors hover:border-blue-300 hover:text-blue-600"
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 transition-colors hover:border-primary/25 hover:text-primary"
                             @click="toggleAllPermissionSections"
                         >
                             <svg class="h-3 w-3 transition-transform" :class="allPermissionSectionsCollapsed ? '' : 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -2034,7 +2032,7 @@ onMounted(() => {
                         @toggle="togglePermissionSection('agents')"
                     >
                         <template #icon>
-                            <span class="p-1 bg-blue-100 text-blue-600 rounded">
+                            <span class="p-1 bg-primary/10 text-primary rounded">
                                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                             </span>
                         </template>
@@ -2043,7 +2041,7 @@ onMounted(() => {
                         </template>
                         <div v-if="!permissions.details?.agents?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
                         <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                            <div v-for="item in permissions.details.agents" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-blue-200 transition-all shadow-sm">
+                            <div v-for="item in permissions.details.agents" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-primary/20 transition-all shadow-sm">
                                 <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
                                 <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">{{ item.name }}</span>
                             </div>
@@ -2103,7 +2101,7 @@ onMounted(() => {
                         @toggle="togglePermissionSection('access')"
                     >
                         <template #icon>
-                            <span class="p-1 bg-indigo-100 text-indigo-600 rounded">
+                            <span class="p-1 bg-primary/10 text-primary rounded">
                                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                             </span>
                         </template>
@@ -2186,22 +2184,22 @@ onMounted(() => {
           <p class="font-medium text-gray-700 dark:text-gray-200 mb-1.5">清除后将影响：</p>
           <ul class="space-y-1.5">
             <li class="flex items-start gap-2 text-gray-600 dark:text-gray-300">
-              <span class="mt-0.5 shrink-0">🔐</span>
+              <ShieldCheckIcon class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>所有已登录外部网站的 <strong>Cookie 和登录态</strong>（需重新登录）</span>
             </li>
             <li class="flex items-start gap-2 text-gray-600 dark:text-gray-300">
-              <span class="mt-0.5 shrink-0">📜</span>
+              <ShieldCheckIcon class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span><strong>浏览历史</strong>与页面缓存文件</span>
             </li>
             <li class="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-              <span class="mt-0.5 shrink-0">⚠️</span>
+              <ShieldCheckIcon class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>若 AI 正在执行浏览器任务，<strong>任务将立即中断</strong></span>
             </li>
           </ul>
         </div>
         <div class="rounded-lg bg-green-50 dark:bg-green-900/20 px-3 py-2">
           <p class="text-xs text-green-700 dark:text-green-400">
-            <strong>✅ 不受影响：</strong>本地 Chrome / Edge 浏览器、平台账号登录、对话记录、工作区文件
+            <strong>不受影响：</strong>本地 Chrome / Edge 浏览器、平台账号登录、对话记录、工作区文件
           </p>
         </div>
       </div>
@@ -2213,12 +2211,10 @@ onMounted(() => {
         v-if="showSetupModal"
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       >
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-fade-in">
           <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
             <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                🔐
-              </div>
+              <div class="w-8 h-8 rounded-lg bg-primary/5 text-primary flex items-center justify-center font-bold"><ShieldCheckIcon class="h-4 w-4" aria-hidden="true" /></div>
               <div>
                 <h3 class="text-base font-bold text-gray-900">开启 Google 身份验证器两步验证</h3>
                 <p class="text-xs text-gray-400">使用移动端身份验证器扫码绑定</p>
@@ -2238,13 +2234,13 @@ onMounted(() => {
             <!-- 步骤一：扫码 -->
             <div>
               <div class="flex items-center gap-2 mb-2.5">
-                <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">1</span>
+                <span class="w-5 h-5 rounded-full bg-primary text-white text-xs flex items-center justify-center font-bold">1</span>
                 <span class="text-xs font-bold text-gray-700">打开 Google Authenticator 扫描下方二维码</span>
               </div>
 
               <div class="flex flex-col items-center justify-center bg-gray-50 rounded-xl p-4 border border-gray-100">
                 <div v-if="loadingSetup" class="h-44 flex flex-col items-center justify-center text-gray-400 gap-2">
-                  <svg class="w-6 h-6 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                   </svg>
@@ -2281,7 +2277,7 @@ onMounted(() => {
             <!-- 步骤二：输入验证码 -->
             <div>
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">2</span>
+                <span class="w-5 h-5 rounded-full bg-primary text-white text-xs flex items-center justify-center font-bold">2</span>
                 <span class="text-xs font-bold text-gray-700">输入应用中显示的 6 位动态验证码</span>
               </div>
               <input
@@ -2289,7 +2285,7 @@ onMounted(() => {
                 type="text"
                 maxlength="6"
                 placeholder="000000"
-                class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
+                class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/10 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
                 @keyup.enter="handleEnable2FA"
               />
             </div>
@@ -2307,7 +2303,7 @@ onMounted(() => {
               type="button"
               :disabled="loadingEnable2FA || !setupCode || setupCode.length !== 6"
               @click="handleEnable2FA"
-              class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
+              class="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
             >
               <svg v-if="loadingEnable2FA" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -2326,12 +2322,10 @@ onMounted(() => {
         v-if="showDisableModal"
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       >
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-fade-in">
           <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
             <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-                ⚠️
-              </div>
+              <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center font-bold"><ExclamationTriangleIcon class="h-4 w-4" aria-hidden="true" /></div>
               <div>
                 <h3 class="text-base font-bold text-gray-900">关闭两步验证</h3>
                 <p class="text-xs text-gray-400">关闭后登录仅需密码，安全性将降低</p>
@@ -2350,11 +2344,11 @@ onMounted(() => {
           <div class="p-6 space-y-4">
             <div class="flex items-center gap-3 border-b border-gray-100 pb-3">
               <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-                <input type="radio" v-model="disableType" value="code" class="text-blue-600" />
+                <input type="radio" v-model="disableType" value="code" class="text-primary" />
                 <span>验证码确认</span>
               </label>
               <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-                <input type="radio" v-model="disableType" value="password" class="text-blue-600" />
+                <input type="radio" v-model="disableType" value="password" class="text-primary" />
                 <span>当前密码确认</span>
               </label>
             </div>
@@ -2414,7 +2408,7 @@ onMounted(() => {
         class="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-[9990] p-4"
         @click.self="closeResetApiKeyModal"
       >
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-fade-in">
           <div class="px-6 py-5 bg-rose-50/60 border-b border-rose-100/80 flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center text-rose-600">

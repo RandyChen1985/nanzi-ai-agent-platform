@@ -61,7 +61,7 @@ export function applyStreamErrorMessage(
     && previous.message === presentation.detail.message
     && previous.rawError === presentation.detail.rawError
     && previous.aiStatus === presentation.detail.aiStatus;
-  const marker = `> ❌ **处理未完成**: ${presentation.message}`;
+  const marker = `> ✕ **处理未完成**: ${presentation.message}`;
 
   message.errorDetail = presentation.detail;
   if (sameError || (typeof message.content === "string" && message.content.includes(marker))) {

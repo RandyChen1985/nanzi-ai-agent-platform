@@ -64,18 +64,18 @@ onMounted(loadTemplate)
       <section class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p class="text-xs font-semibold uppercase text-blue-600">模板详情</p>
+            <p class="text-xs font-semibold uppercase text-primary">模板详情</p>
             <h1 class="mt-2 text-2xl font-bold text-gray-900">{{ template.name }}</h1>
             <p class="mt-2 max-w-3xl text-sm leading-6 text-gray-600">{{ template.description }}</p>
             <div class="mt-4 flex flex-wrap gap-2">
               <span class="rounded bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600">{{ template.category }}</span>
               <span class="rounded bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">{{ template.maturity || '基础版' }}</span>
-              <span class="rounded bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">预计交付 {{ template.delivery_time || '待评估' }}</span>
+              <span class="rounded bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary-dark">预计交付 {{ template.delivery_time || '待评估' }}</span>
             </div>
           </div>
           <button
             v-if="canInstall"
-            class="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
             @click="startInstall"
           >
             <RocketLaunchIcon class="h-4 w-4" />
@@ -90,12 +90,12 @@ onMounted(loadTemplate)
       <section class="grid gap-5 xl:grid-cols-3">
         <div class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <h2 class="flex items-center gap-2 text-base font-semibold text-gray-900">
-            <CubeTransparentIcon class="h-5 w-5 text-blue-500" />
+            <CubeTransparentIcon class="h-5 w-5 text-primary" />
             业务目标
           </h2>
           <ul class="mt-4 space-y-3 text-sm leading-6 text-gray-600">
             <li v-for="goal in template.business_goals" :key="goal" class="flex gap-2">
-              <span class="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-500" />
+              <span class="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
               <span>{{ goal }}</span>
             </li>
           </ul>

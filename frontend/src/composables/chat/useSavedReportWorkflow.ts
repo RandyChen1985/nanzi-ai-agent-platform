@@ -112,7 +112,7 @@ export const renderSavedReportDataToMarkdown = (data: any): string => {
     }
     markdown += `| ${cells.map((cell) => cell.replace(/\|/g, "\\|").replace(/\n/g, " ")).join(" | ")} |\n`;
   }
-  if (rows.length > maxDisplayRows) markdown += `\n> *⚠️ 结果集数据量较大，已在聊天框中自动为您省略后半部分（共展示前 ${maxDisplayRows} 行 / 总计 ${rows.length} 行）。*`;
+  if (rows.length > maxDisplayRows) markdown += `\n> *结果集数据量较大，已在聊天框中自动为您省略后半部分（共展示前 ${maxDisplayRows} 行 / 总计 ${rows.length} 行）。*`;
   return markdown;
 };
 
@@ -252,7 +252,7 @@ export const composeSavedReportExecuteMarkdown = (
     .find((value) => Array.isArray(value));
   const rowLabel = rowCount !== undefined ? ` · 返回 ${rowCount} 行` : Array.isArray(resultRows) ? ` · 返回 ${resultRows.length} 行` : "";
   const parts = [
-    `### 📊 固化报表「${reportTitle}」执行结果：`,
+    `### 固化报表「${reportTitle}」执行结果：`,
     `> ✓ 查询成功${rowLabel}`,
     resultMarkdown,
   ];

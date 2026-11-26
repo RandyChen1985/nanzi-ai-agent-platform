@@ -62,7 +62,7 @@
           <!-- 完整数字与大数同行：它只是大数的精确值，独占一行会把四张卡一起撑高
                （栅格内卡片等高，高度由内容最多的这张决定）。 -->
           <div class="flex items-baseline gap-2 flex-wrap">
-            <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
+            <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">
               {{ formatTokenCompact(summaryData.total_tokens) }}
             </h3>
             <span
@@ -74,7 +74,7 @@
           </div>
           <!-- 输入/输出是并列关系，同行展示；「历史未拆分」是补充信息，仍单独占位 -->
           <div class="flex items-center flex-wrap gap-x-3 gap-y-0.5 text-xs leading-relaxed">
-            <span class="text-sky-700" :title="formatTokenFull(summaryData.prompt_tokens)">
+            <span class="text-primary-dark" :title="formatTokenFull(summaryData.prompt_tokens)">
               <span class="text-gray-400">输入</span>
               {{ formatTokenCompact(summaryData.prompt_tokens) }}
             </span>
@@ -101,10 +101,10 @@
       <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1 space-y-1">
           <span class="text-sm font-medium text-gray-500">对话交互</span>
-          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">{{ formatNumber(summaryData.calls) }}</h3>
+          <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">{{ formatNumber(summaryData.calls) }}</h3>
           <p class="text-xs text-gray-400">会话发起次数</p>
         </div>
-        <div class="flex-shrink-0 p-3.5 rounded-2xl bg-purple-50/80 text-purple-600">
+        <div class="flex-shrink-0 p-3.5 rounded-2xl bg-primary/5 text-primary">
           <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
@@ -115,7 +115,7 @@
         <div class="min-w-0 flex-1 space-y-1">
           <span class="text-sm font-medium text-gray-500">平均单次</span>
           <h3
-            class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none"
+            class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none"
             :title="formatTokenFull(summaryData.avg_tokens)"
           >{{ formatTokenCompact(summaryData.avg_tokens) }}</h3>
           <p class="text-xs text-gray-400">Token / 会话</p>
@@ -130,7 +130,7 @@
       <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1 space-y-1">
           <span class="text-sm font-medium text-gray-500">活跃智能体</span>
-          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">{{ agentData.length }}</h3>
+          <h3 class="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums leading-none">{{ agentData.length }}</h3>
           <p class="text-xs text-gray-400">有 Token 记录</p>
         </div>
         <div class="flex-shrink-0 p-3.5 rounded-2xl bg-green-50/80 text-green-600">
@@ -214,7 +214,7 @@
               <tr v-for="agent in agentData" :key="agent.agent_id" class="hover:bg-gray-50/50 transition-colors">
                 <td class="py-3 px-4 font-medium text-gray-900 max-w-[12rem] truncate" :title="agent.name">{{ agent.name }}</td>
                 <td class="py-3 px-4 text-right tabular-nums">{{ formatNumber(agent.calls) }}</td>
-                <td class="py-3 px-4 text-right tabular-nums text-sky-700" :title="formatTokenFull(agent.prompt_tokens || 0)">{{ formatTokenCompact(agent.prompt_tokens || 0) }}</td>
+                <td class="py-3 px-4 text-right tabular-nums text-primary-dark" :title="formatTokenFull(agent.prompt_tokens || 0)">{{ formatTokenCompact(agent.prompt_tokens || 0) }}</td>
                 <td class="py-3 px-4 text-right tabular-nums text-rose-700" :title="formatTokenFull(agent.completion_tokens || 0)">{{ formatTokenCompact(agent.completion_tokens || 0) }}</td>
                 <td class="py-3 px-4 text-right tabular-nums font-semibold" :title="formatTokenFull(effectiveAgentTokens(agent))">{{ formatTokenCompact(effectiveAgentTokens(agent)) }}</td>
                 <td class="py-3 px-4 text-right tabular-nums text-gray-500" :title="formatTokenFull(Math.round(effectiveAgentTokens(agent) / Math.max(agent.calls, 1)))">{{ formatTokenCompact(Math.round(effectiveAgentTokens(agent) / Math.max(agent.calls, 1))) }}</td>
@@ -261,14 +261,14 @@
               <td class="py-3.5 px-4 font-medium text-gray-900">{{ userItem.username }}</td>
               <td class="py-3.5 px-4 text-gray-600">{{ userItem.real_name || '-' }}</td>
               <td class="py-3.5 px-4 text-right tabular-nums">{{ formatNumber(userItem.calls) }}</td>
-              <td class="py-3.5 px-4 text-right tabular-nums text-sky-700" :title="formatTokenFull(userItem.prompt_tokens || 0)">{{ formatTokenCompact(userItem.prompt_tokens || 0) }}</td>
+              <td class="py-3.5 px-4 text-right tabular-nums text-primary-dark" :title="formatTokenFull(userItem.prompt_tokens || 0)">{{ formatTokenCompact(userItem.prompt_tokens || 0) }}</td>
               <td class="py-3.5 px-4 text-right tabular-nums text-rose-700" :title="formatTokenFull(userItem.completion_tokens || 0)">{{ formatTokenCompact(userItem.completion_tokens || 0) }}</td>
               <td class="py-3.5 px-4 text-right tabular-nums font-semibold text-gray-900" :title="formatTokenFull(effectiveAgentTokens(userItem))">{{ formatTokenCompact(effectiveAgentTokens(userItem)) }}</td>
               <td class="py-3.5 px-4">
                 <div class="flex items-center gap-3 w-48">
                   <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      class="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                      class="h-full bg-primary rounded-full transition-all duration-500"
                       :style="{ width: `${userItem.ratio}%` }"
                     ></div>
                   </div>

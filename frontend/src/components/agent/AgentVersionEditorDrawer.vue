@@ -1,6 +1,15 @@
 <script setup lang="ts">
+import { ChatBubbleLeftRightIcon,
+  ChartBarIcon,
+  BookOpenIcon,
+  CpuChipIcon,
+  CircleStackIcon,
+  BoltIcon,
+  LightBulbIcon,
+} from "@heroicons/vue/24/outline";
 import ScopeGateSelect from "./ScopeGateSelect.vue";
 import { computed, ref, watch } from 'vue';
+import type { Component } from 'vue';
 import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType, StaleToolRef } from '../../api/agent';
 import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
@@ -523,10 +532,10 @@ const applyPreviewTheme = () => {
   showThemePreviewHelp.value = false;
 };
 
-const agentTypes: { value: AgentType; label: string; icon: string; description: string }[] = [
-  { value: 'GENERAL', label: '通用助手', icon: '💬', description: '适合问答、写作和大多数专业任务' },
-  { value: 'CHATBI', label: 'ChatBI', icon: '📊', description: '查询业务数据并生成分析结果' },
-  { value: 'KNOWLEDGE_BASE', label: '知识库助手', icon: '📚', description: '检索已授权知识库并据此回答' },
+const agentTypes: { value: AgentType; label: string; icon: Component; description: string }[] = [
+  { value: 'GENERAL', label: '通用助手', icon: ChatBubbleLeftRightIcon, description: '适合问答、写作和大多数专业任务' },
+  { value: 'CHATBI', label: 'ChatBI', icon: ChartBarIcon, description: '查询业务数据并生成分析结果' },
+  { value: 'KNOWLEDGE_BASE', label: '知识库助手', icon: BookOpenIcon, description: '检索已授权知识库并据此回答' },
 ];
 
 const selectAgentType = (value: AgentType) => {
@@ -783,7 +792,7 @@ const externalCreationMissingFields = computed(() => {
                      但编辑系统级时完全不提又会让用户不知道「为什么这里动不了」。 -->
                 <span
                   v-if="!isCreatingAgent && selectedAgent?.is_system"
-                  class="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+                  class="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark"
                   title="系统级智能体：发布、下架请走智能体卡片的操作菜单"
                 >
                   <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -799,20 +808,20 @@ const externalCreationMissingFields = computed(() => {
               </p>
             </div>
 
-            <div class="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+            <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
               <div class="flex items-center gap-1.5">
-                <label class="block text-xs font-black uppercase tracking-widest text-gray-600">执行引擎</label>
+                <label class="block text-xs font-bold uppercase tracking-widest text-gray-600">执行引擎</label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-white text-xs font-bold text-blue-600 hover:bg-blue-50"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-white text-xs font-bold text-primary hover:bg-primary/5"
                   aria-label="查看执行引擎说明"
                   title="查看三个引擎的区别"
                   @click="showEngineHelp = true"
                 >?</button>
               </div>
               <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <button v-for="engine in [{ value: 'LOCAL', label: 'NanZi Engine', icon: '🧠', note: '平台原生编排' }, { value: 'RAGFLOW', label: 'RAGFlow', icon: '🌊', note: '外部智能体' }, { value: 'OPENCLAW', label: 'OpenClaw', icon: '🦞', note: '外部任务机器人' }]" :key="engine.value" type="button" :disabled="!isCreatingAgent" :title="!isCreatingAgent ? '执行引擎创建后不可修改' : undefined" @click="selectEngine(engine.value as any)" class="rounded-xl border-2 bg-white p-4 text-left transition-all" :class="[agentForm.engine_type === engine.value ? 'border-primary shadow-sm ring-1 ring-primary/10' : 'border-white hover:border-blue-200', !isCreatingAgent ? 'cursor-not-allowed' : '', !isCreatingAgent && agentForm.engine_type !== engine.value ? 'opacity-50' : '']">
-                  <div class="flex items-center gap-2"><span class="text-xl">{{ engine.icon }}</span><span class="text-sm font-bold text-gray-800">{{ engine.label }}</span></div><div class="mt-2 text-[11px] text-gray-500">{{ engine.note }}</div>
+                <button v-for="engine in [{ value: 'LOCAL', label: 'NanZi Engine', icon: CpuChipIcon, note: '平台原生编排' }, { value: 'RAGFLOW', label: 'RAGFlow', icon: CircleStackIcon, note: '外部智能体' }, { value: 'OPENCLAW', label: 'OpenClaw', icon: BoltIcon, note: '外部任务机器人' }]" :key="engine.value" type="button" :disabled="!isCreatingAgent" :title="!isCreatingAgent ? '执行引擎创建后不可修改' : undefined" @click="selectEngine(engine.value as any)" class="rounded-xl border-2 bg-white p-4 text-left transition-all" :class="[agentForm.engine_type === engine.value ? 'border-primary shadow-sm ring-1 ring-primary/10' : 'border-white hover:border-blue-200', !isCreatingAgent ? 'cursor-not-allowed' : '', !isCreatingAgent && agentForm.engine_type !== engine.value ? 'opacity-50' : '']">
+                  <div class="flex items-center gap-2"><span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" :class="agentForm.engine_type === engine.value ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'"><component :is="engine.icon" class="h-4 w-4" aria-hidden="true" /></span><span class="text-sm font-bold text-gray-800">{{ engine.label }}</span></div><div class="mt-2 text-[11px] text-gray-500">{{ engine.note }}</div>
                 </button>
               </div>
             </div>
@@ -849,15 +858,18 @@ const externalCreationMissingFields = computed(() => {
                 <label class="text-sm font-medium text-gray-700">智能体类型 <span class="text-red-500">*</span></label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-xs font-bold text-primary hover:bg-primary/10"
                   aria-label="查看智能体类型说明"
                   title="查看智能体类型差异"
                   @click="showAgentTypeHelp = true"
                 >?</button>
               </div>
               <div v-if="isCreatingAgent" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <button v-for="option in agentTypes" :key="option.value" type="button" @click="selectAgentType(option.value)" class="rounded-xl border p-4 text-left transition-all" :class="agentForm.agent_type === option.value ? 'border-primary bg-blue-50 ring-1 ring-primary/20' : 'border-gray-200 hover:border-blue-300'">
-                  <div class="font-bold text-gray-900"><span class="mr-2">{{ option.icon }}</span>{{ option.label }}</div>
+                <button v-for="option in agentTypes" :key="option.value" type="button" @click="selectAgentType(option.value)" class="rounded-xl border p-4 text-left transition-all" :class="agentForm.agent_type === option.value ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-gray-200 hover:border-primary/25'">
+                  <div class="flex items-center gap-2 font-bold text-gray-900">
+                    <component :is="option.icon" class="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                    <span>{{ option.label }}</span>
+                  </div>
                   <p class="mt-2 text-xs leading-5 text-gray-500">{{ option.description }}</p>
                 </button>
               </div>
@@ -865,7 +877,7 @@ const externalCreationMissingFields = computed(() => {
             </div>
             <div
               v-else-if="agentForm.engine_type === 'RAGFLOW' || agentForm.engine_type === 'OPENCLAW'"
-              class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600"
+              class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs text-gray-600"
             >
               <div class="font-semibold text-gray-800">智能体类型：通用助手</div>
               <p class="mt-1 leading-5">
@@ -877,7 +889,7 @@ const externalCreationMissingFields = computed(() => {
               <textarea v-model="agentForm.description" rows="4" placeholder="说明它负责什么业务，以及适合处理哪些问题。" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"></textarea>
             </div>
             <div v-if="agentForm.engine_type !== 'LOCAL'" class="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-4">
-              <label class="block text-xs font-black uppercase tracking-widest text-gray-500">引擎参数</label>
+              <label class="block text-xs font-bold uppercase tracking-widest text-gray-500">引擎参数</label>
               <div v-if="agentForm.engine_type === 'RAGFLOW'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label class="mb-1 block text-xs font-medium text-gray-700">RAGFlow App ID <span class="text-red-500">*</span></label><input v-model="engineConfig.app_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="App / Dialog ID" /></div>
                 <div><label class="mb-1 block text-xs font-medium text-gray-700">默认 Dataset IDs</label><div class="flex gap-2"><input v-model="engineConfig.dataset_ids" class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="多个 ID 逗号分隔" /><button type="button" @click="emit('openRagSelector', 'dataset', 'dataset_ids')" class="rounded-lg border bg-white px-3 text-xs text-gray-600">选择</button></div></div>
@@ -907,16 +919,16 @@ const externalCreationMissingFields = computed(() => {
                 <label class="text-sm font-bold text-gray-800">扩展能力标签</label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-xs font-bold text-primary hover:bg-primary/10"
                   aria-label="查看扩展能力标签说明"
                   title="查看扩展能力标签说明"
                   @click="showCapabilityHelp = true"
                 >?</button>
               </div>
               <p class="mt-1 text-xs text-gray-500">主类型能力由系统锁定；这里可补充 contract_review 等自定义路由标签。</p>
-              <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
-                <div class="text-[10px] font-bold uppercase tracking-wider text-blue-600">系统内置标签</div>
-                <span class="mt-2 inline-flex items-center rounded-full border border-blue-200 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-blue-700">🔒 {{ lockedPrimaryCapability }}</span>
+              <div class="mt-3 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2">
+                <div class="text-[10px] font-bold uppercase tracking-wider text-primary">系统内置标签</div>
+                <span class="mt-2 inline-flex items-center rounded-full border border-primary/20 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-primary-dark"> {{ lockedPrimaryCapability }}</span>
               </div>
               <div class="mt-3 flex gap-2"><input v-model="newCapability" @keyup.enter="addCapability" placeholder="输入标签并回车" class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" /><button type="button" @click="addCapability" class="rounded-lg bg-gray-100 px-4 text-xs font-medium text-gray-700">添加</button></div>
               <div class="mt-3 flex min-h-8 flex-wrap gap-2"><span v-for="capability in extensionCapabilities" :key="capability" class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{{ capability }}<button type="button" @click="removeCapability(capability)" class="ml-1 text-gray-400 hover:text-red-500">×</button></span><span v-if="extensionCapabilities.length === 0" class="text-xs text-gray-400">暂无扩展能力</span></div>
@@ -925,7 +937,7 @@ const externalCreationMissingFields = computed(() => {
             <!-- 知识库检索范围确认：智能体级 engine_config，保存版本时一并同步 -->
             <div
               v-if="agentForm.agent_type === 'KNOWLEDGE_BASE'"
-              class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"
+              class="rounded-xl border border-primary/10 bg-primary/5 p-4"
             >
               <label class="text-sm font-bold text-gray-800">知识库检索范围确认</label>
               <p class="mt-1 text-xs leading-5 text-gray-500">
@@ -942,7 +954,7 @@ const externalCreationMissingFields = computed(() => {
                 <label class="text-sm font-bold text-gray-800">推荐排版样式</label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-xs font-bold text-primary hover:bg-primary/10"
                   aria-label="查看排版样式效果预览说明"
                   title="查看排版样式效果预览说明"
                   @click="previewTheme = normalizeMarkdownTheme(agentForm.engine_config?.default_markdown_theme); showThemePreviewHelp = true"
@@ -963,7 +975,7 @@ const externalCreationMissingFields = computed(() => {
                   class="py-2 px-3 text-xs border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1.5 active:scale-95"
                   :class="
                     (agentForm.engine_config?.default_markdown_theme || 'default') === themeOpt.value
-                      ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm font-bold'
+                      ? 'bg-primary/5 border-primary/20 text-primary shadow-sm font-bold'
                       : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                   "
                 >
@@ -1017,7 +1029,7 @@ const externalCreationMissingFields = computed(() => {
                     :value="versionForm.temperature"
                     @input="versionForm.temperature = Number(($event.target as HTMLInputElement).value)"
                     :disabled="!canEditVersion"
-                    class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
                   />
                   <p class="mt-2 text-[11px] leading-4 text-gray-500">
                     当前 {{ formatTemperature(versionForm.temperature) }}：{{ getTemperatureGuidance(versionForm.temperature) }}
@@ -1227,7 +1239,7 @@ const externalCreationMissingFields = computed(() => {
                 </button>
               </div>
             </div>
-            <div class="mb-4 flex-shrink-0 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
+            <div class="mb-4 flex-shrink-0 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
@@ -1599,16 +1611,16 @@ const externalCreationMissingFields = computed(() => {
             <!-- MCP Tools -->
             <div v-else-if="toolTab === 'mcp'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
               <!-- MCP Scope Tab 选项卡：平台 MCP / 我的 MCP -->
-              <div class="flex items-center justify-between border-b border-indigo-100 dark:border-gray-800 pb-2 mb-1 sticky top-0 bg-white dark:bg-gray-900 z-10">
+              <div class="flex items-center justify-between border-b border-primary/10 dark:border-gray-800 pb-2 mb-1 sticky top-0 bg-white dark:bg-gray-900 z-10">
                 <div class="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 p-0.5 rounded-lg text-xs">
                   <button
                     type="button"
                     @click="mcpSubTab = 'global'"
                     class="px-3 py-1 font-semibold rounded-md transition-all flex items-center gap-1.5"
-                    :class="mcpSubTab === 'global' ? 'bg-white shadow-sm text-indigo-600 dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+                    :class="mcpSubTab === 'global' ? 'bg-white shadow-sm text-primary dark:bg-gray-700 dark:text-primary-hover' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
                   >
                     <span>平台 MCP</span>
-                    <span class="px-1.5 py-0.2 text-[9px] rounded-full font-mono" :class="mcpSubTab === 'global' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'">
+                    <span class="px-1.5 py-0.2 text-[9px] rounded-full font-mono" :class="mcpSubTab === 'global' ? 'bg-primary/10 text-primary-dark' : 'bg-gray-200 text-gray-600'">
                       {{ globalMcpToolsCount }}
                     </span>
                   </button>
@@ -1636,7 +1648,7 @@ const externalCreationMissingFields = computed(() => {
                   @click="mcpGroupFilter = ''"
                   class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
                   :class="mcpGroupFilter === ''
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'"
                 >全部
                   <span
@@ -1652,7 +1664,7 @@ const externalCreationMissingFields = computed(() => {
                   :title="option.key === MCP_UNGROUPED_KEY ? '没有填业务分组、或只看未分组的服务' : `只看「${option.label}」分组的 MCP 工具`"
                   class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors max-w-[12rem]"
                   :class="mcpGroupFilter === option.key
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'"
                 >
                   <span class="truncate">{{ option.label }}</span>
@@ -1676,50 +1688,50 @@ const externalCreationMissingFields = computed(() => {
                 :key="serverName"
                 class="rounded-lg border overflow-hidden transition-colors"
                 :class="mcpGroupState(tools) === 'all'
-                  ? 'border-indigo-300'
+                  ? 'border-primary/25'
                   : mcpGroupState(tools) === 'some'
-                    ? 'border-indigo-200'
-                    : 'border-indigo-100'"
+                    ? 'border-primary/20'
+                    : 'border-primary/10'"
               >
                 <div
                   class="flex items-center justify-between border-b py-2 px-3 border-l-4 transition-colors"
                   :class="mcpGroupState(tools) === 'all'
-                    ? 'border-b-indigo-200 border-l-indigo-500 bg-indigo-100'
+                    ? 'border-b-indigo-200 border-l-indigo-500 bg-primary/10'
                     : mcpGroupState(tools) === 'some'
-                      ? 'border-b-indigo-100 border-l-indigo-300 bg-indigo-50/80'
-                      : 'border-b-indigo-100/50 border-l-transparent bg-indigo-50/60'"
+                      ? 'border-b-indigo-100 border-l-indigo-300 bg-primary/5'
+                      : 'border-b-indigo-100/50 border-l-transparent bg-primary/5'"
                 >
                   <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isFiltering" :title="isFiltering ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠' : ''" :class="isFiltering ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
-                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isFiltering }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-3.5 h-3.5 text-primary transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isFiltering }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="min-w-0 flex-1">
                       <span
                         class="text-[10px] font-bold uppercase truncate block"
-                        :class="mcpGroupState(tools) === 'all' ? 'text-indigo-900' : 'text-indigo-700'"
+                        :class="mcpGroupState(tools) === 'all' ? 'text-primary-dark' : 'text-primary'"
                         :title="tools[0]?.server_remark ? `${serverName} · ${tools[0].server_remark}` : String(serverName)"
                       >{{ serverName }}</span>
                       <span
                         v-if="tools[0]?.server_remark"
-                        class="text-[10px] text-indigo-400/90 font-normal normal-case truncate block leading-snug mt-0.5"
+                        class="text-[10px] text-primary/90 font-normal normal-case truncate block leading-snug mt-0.5"
                       >{{ tools[0].server_remark }}</span>
                     </span>
                     <span v-if="tools[0]?.scope === 'personal'" class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 flex-shrink-0">
                       个人
                     </span>
-                    <span v-else class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 flex-shrink-0">
+                    <span v-else class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover flex-shrink-0">
                       平台
                     </span>
                     <span
                       class="shrink-0 rounded px-1.5 py-0.5 text-[10px] transition-colors"
                       :class="mcpGroupState(tools) === 'all'
-                        ? 'bg-indigo-600 font-bold text-white'
+                        ? 'bg-primary font-bold text-white'
                         : mcpGroupState(tools) === 'some'
-                          ? 'bg-indigo-100 font-semibold text-indigo-700'
-                          : 'text-indigo-400'"
+                          ? 'bg-primary/10 font-semibold text-primary-dark'
+                          : 'text-primary'"
                     >({{ mcpGroupCounts(serverName).selected }}/{{ mcpGroupCounts(serverName).total }})</span>
                   </button>
-                  <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">
+                  <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-primary hover:text-primary-dark ml-2 flex-shrink-0">
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}
                   </button>
                 </div>
@@ -1901,13 +1913,13 @@ const externalCreationMissingFields = computed(() => {
                 <button type="button" :disabled="!canEditVersion" @click="setWelcomeMode('manual')" class="flex-1 rounded-md px-3 py-2" :class="welcomeConfig.mode === 'manual' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'">人工编辑</button>
                 <button type="button" :disabled="!canEditVersion" @click="setWelcomeMode('ai')" class="flex-1 rounded-md px-3 py-2" :class="welcomeConfig.mode === 'ai' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'">随机自动推荐</button>
               </div>
-              <div v-if="welcomeConfig.mode === 'ai'" class="rounded-xl border border-violet-100 bg-violet-50/60 p-4">
-                <label class="mb-2 block text-xs font-bold text-violet-900">其他推荐要求（可选）</label>
-                <textarea v-model="welcomeConfig.generation_requirement" :disabled="!canEditVersion" rows="2" placeholder="例如：优先推荐月度经营分析和异常排查问题" class="w-full resize-none rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-200"></textarea>
-                <p class="mt-3 text-xs leading-5 text-violet-700">每次打开欢迎页时自动推荐 3 张业务卡片；同一智能体在 5 分钟内复用同一组推荐。</p>
-                <div class="mt-3 rounded-lg border border-violet-200/80 bg-white/70 px-3 py-2.5 text-xs leading-5 text-violet-800">
+              <div v-if="welcomeConfig.mode === 'ai'" class="rounded-xl border border-primary/10 bg-primary/5 p-4">
+                <label class="mb-2 block text-xs font-bold text-primary-dark">其他推荐要求（可选）</label>
+                <textarea v-model="welcomeConfig.generation_requirement" :disabled="!canEditVersion" rows="2" placeholder="例如：优先推荐月度经营分析和异常排查问题" class="w-full resize-none rounded-lg border border-primary/20 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20"></textarea>
+                <p class="mt-3 text-xs leading-5 text-primary-dark">每次打开欢迎页时自动推荐 3 张业务卡片；同一智能体在 5 分钟内复用同一组推荐。</p>
+                <div class="mt-3 rounded-lg border border-primary/20 bg-white/70 px-3 py-2.5 text-xs leading-5 text-primary-dark">
                   <p class="font-bold">默认推荐规则</p>
-                  <ul class="mt-1 list-disc space-y-0.5 pl-4 text-violet-700">
+                  <ul class="mt-1 list-disc space-y-0.5 pl-4 text-primary-dark">
                     <li>参考智能体名称、业务描述、系统提示词摘要和上述额外要求。</li>
                     <li>生成 3 个业务强相关、可直接点击执行的问题，并匹配合适图标、主标题和副标题。</li>
                     <li>缓存到期后才生成新一组；生成失败时回退平台默认三卡片。</li>
@@ -1975,20 +1987,20 @@ const externalCreationMissingFields = computed(() => {
 
             <!-- 新建流程的系统级说明放在最后一步：前四步还没有可发布内容，提前讲只会占位。
                  系统级只能走「发布为系统级 / 申请发布为系统级」审批，外部引擎不支持。 -->
-            <div v-if="isCreatingAgent" class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <div v-if="isCreatingAgent" class="rounded-xl border border-primary/10 bg-primary/5 p-4">
               <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 text-base leading-none">💡</span>
+                <LightBulbIcon class="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
                 <div class="space-y-1">
-                  <p class="text-sm font-bold text-blue-900">温馨提示</p>
-                  <p v-if="agentForm.engine_type === 'LOCAL'" class="text-xs leading-relaxed text-blue-900/70">
-                    这里创建的是<strong class="text-blue-900">普通智能体</strong>，保存后即可手动对话。
+                  <p class="text-sm font-bold text-primary-dark">温馨提示</p>
+                  <p v-if="agentForm.engine_type === 'LOCAL'" class="text-xs leading-relaxed text-primary-dark/70">
+                    这里创建的是<strong class="text-primary-dark">普通智能体</strong>，保存后即可手动对话。
                     若需要进入主助手的自动委派候选，请保存后走
-                    <strong class="text-blue-900">「发布为系统级」</strong>或<strong class="text-blue-900">「申请发布为系统级」</strong>的
-                    <strong class="text-blue-900">系统发布审批流程</strong>（要求至少已发布一个版本；每次上架/下架都会记录并通知相关人）。
+                    <strong class="text-primary-dark">「发布为系统级」</strong>或<strong class="text-primary-dark">「申请发布为系统级」</strong>的
+                    <strong class="text-primary-dark">系统发布审批流程</strong>（要求至少已发布一个版本；每次上架/下架都会记录并通知相关人）。
                   </p>
-                  <p v-else class="text-xs leading-relaxed text-blue-900/70">
-                    外部引擎智能体固定为<strong class="text-blue-900">普通智能体</strong>，
-                    <strong class="text-blue-900">不支持设为系统级</strong>——只有 NanZi Engine 有平台侧版本可发布。
+                  <p v-else class="text-xs leading-relaxed text-primary-dark/70">
+                    外部引擎智能体固定为<strong class="text-primary-dark">普通智能体</strong>，
+                    <strong class="text-primary-dark">不支持设为系统级</strong>——只有 NanZi Engine 有平台侧版本可发布。
                   </p>
                 </div>
               </div>
@@ -2086,11 +2098,11 @@ const externalCreationMissingFields = computed(() => {
               <h4 class="text-sm font-bold text-gray-900">如何影响路由</h4>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">Main 会构建“能力 → 子智能体”映射。多个智能体拥有相同标签时，优先选择排序权重更高且当前用户有权限调用的智能体。</p>
             </section>
-            <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <section class="rounded-xl border border-primary/10 bg-primary/5 p-4">
               <h4 class="text-sm font-bold text-gray-900">如何填写</h4>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">建议填写 1～3 个简短、明确的小写英文标签，使用下划线分词，例如 <code class="rounded bg-white px-1">contract_review</code>、<code class="rounded bg-white px-1">ops_diagnosis</code>、<code class="rounded bg-white px-1">content_writing</code>。</p>
             </section>
-            <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <section class="rounded-xl border border-primary/10 bg-primary/5 p-4">
               <h4 class="text-sm font-bold text-gray-900">示例</h4>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">“擅长审核销售合同并识别风险条款”的通用助手，可填写 <code class="rounded bg-white px-1">contract_review</code>。合同审核问题会更容易路由到它。</p>
             </section>
@@ -2140,32 +2152,32 @@ const externalCreationMissingFields = computed(() => {
         <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
           <div class="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">💬</span>
+              <span class="text-xl"><ChatBubbleLeftRightIcon class="h-5 w-5" aria-hidden="true" /></span>
               <div>
                 <h4 class="text-sm font-bold text-gray-900">通用助手</h4>
-                <div class="mt-0.5 font-mono text-[10px] text-blue-600">general_chat</div>
+                <div class="mt-0.5 font-mono text-[10px] text-primary">general_chat</div>
               </div>
             </div>
             <p class="mt-2 text-sm leading-relaxed text-gray-600">
               通用型智能体。配置相应工具后即可获得对应能力，适合问答、写作、任务处理和大部分通用场景。
             </p>
           </div>
-          <div class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+          <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">📊</span>
+              <span class="text-xl"><ChartBarIcon class="h-5 w-5" aria-hidden="true" /></span>
               <div>
                 <h4 class="text-sm font-bold text-gray-900">ChatBI</h4>
-                <div class="mt-0.5 font-mono text-[10px] text-blue-600">data_query</div>
+                <div class="mt-0.5 font-mono text-[10px] text-primary">data_query</div>
               </div>
             </div>
             <p class="mt-2 text-sm leading-relaxed text-gray-600">
               专注数据库查数、指标统计和数据分析，执行 Schema、权限、SQL 安全与结果校验等门禁，不能回答非查数需求。
             </p>
-            <p class="mt-2 text-xs leading-5 text-blue-700">查数工具必填；数据集可选，未显式绑定时，自动使用当前用户有权访问的数据集。</p>
+            <p class="mt-2 text-xs leading-5 text-primary-dark">查数工具必填；数据集可选，未显式绑定时，自动使用当前用户有权访问的数据集。</p>
           </div>
           <div class="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">📚</span>
+              <span class="text-xl"><BookOpenIcon class="h-5 w-5" aria-hidden="true" /></span>
               <div>
                 <h4 class="text-sm font-bold text-gray-900">知识库助手</h4>
                 <div class="mt-0.5 font-mono text-[10px] text-emerald-600">knowledge_base</div>
@@ -2213,9 +2225,9 @@ const externalCreationMissingFields = computed(() => {
           </button>
         </div>
         <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
-          <div class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+          <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">🧠</span>
+              <span class="text-xl"><CpuChipIcon class="h-5 w-5" aria-hidden="true" /></span>
               <h4 class="text-sm font-bold text-gray-900">NanZi Engine（平台原生）</h4>
             </div>
             <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -2229,7 +2241,7 @@ const externalCreationMissingFields = computed(() => {
           </div>
           <div class="rounded-xl border border-cyan-100 bg-cyan-50/40 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">🌊</span>
+              <span class="text-xl"><CircleStackIcon class="h-5 w-5" aria-hidden="true" /></span>
               <h4 class="text-sm font-bold text-gray-900">RAGFlow（外部智能体）</h4>
             </div>
             <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -2243,7 +2255,7 @@ const externalCreationMissingFields = computed(() => {
           </div>
           <div class="rounded-xl border border-orange-100 bg-orange-50/40 p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xl">🦞</span>
+              <span class="text-xl"><BoltIcon class="h-5 w-5" aria-hidden="true" /></span>
               <h4 class="text-sm font-bold text-gray-900">OpenClaw（外部任务机器人）</h4>
             </div>
             <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -2291,7 +2303,7 @@ const externalCreationMissingFields = computed(() => {
           class="py-2 px-1 rounded-lg text-[10px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 active:scale-95"
           :class="
             previewTheme === themeOpt.value
-              ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200/50 dark:border-gray-700'
+              ? 'bg-white dark:bg-gray-800 text-primary dark:text-primary shadow-sm border border-gray-200/50 dark:border-gray-700'
               : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
           "
         >
@@ -2301,7 +2313,7 @@ const externalCreationMissingFields = computed(() => {
       </div>
       
       <!-- 效果预览区域 -->
-      <div class="border border-gray-150 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
+      <div class="border border-gray-200 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
         <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">样式效果预览</div>
         
         <!-- 使用真实的 MessageRenderer 展示排版效果 -->
@@ -2317,7 +2329,7 @@ const externalCreationMissingFields = computed(() => {
       <div class="flex justify-end gap-3">
         <button
           @click="applyPreviewTheme"
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition-all"
+          class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-medium shadow-sm transition-all"
         >
           使用该样式
         </button>

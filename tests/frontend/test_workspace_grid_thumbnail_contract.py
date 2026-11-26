@@ -55,8 +55,8 @@ def test_thumbnail_falls_back_to_emoji_on_error():
     assert '@error="onThumbError(item.path)"' in grid
     assert "!thumbFailed[item.path]" in grid
     assert "const onThumbError = (path: string)" in source
-    # 回退分支保留 emoji（文件夹与其它类型都靠它）
-    assert 'fileEmoji(item.name)' in grid
+    # 回退分支保留类型图标（文件夹与其它类型都靠它，现在是 SVG 而非 emoji）
+    assert 'fileIcon(item.name, item.is_dir)' in grid
 
 
 def test_only_previewable_extensions_get_a_thumbnail():
@@ -79,7 +79,7 @@ def test_media_area_keeps_card_heights_uniform():
     """大图相册风：图片、文件夹与文档共用同一个 aspect-[4/3] 满宽媒体区，保证同一行卡片等高。"""
     grid = _grid_block(_read())
     assert "aspect-[4/3] w-full" in grid
-    # emoji 走同一个媒体区，不再单独占一行
+    # 类型图标走同一个媒体区，不再单独占一行
     media = re.search(r'class="relative flex aspect-\[4/3\].*?</div>', grid, re.S)
     assert media, "找不到媒体区容器"
-    assert 'fileEmoji(item.name)' in media.group(0)
+    assert 'fileIcon(item.name, item.is_dir)' in media.group(0)

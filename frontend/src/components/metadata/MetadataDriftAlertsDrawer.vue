@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import { CheckCircleIcon,
+  MagnifyingGlassIcon,
+  TrashIcon,
+  ArrowPathIcon,
+  CircleStackIcon,
+  ArrowDownTrayIcon,
+  PlusCircleIcon,
+} from "@heroicons/vue/24/outline";
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import Modal from '@/components/Modal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
@@ -675,7 +683,7 @@ watch(
               </span>
               <span
                 v-else
-                class="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                class="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover border border-primary/20 dark:border-primary-dark"
               >
                 全库统筹大盘
               </span>
@@ -806,7 +814,7 @@ watch(
             type="button"
             class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
             :class="activeTab === 'all'
-              ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 font-semibold'
+              ? 'bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover font-semibold'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
             @click="activeTab = 'all'"
           >
@@ -830,7 +838,7 @@ watch(
 
         <div class="text-xs flex items-center gap-1.5">
           <span v-if="!canEdit" class="inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800 text-[11px]">
-            🔒 仅浏览模式 (需编辑权限进行处置)
+            仅浏览模式 (需编辑权限进行处置)
           </span>
           <span v-else class="text-slate-500 text-[11px]">
             系统检测建议 · 需管理员确认操作
@@ -871,7 +879,7 @@ watch(
               : 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:bg-rose-100/80'"
             @click="selectedTypeFilter = selectedTypeFilter === 'table_missing_in_db' ? 'all' : 'table_missing_in_db'"
           >
-            <span>🏢 物理表缺失</span>
+            <span>物理表缺失</span>
             <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-rose-200/80 text-rose-800 dark:bg-rose-900 dark:text-rose-200">
               {{ typeCounts.missing_table }}
             </span>
@@ -886,7 +894,7 @@ watch(
               : 'bg-amber-50/70 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800 hover:bg-amber-100/80'"
             @click="selectedTypeFilter = selectedTypeFilter === 'missing_in_db' ? 'all' : 'missing_in_db'"
           >
-            <span>🗑️ 字段缺失</span>
+            <span>字段缺失</span>
             <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-amber-200/80 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
               {{ typeCounts.missing_column }}
             </span>
@@ -897,12 +905,12 @@ watch(
             type="button"
             class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
             :class="selectedTypeFilter === 'type_mismatch'
-              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-semibold'
-              : 'bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/80'"
+              ? 'bg-primary text-white border-primary shadow-2xs font-semibold'
+              : 'bg-primary/5 dark:bg-primary-dark/30 text-primary-dark dark:text-primary-hover border-primary/20 dark:border-primary-dark hover:bg-primary/10'"
             @click="selectedTypeFilter = selectedTypeFilter === 'type_mismatch' ? 'all' : 'type_mismatch'"
           >
-            <span>🔄 类型不匹配</span>
-            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-indigo-200/80 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+            <span>类型不匹配</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-primary/20 text-primary-dark dark:bg-primary-dark dark:text-primary-hover">
               {{ typeCounts.type_mismatch }}
             </span>
           </button>
@@ -912,12 +920,12 @@ watch(
             type="button"
             class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
             :class="selectedTypeFilter === 'new_in_db'
-              ? 'bg-sky-600 text-white border-sky-600 shadow-2xs font-semibold'
-              : 'bg-sky-50/70 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100/80'"
+              ? 'bg-primary text-white border-primary shadow-2xs font-semibold'
+              : 'bg-sky-50/70 dark:bg-primary-dark/30 text-primary-dark dark:text-sky-300 border-sky-200 dark:border-primary-dark hover:bg-sky-100/80'"
             @click="selectedTypeFilter = selectedTypeFilter === 'new_in_db' ? 'all' : 'new_in_db'"
           >
-            <span>📥 物理新增字段</span>
-            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-sky-200/80 text-sky-800 dark:bg-sky-900 dark:text-sky-200">
+            <span>物理新增字段</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-sky-200/80 text-primary-dark dark:bg-primary-dark dark:text-sky-200">
               {{ typeCounts.new_column }}
             </span>
           </button>
@@ -927,12 +935,12 @@ watch(
             type="button"
             class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
             :class="selectedTypeFilter === 'missing_comment'
-              ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs font-semibold'
-              : 'bg-cyan-50/70 dark:bg-cyan-950/30 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800 hover:bg-cyan-100/80'"
+              ? 'bg-primary text-white border-primary shadow-2xs font-semibold'
+              : 'bg-cyan-50/70 dark:bg-primary-dark/30 text-cyan-700 dark:text-cyan-300 dark:text-cyan-300 border-cyan-200 dark:border-primary-dark hover:bg-cyan-100/80'"
             @click="selectedTypeFilter = selectedTypeFilter === 'missing_comment' ? 'all' : 'missing_comment'"
           >
-            <span>💬 备注缺失</span>
-            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-cyan-200/80 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200">
+            <span>备注缺失</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-cyan-200/80 text-cyan-700 dark:text-cyan-300 dark:bg-primary-dark dark:text-cyan-200">
               {{ typeCounts.missing_comment }}
             </span>
           </button>
@@ -946,7 +954,7 @@ watch(
             placeholder="搜索表名、字段名..."
             class="text-xs pl-7 pr-6 py-1 w-44 sm:w-56 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 transition-all placeholder:text-slate-400"
           />
-          <span class="absolute left-2 text-slate-400 text-xs pointer-events-none">🔍</span>
+          <MagnifyingGlassIcon class="pointer-events-none absolute left-2 h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
           <button
             v-if="searchKeyword"
             type="button"
@@ -975,17 +983,17 @@ watch(
             class="px-2.5 py-1 font-semibold rounded-lg bg-rose-700 hover:bg-rose-800 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
             @click="handleBatchResolve('drop_table', 'table_missing_in_db')"
           >
-            <span>🏢</span> 一键下线全部缺失表 ({{ pendingMissingTableCount }})
+            <ArrowDownTrayIcon class="h-3.5 w-3.5" aria-hidden="true" /> 一键下线全部缺失表 ({{ pendingMissingTableCount }})
           </button>
           <button
             v-if="pendingMismatchCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'type_mismatch')"
             type="button"
             :disabled="!canEdit || isBatchProcessing"
             :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
-            class="px-2.5 py-1 font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
+            class="px-2.5 py-1 font-semibold rounded-lg bg-primary hover:bg-primary-dark text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
             @click="handleBatchResolve('sync_type', 'type_mismatch')"
           >
-            <span>🔄</span> 一键同步全部类型差异 ({{ pendingMismatchCount }})
+            <ArrowPathIcon class="h-3.5 w-3.5" aria-hidden="true" /> 一键同步全部类型差异 ({{ pendingMismatchCount }})
           </button>
           <button
             v-if="pendingNewCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'new_in_db')"
@@ -995,7 +1003,7 @@ watch(
             class="px-2.5 py-1 font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
             @click="handleBatchResolve('add_column', 'new_in_db')"
           >
-            <span>📥</span> 一键收录全部新增字段 ({{ pendingNewCount }})
+            <PlusCircleIcon class="h-3.5 w-3.5" aria-hidden="true" /> 一键收录全部新增字段 ({{ pendingNewCount }})
           </button>
           <button
             v-if="pendingMissingCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'missing_in_db')"
@@ -1005,7 +1013,7 @@ watch(
             class="px-2.5 py-1 font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
             @click="handleBatchResolve('drop_column', 'missing_in_db')"
           >
-            <span>🗑️</span> 一键下线全部缺失字段 ({{ pendingMissingCount }})
+            <TrashIcon class="h-3.5 w-3.5" aria-hidden="true" /> 一键下线全部缺失字段 ({{ pendingMissingCount }})
           </button>
         </div>
       </div>
@@ -1016,7 +1024,7 @@ watch(
       </div>
 
       <div v-else-if="alerts.length === 0" class="py-12 text-center space-y-2">
-        <div class="text-3xl">🎉</div>
+        <div class="text-3xl"><CheckCircleIcon class="h-8 w-8" aria-hidden="true" /></div>
         <div class="text-sm font-medium text-slate-700 dark:text-slate-300">
           太棒了！当前没有待处理的 Schema 漂移告警
         </div>
@@ -1026,7 +1034,7 @@ watch(
       </div>
 
       <div v-else-if="filteredAlerts.length === 0" class="py-12 text-center space-y-2">
-        <div class="text-2xl">🔍</div>
+        <div class="text-2xl"><MagnifyingGlassIcon class="h-7 w-7" aria-hidden="true" /></div>
         <div class="text-sm font-medium text-slate-700 dark:text-slate-300">
           未找到符合当前筛选条件的差异项
         </div>
@@ -1050,9 +1058,9 @@ watch(
           :class="{
             'bg-rose-50/70 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/80': alert.status === 0 && alert.drift_type === 'table_missing_in_db',
             'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60': alert.status === 0 && alert.drift_type === 'missing_in_db',
-            'bg-sky-50/60 dark:bg-sky-950/20 border-sky-200 dark:border-sky-800/60': alert.status === 0 && alert.drift_type === 'new_in_db',
-            'bg-indigo-50/60 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-800/60': alert.status === 0 && alert.drift_type === 'type_mismatch',
-            'bg-cyan-50/60 dark:bg-cyan-950/20 border-cyan-200 dark:border-cyan-800/60': alert.status === 0 && alert.drift_type === 'missing_comment',
+            'bg-sky-50/60 dark:bg-primary-dark/20 border-sky-200 dark:border-sky-800/60': alert.status === 0 && alert.drift_type === 'new_in_db',
+            'bg-primary/5 dark:bg-primary-dark/20 border-primary/20 dark:border-primary/30': alert.status === 0 && alert.drift_type === 'type_mismatch',
+            'bg-cyan-50/60 dark:bg-primary-dark/20 border-cyan-200 dark:border-cyan-800/60': alert.status === 0 && alert.drift_type === 'missing_comment',
             'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 opacity-70': alert.status !== 0,
           }"
         >
@@ -1064,10 +1072,10 @@ watch(
                   v-if="isGlobalMode"
                   type="button"
                   title="点击仅筛选该数据集"
-                  class="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors flex items-center gap-1 cursor-pointer"
+                  class="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-primary/5 hover:bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover border border-primary/20 dark:border-primary-dark transition-colors flex items-center gap-1 cursor-pointer"
                   @click="selectedDatasetFilter = alert.dataset_id"
                 >
-                  <span>📦</span> {{ alert.dataset_name || `数据集 #${alert.dataset_id}` }}
+                  <CircleStackIcon class="h-3.5 w-3.5" aria-hidden="true" /> {{ alert.dataset_name || `数据集 #${alert.dataset_id}` }}
                 </button>
 
                 <span class="font-mono font-semibold text-sm text-slate-900 dark:text-slate-100">
@@ -1084,7 +1092,7 @@ watch(
                   v-if="alert.drift_type === 'table_missing_in_db'"
                   class="px-2 py-0.5 text-[11px] font-semibold rounded bg-rose-200/80 text-rose-800 dark:bg-rose-950/80 dark:text-rose-200 border border-rose-300 dark:border-rose-700"
                 >
-                  ⚠️ 物理表已不存在
+                  物理表已不存在
                 </span>
                 <span
                   v-else-if="alert.drift_type === 'missing_in_db'"
@@ -1094,19 +1102,19 @@ watch(
                 </span>
                 <span
                   v-else-if="alert.drift_type === 'new_in_db'"
-                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-sky-100 text-primary-dark dark:bg-primary-dark/40 dark:text-sky-300 border border-sky-200 dark:border-primary-dark"
                 >
                   物理库新增字段
                 </span>
                 <span
                   v-else-if="alert.drift_type === 'type_mismatch'"
-                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover border border-primary/20 dark:border-primary-dark"
                 >
                   物理类型不匹配
                 </span>
                 <span
                   v-else-if="alert.drift_type === 'missing_comment'"
-                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-cyan-100 text-cyan-700 dark:text-cyan-300 dark:bg-primary-dark/40 dark:text-cyan-300 border border-cyan-200 dark:border-primary-dark"
                 >
                   字段备注缺失
                 </span>
@@ -1183,7 +1191,7 @@ watch(
                   type="button"
                   :disabled="!canEdit || processingId === alert.id || isBatchProcessing"
                   :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
-                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-dark text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   @click="handleResolve(alert, 'sync_type')"
                 >
                   同步物理类型
@@ -1193,10 +1201,10 @@ watch(
                   type="button"
                   :disabled="!canEdit || processingId === alert.id || isBatchProcessing"
                   :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
-                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-dark text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   @click="handleResolve(alert, 'update_comment')"
                 >
-                  ✏️ 补备注
+                   补备注
                 </button>
                 <button
                   type="button"
@@ -1235,14 +1243,14 @@ watch(
   <Modal
     v-if="addColumnCurrent"
     :show="addColumnModal"
-    :title="`📥 收录新增字段 - ${addColumnCurrent.alert.table_name}.${addColumnCurrent.alert.column_name}`"
+    :title="`收录新增字段 - ${addColumnCurrent.alert.table_name}.${addColumnCurrent.alert.column_name}`"
     :size="'max-w-xl'"
     @close="closeAddColumn"
   >
     <div class="space-y-4">
       <!-- 分析中 -->
       <div v-if="addColumnCurrent.analyzing" class="py-8 text-center space-y-2">
-        <div class="text-3xl animate-pulse">🧠</div>
+        <div class="mx-auto h-7 w-7 rounded-full border-2 border-gray-200 border-t-primary animate-spin"></div>
         <div class="text-sm font-medium text-slate-700 dark:text-slate-300">正在调用大模型分析字段语义...</div>
         <div class="text-xs text-slate-400">依据同表字段术语、字段类型及样例值推断中文业务含义</div>
       </div>
@@ -1250,7 +1258,7 @@ watch(
       <!-- 分析失败降级 -->
       <div v-else-if="!addColumnCurrent.analysis" class="space-y-3">
         <div class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-300">
-          ⚠️ AI 语义分析不可用，仍可按默认方式收录该字段。<div class="text-xs mt-1 opacity-80">{{ addColumnCurrent.analysisError }}</div>
+          AI 语义分析不可用，仍可按默认方式收录该字段。<div class="text-xs mt-1 opacity-80">{{ addColumnCurrent.analysisError }}</div>
         </div>
         <p class="text-xs text-slate-500 dark:text-slate-400">
           默认将优先使用物理库字段注释作为中文术语；无注释时以英文物理名暂代，可稍后在数据集编辑中手动补充。
@@ -1262,16 +1270,16 @@ watch(
         <!-- 物理定义摘要 -->
         <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-slate-600 dark:text-slate-400">
-            <span>📦 数据集: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ addColumnCurrent.analysis.dataset_name || '-' }}</span></span>
-            <span>🔤 物理类型: <span class="text-slate-800 dark:text-slate-200 font-mono">{{ addColumnCurrent.analysis.physical_type || '-' }}</span></span>
-            <span>🗒️ 物理注释: <span class="text-slate-800 dark:text-slate-200">{{ addColumnCurrent.analysis.comment || '-' }}</span></span>
+            <span>数据集: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ addColumnCurrent.analysis.dataset_name || '-' }}</span></span>
+            <span>物理类型: <span class="text-slate-800 dark:text-slate-200 font-mono">{{ addColumnCurrent.analysis.physical_type || '-' }}</span></span>
+            <span>物理注释: <span class="text-slate-800 dark:text-slate-200">{{ addColumnCurrent.analysis.comment || '-' }}</span></span>
           </div>
           <div v-if="addColumnCurrent.analysis.sample_values && addColumnCurrent.analysis.sample_values.length > 0" class="text-slate-600 dark:text-slate-400">
-            📊 样例值: <span class="text-slate-800 dark:text-slate-200 font-mono break-all">{{ addColumnCurrent.analysis.sample_values.slice(0, 3).join('，') }}</span>
+            样例值: <span class="text-slate-800 dark:text-slate-200 font-mono break-all">{{ addColumnCurrent.analysis.sample_values.slice(0, 3).join('，') }}</span>
             <span class="text-slate-400">（共展示 3 条，仅辅助语义判断）</span>
           </div>
           <div v-if="addColumnCurrent.analysis.sibling_terms && addColumnCurrent.analysis.sibling_terms.length > 0" class="text-slate-600 dark:text-slate-400">
-            🧬 同表字段术语参考: <span class="text-slate-800 dark:text-slate-200">{{ addColumnCurrent.analysis.sibling_terms.join('、') }}</span>
+            同表字段术语参考: <span class="text-slate-800 dark:text-slate-200">{{ addColumnCurrent.analysis.sibling_terms.join('、') }}</span>
           </div>
         </div>
 
@@ -1318,7 +1326,7 @@ watch(
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-2">
           <span v-if="!addColumnCurrent.analysis || !addColumnCurrent.analysis.llm_succeeded" class="text-[11px] text-amber-600 dark:text-amber-400">
-            ⚠️ 未获取 AI 建议，将以默认方式收录
+            未获取 AI 建议，将以默认方式收录
           </span>
           <span v-else class="text-[11px] text-emerald-600 dark:text-emerald-400">✓ 已获取 AI 建议</span>
         </div>
@@ -1354,7 +1362,7 @@ watch(
     <div class="space-y-4">
       <!-- 分析中 -->
       <div v-if="updateCommentCurrent.analyzing" class="py-8 text-center space-y-2">
-        <div class="text-3xl animate-pulse">🧠</div>
+        <div class="mx-auto h-7 w-7 rounded-full border-2 border-gray-200 border-t-primary animate-spin"></div>
         <div class="text-sm font-medium text-slate-700 dark:text-slate-300">正在分析字段备注...</div>
         <div class="text-xs text-slate-400">优先采用物理库已有备注，否则由大模型依据业务术语与样例值推断</div>
       </div>
@@ -1362,7 +1370,7 @@ watch(
       <!-- 分析失败/无有效建议 -->
       <div v-else-if="!updateCommentCurrent.analysis || (updateCommentCurrent.analysis.from_source === 'none' && !updateCommentCurrent.analysis.description)" class="space-y-3">
         <div class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-300">
-          ⚠️ 物理库无有效备注且 AI 无法推断，请手动填写该字段的业务描述。<div class="text-xs mt-1 opacity-80">{{ updateCommentCurrent.analysisError }}</div>
+          物理库无有效备注且 AI 无法推断，请手动填写该字段的业务描述。<div class="text-xs mt-1 opacity-80">{{ updateCommentCurrent.analysisError }}</div>
         </div>
         <fieldset>
           <legend class="text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">业务描述 <span class="text-rose-500">*</span></legend>
@@ -1370,7 +1378,7 @@ watch(
             v-model="updateCommentDesc"
             rows="3"
             placeholder="请输入该字段的中文业务描述"
-            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400"
+            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-slate-400"
           ></textarea>
         </fieldset>
       </div>
@@ -1380,32 +1388,32 @@ watch(
         <!-- 物理定义 + 来源摘要 -->
         <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-slate-600 dark:text-slate-400">
-            <span>📦 数据集: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ updateCommentCurrent.analysis.dataset_name || '-' }}</span></span>
-            <span>🔤 物理类型: <span class="text-slate-800 dark:text-slate-200 font-mono">{{ updateCommentCurrent.analysis.physical_type || '-' }}</span></span>
-            <span>🏷️ 现有业务术语: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ updateCommentCurrent.analysis.current_term || '-' }}</span></span>
+            <span>数据集: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ updateCommentCurrent.analysis.dataset_name || '-' }}</span></span>
+            <span>物理类型: <span class="text-slate-800 dark:text-slate-200 font-mono">{{ updateCommentCurrent.analysis.physical_type || '-' }}</span></span>
+            <span>现有业务术语: <span class="text-slate-800 dark:text-slate-200 font-medium">{{ updateCommentCurrent.analysis.current_term || '-' }}</span></span>
           </div>
           <div class="text-slate-600 dark:text-slate-400">
-            📎 备注来源:
+            备注来源:
             <span
               class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
               :class="updateCommentCurrent.analysis.from_source === 'physical'
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                 : updateCommentCurrent.analysis.from_source === 'ai'
-                  ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300'
+                  ? 'bg-sky-100 text-primary-dark dark:bg-primary-dark/40 dark:text-sky-300'
                   : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'"
             >
               {{ updateCommentCurrent.analysis.from_source === 'physical' ? '物理库已有注释' : updateCommentCurrent.analysis.from_source === 'ai' ? 'AI 语义推断' : '手动填写' }}
             </span>
             <div v-if="updateCommentCurrent.analysis.from_source === 'physical' && updateCommentCurrent.analysis.comment" class="mt-1 text-slate-600 dark:text-slate-400">
-              🗒️ 物理库注释: <span class="text-slate-800 dark:text-slate-200">{{ updateCommentCurrent.analysis.comment }}</span>
+              物理库注释: <span class="text-slate-800 dark:text-slate-200">{{ updateCommentCurrent.analysis.comment }}</span>
             </div>
           </div>
           <div v-if="updateCommentCurrent.analysis.sample_values && updateCommentCurrent.analysis.sample_values.length > 0" class="text-slate-600 dark:text-slate-400">
-            📊 样例值: <span class="text-slate-800 dark:text-slate-200 font-mono break-all">{{ updateCommentCurrent.analysis.sample_values.slice(0, 3).join('，') }}</span>
+            样例值: <span class="text-slate-800 dark:text-slate-200 font-mono break-all">{{ updateCommentCurrent.analysis.sample_values.slice(0, 3).join('，') }}</span>
             <span class="text-slate-400">（共展示 3 条，仅辅助语义判断）</span>
           </div>
           <div v-if="updateCommentCurrent.analysis.sibling_terms && updateCommentCurrent.analysis.sibling_terms.length > 0" class="text-slate-600 dark:text-slate-400">
-            🧬 同表字段术语参考: <span class="text-slate-800 dark:text-slate-200">{{ updateCommentCurrent.analysis.sibling_terms.join('、') }}</span>
+            同表字段术语参考: <span class="text-slate-800 dark:text-slate-200">{{ updateCommentCurrent.analysis.sibling_terms.join('、') }}</span>
           </div>
         </div>
 
@@ -1416,7 +1424,7 @@ watch(
             v-model="updateCommentDesc"
             rows="3"
             placeholder="说明该字段存储什么、代表什么业务含义"
-            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400"
+            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-slate-400"
           ></textarea>
         </fieldset>
 
@@ -1427,7 +1435,7 @@ watch(
             v-model="updateCommentSynonymsInput"
             type="text"
             placeholder="如：mobile, phone, 手机号"
-            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400"
+            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-slate-400"
           />
         </fieldset>
 
@@ -1443,11 +1451,11 @@ watch(
           <span v-if="updateCommentCurrent.analysis && updateCommentCurrent.analysis.from_source === 'physical'" class="text-[11px] text-emerald-600 dark:text-emerald-400">
             ✓ 采用物理库现有注释
           </span>
-          <span v-else-if="updateCommentCurrent.analysis && updateCommentCurrent.analysis.llm_succeeded" class="text-[11px] text-sky-600 dark:text-sky-400">
+          <span v-else-if="updateCommentCurrent.analysis && updateCommentCurrent.analysis.llm_succeeded" class="text-[11px] text-primary dark:text-primary">
             ✓ 已获取 AI 建议
           </span>
           <span v-else class="text-[11px] text-amber-600 dark:text-amber-400">
-            ⚠️ 无 AI/物理注释建议，将沿用你填写的内容
+            无 AI/物理注释建议，将沿用你填写的内容
           </span>
         </div>
         <div class="flex items-center gap-2">
@@ -1461,7 +1469,7 @@ watch(
           <button
             type="button"
             :disabled="processingId === updateCommentCurrent.alert.id || !updateCommentDesc.trim()"
-            class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-dark text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             @click="confirmUpdateComment"
           >
             {{ processingId === updateCommentCurrent.alert.id ? '补录中...' : '确认补录' }}

@@ -11,7 +11,7 @@
           v-model="form.name"
           type="text"
           :disabled="readonly"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
           placeholder="例如：华东大区"
         />
       </label>
@@ -26,7 +26,7 @@
             'w-full rounded-lg border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-500 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800',
             codeAvailable === false
               ? 'border-red-400 focus:ring-red-500 dark:border-red-500/60'
-              : 'border-gray-300 focus:ring-blue-500 dark:border-gray-700'
+              : 'border-gray-300 focus:ring-primary dark:border-gray-700'
           ]"
           placeholder="EAST"
           @blur="onCodeBlur"
@@ -59,7 +59,7 @@
           v-model.number="form.sort_order"
           type="number"
           :disabled="readonly"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
         />
         <span class="mt-1 block text-[11px] text-gray-400">数值小的排前面；也可用左侧树上的 ↑↓。</span>
       </label>
@@ -69,7 +69,7 @@
         <select
           v-model.number="form.status"
           :disabled="readonly"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
         >
           <option :value="1">启用</option>
           <option :value="0">停用</option>
@@ -83,7 +83,7 @@
           v-model="form.description"
           :disabled="readonly"
           rows="2"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800"
           placeholder="可选说明"
         />
       </label>
@@ -97,7 +97,7 @@
     <div v-if="!readonly" class="flex items-center gap-2">
       <button
         type="button"
-        class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+        class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-50"
         :disabled="saving || codeAvailable === false || codeChecking"
         @click="onSave"
       >保存</button>

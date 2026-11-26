@@ -4,7 +4,7 @@
     class="flex items-center gap-3 rounded-xl border border-gray-200/80 bg-white px-3.5 py-2.5 shadow-xs dark:border-gray-800 dark:bg-gray-900/40"
   >
     <span
-      class="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+      class="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px] bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
       aria-hidden="true"
     >
       <svg class="h-[14px] w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -21,7 +21,7 @@
 
     <button
       type="button"
-      class="shrink-0 rounded-[7px] border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:border-blue-200 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:text-blue-400"
+      class="shrink-0 rounded-[7px] border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:border-primary/20 hover:text-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:text-primary"
       @click="$emit('open-item', item)"
     >
       查看任务

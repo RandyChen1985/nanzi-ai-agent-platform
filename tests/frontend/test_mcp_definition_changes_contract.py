@@ -191,11 +191,15 @@ def test_drawer_actions_require_sync_permission() -> None:
 
 
 def test_registry_hides_change_badges_without_permission() -> None:
-    """没有 sync 权限的人看不到变更徽标与提示条：他们既不能应用也不能忽略。"""
+    """没有 sync 权限（或只读用户）看不到变更徽标与提示条：他们既不能应用也不能忽略。
+
+    只读用户（平台 MCP 页签现在对登录用户可见）同样不该看到这些入口：点进变更抽屉
+    会打 admin-only 的 ``/changes`` 并 403，所以条件里额外叠了 ``canSave``。
+    """
     registry = _read(REGISTRY)
-    assert 'v-if="canSyncMcp && Number(server.pending_change_count || 0) > 0"' in registry
-    assert 'v-if="canSyncMcp && !definitionHintDismissed && totalPendingChanges > 0"' in registry
-    assert 'v-if="canSyncMcp && tool.is_available !== false && hasChangedTool(tool)"' in registry
+    assert 'v-if="canSave && canSyncMcp && Number(server.pending_change_count || 0) > 0"' in registry
+    assert 'v-if="canSave && canSyncMcp && !definitionHintDismissed && totalPendingChanges > 0"' in registry
+    assert 'v-if="canSave && canSyncMcp && tool.is_available !== false && hasChangedTool(tool)"' in registry
 
 
 def test_tool_badge_chain_is_not_interrupted_by_change_badge() -> None:

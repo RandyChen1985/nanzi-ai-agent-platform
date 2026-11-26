@@ -197,13 +197,13 @@ const nextPage = () => {
         <!-- 弹窗顶栏 -->
         <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
           <div class="flex items-center gap-3">
-            <div class="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600">
+            <div class="p-2.5 rounded-xl bg-primary/5 border border-primary/10 text-primary">
               <DocumentTextIcon class="h-6 w-6" />
             </div>
             <div>
               <div class="flex items-center gap-2">
                 <h3 class="font-bold text-slate-800 text-lg">MCP 出站调用日志与链路审计</h3>
-                <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-700/10">
+                <span class="inline-flex items-center rounded-md bg-primary/5 px-2 py-0.5 text-xs font-semibold text-primary-dark ring-1 ring-inset ring-primary-dark/10">
                   {{ server?.server_name || '未知服务' }}
                 </span>
               </div>
@@ -232,7 +232,7 @@ const nextPage = () => {
               <CpuChipIcon class="h-4 w-4 text-slate-400" />
             </div>
             <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-2xl font-black text-slate-800">{{ metrics.total_calls.toLocaleString() }}</span>
+              <span class="text-2xl font-bold text-slate-800">{{ metrics.total_calls.toLocaleString() }}</span>
               <span class="text-[11px] text-slate-400">次</span>
             </div>
           </div>
@@ -247,7 +247,7 @@ const nextPage = () => {
             </div>
             <div class="mt-1 flex items-baseline gap-1">
               <span
-                class="text-2xl font-black"
+                class="text-2xl font-bold"
                 :class="metrics.success_rate >= 95 ? 'text-emerald-600' : metrics.success_rate >= 80 ? 'text-amber-600' : 'text-rose-600'"
               >
                 {{ metrics.success_rate }}%
@@ -262,7 +262,7 @@ const nextPage = () => {
               <ClockIcon class="h-4 w-4 text-slate-400" />
             </div>
             <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-2xl font-black text-indigo-600">{{ metrics.avg_latency_ms }}</span>
+              <span class="text-2xl font-bold text-primary">{{ metrics.avg_latency_ms }}</span>
               <span class="text-[11px] text-slate-400">ms</span>
             </div>
           </div>
@@ -274,7 +274,7 @@ const nextPage = () => {
             </div>
             <div class="mt-1 flex items-baseline gap-1">
               <span
-                class="text-2xl font-black"
+                class="text-2xl font-bold"
                 :class="metrics.failed_calls > 0 ? 'text-rose-600' : 'text-slate-700'"
               >
                 {{ metrics.failed_calls }}
@@ -331,7 +331,7 @@ const nextPage = () => {
                 @keyup.enter="handleFilterChange"
                 type="text"
                 placeholder="按工具名称过滤..."
-                class="w-44 rounded-lg border border-slate-200 bg-white py-1 pl-8 pr-2.5 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                class="w-44 rounded-lg border border-slate-200 bg-white py-1 pl-8 pr-2.5 text-xs text-slate-800 placeholder-slate-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
 
@@ -339,7 +339,7 @@ const nextPage = () => {
             <select
               v-model="statusFilter"
               @change="handleFilterChange"
-              class="rounded-lg border border-slate-200 bg-white py-1 px-2.5 text-xs text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="rounded-lg border border-slate-200 bg-white py-1 px-2.5 text-xs text-slate-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <option value="all">全部状态</option>
               <option value="success">仅成功 (Success)</option>
@@ -361,7 +361,7 @@ const nextPage = () => {
             :disabled="loading"
             class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition-colors disabled:opacity-50"
           >
-            <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-indigo-600' : 'text-slate-500'" />
+            <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-primary' : 'text-slate-500'" />
             刷新数据
           </button>
         </div>
@@ -369,7 +369,7 @@ const nextPage = () => {
         <!-- 日志列表表格区（可滚动） -->
         <div class="flex-1 overflow-y-auto bg-slate-50/50 p-4">
           <div v-if="loading && logs.length === 0" class="flex flex-col items-center justify-center h-64 text-slate-400">
-            <ArrowPathIcon class="h-8 w-8 animate-spin text-indigo-500 mb-2" />
+            <ArrowPathIcon class="h-8 w-8 animate-spin text-primary mb-2" />
             <p class="text-xs">正在查询 MCP 出站审计记录...</p>
           </div>
 
@@ -519,7 +519,7 @@ const nextPage = () => {
                       <button
                         type="button"
                         @click="copyContent('req_' + item.id, item.tool_input)"
-                        class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-indigo-600 transition-colors"
+                        class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-primary transition-colors"
                       >
                         <CheckIcon v-if="copiedKeys['req_' + item.id]" class="h-3.5 w-3.5 text-emerald-600" />
                         <ClipboardDocumentIcon v-else class="h-3.5 w-3.5" />
@@ -536,7 +536,7 @@ const nextPage = () => {
                       <button
                         type="button"
                         @click="copyContent('res_' + item.id, item.tool_output)"
-                        class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-indigo-600 transition-colors"
+                        class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-primary transition-colors"
                       >
                         <CheckIcon v-if="copiedKeys['res_' + item.id]" class="h-3.5 w-3.5 text-emerald-600" />
                         <ClipboardDocumentIcon v-else class="h-3.5 w-3.5" />

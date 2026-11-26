@@ -385,7 +385,7 @@ onActivated(() => {
                 <button
                     type="button"
                     class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
-                    :class="memoryView === 'daily' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                    :class="memoryView === 'daily' ? 'bg-primary text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
                     @click="switchMemoryView('daily')"
                 >
                     每日摘要
@@ -393,7 +393,7 @@ onActivated(() => {
                 <button
                     type="button"
                     class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
-                    :class="memoryView === 'session' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                    :class="memoryView === 'session' ? 'bg-primary text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
                     @click="switchMemoryView('session')"
                 >
                     会话摘要
@@ -401,7 +401,7 @@ onActivated(() => {
                 <button
                     type="button"
                     class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
-                    :class="memoryView === 'ltm' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                    :class="memoryView === 'ltm' ? 'bg-primary text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
                     @click="switchMemoryView('ltm')"
                 >
                     长期记忆
@@ -412,7 +412,7 @@ onActivated(() => {
                 <button
                     v-if="memoryView === 'ltm'"
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                    class="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-primary-dark active:scale-95"
                     @click="openLtmModal()"
                 >
                     <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
@@ -447,14 +447,14 @@ onActivated(() => {
                         <button
                             type="button"
                             class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50"
-                            :class="showMemoryDateFilter ? 'border-blue-300 text-blue-600' : ''"
+                            :class="showMemoryDateFilter ? 'border-primary/25 text-primary' : ''"
                             @click="showMemoryDateFilter = !showMemoryDateFilter"
                         >
                             日期筛选
                         </button>
                         <button
                             type="button"
-                            class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                            class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark active:scale-95"
                             @click="fetchMyDailySummaries"
                         >
                             查询
@@ -474,7 +474,7 @@ onActivated(() => {
             </div>
 
             <div v-if="dailyLoading" class="flex justify-center py-10">
-                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
             </div>
 
             <div v-else-if="myDailySummaries.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
@@ -486,7 +486,7 @@ onActivated(() => {
                 <div
                     v-for="row in myDailySummaries"
                     :key="row.date"
-                    class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-blue-50/30"
+                    class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-primary/5"
                     @click="openDailyDetail(row)"
                 >
                     <div class="flex items-start justify-between gap-3">
@@ -494,7 +494,7 @@ onActivated(() => {
                             <div class="flex flex-wrap items-center gap-2">
                                 <span class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 font-mono text-xs font-semibold text-gray-700">{{ row.date }}</span>
                                 <span class="truncate text-sm font-semibold text-gray-900">{{ row.title || '今日记忆' }}</span>
-                                <span class="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600">{{ row.session_count || 0 }} 个会话</span>
+                                <span class="rounded-full bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary">{{ row.session_count || 0 }} 个会话</span>
                             </div>
                             <p class="line-clamp-2 text-xs leading-relaxed text-gray-500">{{ row.summary || '暂无摘要' }}</p>
                             <p class="text-[10px] text-gray-400">更新于 {{ formatTime(row.last_active) }}</p>
@@ -502,7 +502,7 @@ onActivated(() => {
                         <div class="relative flex shrink-0 items-center gap-1" @click.stop>
                             <button
                                 type="button"
-                                class="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                                class="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/5"
                                 @click="openDailyDetail(row)"
                             >
                                 详情
@@ -539,7 +539,7 @@ onActivated(() => {
                 />
                 <button
                     type="button"
-                    class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                    class="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark active:scale-95"
                     @click="fetchMySessions"
                 >
                     查询
@@ -547,7 +547,7 @@ onActivated(() => {
             </div>
 
             <div v-if="sessionsLoading" class="flex justify-center py-10">
-                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
             </div>
 
             <div v-else-if="mySessions.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
@@ -559,7 +559,7 @@ onActivated(() => {
                 <div
                     v-for="session in mySessions"
                     :key="session.conversation_id"
-                    class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-blue-50/30"
+                    class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-primary/5"
                     @click="openSessionDetail(session)"
                 >
                     <div class="flex items-start justify-between gap-3">
@@ -571,7 +571,7 @@ onActivated(() => {
                                 </span>
                                 <span
                                     class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                                    :class="session.has_history ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400'"
+                                    :class="session.has_history ? 'bg-primary/5 text-primary' : 'bg-gray-50 text-gray-400'"
                                 >
                                     {{ session.has_history ? '含明细' : '无明细' }}
                                 </span>
@@ -582,7 +582,7 @@ onActivated(() => {
                         <div class="relative flex shrink-0 items-center gap-1" @click.stop>
                             <button
                                 type="button"
-                                class="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                                class="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/5"
                                 @click="openSessionDetail(session)"
                             >
                                 详情
@@ -614,7 +614,7 @@ onActivated(() => {
             </p>
 
             <div v-if="ltmLoading" class="flex justify-center py-10">
-                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
             </div>
 
             <div v-else-if="Object.keys(myLtm).length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
@@ -637,7 +637,7 @@ onActivated(() => {
                                 <td class="px-4 py-3 font-mono text-xs font-semibold text-gray-800">{{ key }}</td>
                                 <td class="px-4 py-3 whitespace-pre-wrap break-all leading-relaxed text-gray-600">{{ val }}</td>
                                 <td class="space-x-2 whitespace-nowrap px-4 py-3 text-right">
-                                    <button type="button" class="text-xs font-medium text-blue-600 hover:underline" @click="openLtmModal(String(key), String(val))">编辑</button>
+                                    <button type="button" class="text-xs font-medium text-primary hover:underline" @click="openLtmModal(String(key), String(val))">编辑</button>
                                     <button type="button" class="text-xs font-medium text-red-600 hover:underline" @click="confirmDeleteLtm(String(key))">删除</button>
                                 </td>
                             </tr>
@@ -656,7 +656,7 @@ onActivated(() => {
             @close="showSessionDetailModal = false"
         >
             <div v-if="sessionDetailLoading" class="flex justify-center py-10">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
             <div v-else class="space-y-4">
                 <div class="grid grid-cols-2 gap-3 text-xs bg-gray-50 p-3 rounded-lg border">
@@ -672,7 +672,7 @@ onActivated(() => {
 
                 <div v-if="sessionDetail?.summary" class="space-y-1">
                     <h4 class="text-sm font-semibold text-gray-800 border-b pb-1">会话摘要</h4>
-                    <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans bg-blue-50/20 p-3 rounded-lg border border-blue-100/50">{{ sessionDetail.summary }}</p>
+                    <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans bg-primary/5 p-3 rounded-lg border border-primary/10">{{ sessionDetail.summary }}</p>
                 </div>
 
                 <div
@@ -708,7 +708,7 @@ onActivated(() => {
                         <div v-for="(m, i) in sessionHistory" :key="i" class="text-sm flex items-start gap-2">
                             <span
                                 class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold mt-0.5 flex-shrink-0"
-                                :class="m.role === 'user' ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-700'"
+                                :class="m.role === 'user' ? 'bg-primary/10 text-primary-dark' : 'bg-gray-200 text-gray-700'"
                             >
                                 {{ m.role === 'user' ? '用户' : '助手' }}
                             </span>
@@ -758,7 +758,7 @@ onActivated(() => {
                     </button>
                     <button
                         type="submit"
-                        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 active:scale-95 transition-all shadow-sm"
+                        class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary-dark active:scale-95 transition-all shadow-sm"
                     >
                         确认保存
                     </button>
@@ -808,7 +808,7 @@ onActivated(() => {
             @close="showDailyDetailModal = false"
         >
             <div v-if="dailyDetailLoading" class="flex justify-center py-10">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
             <div v-else class="space-y-4">
                 <div class="grid grid-cols-2 gap-3 text-xs bg-gray-50 p-3 rounded-lg border">
@@ -824,7 +824,7 @@ onActivated(() => {
 
                 <div v-if="dailyDetail?.summary" class="space-y-1">
                     <h4 class="text-sm font-semibold text-gray-800 border-b pb-1">今日记忆摘要</h4>
-                    <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans bg-blue-50/20 p-3 rounded-lg border border-blue-100/50">{{ dailyDetail.summary }}</p>
+                    <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans bg-primary/5 p-3 rounded-lg border border-primary/10">{{ dailyDetail.summary }}</p>
                 </div>
 
                 <div
@@ -868,7 +868,7 @@ onActivated(() => {
                                 <span class="font-bold text-sm text-gray-900 truncate">{{ session.title || '无标题会话' }}</span>
                                 <span
                                     class="shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                    :class="session.has_history ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'"
+                                    :class="session.has_history ? 'bg-primary/10 text-primary-dark' : 'bg-gray-100 text-gray-500'"
                                 >
                                     {{ session.has_history ? '有 Redis 明细' : '无明细' }}
                                 </span>

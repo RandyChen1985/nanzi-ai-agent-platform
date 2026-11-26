@@ -195,6 +195,21 @@ const searchConvId = ref('')
 const searchLimit = ref(5)
 const searchLoading = ref(false)
 const searchResult = ref<any>(null)
+const showSearchRawJson = ref(false)
+// 后端 /memory/search-test 返回 { summaries: [...], history: [...], conversation_id? }。
+// summaries 是向量召回的记忆摘要，history 是对话历史原文（{role, content}）。
+// 必须分别渲染：history 没有 title/score，且 summaries 为空数组时也绝不能短路掉 history。
+const searchResultItems = computed<any[]>(() => {
+  const raw = searchResult.value
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  const summaries = Array.isArray(raw.summaries) ? raw.summaries : []
+  const history = Array.isArray(raw.history) ? raw.history : []
+  return [
+    ...summaries.map((item: Record<string, unknown>) => ({ ...item, __kind: 'summary' })),
+    ...history.map((item: Record<string, unknown>) => ({ ...item, __kind: 'history' })),
+  ]
+})
 
 const currentUserId = computed(() => {
   const u = userInfo.value
@@ -738,7 +753,7 @@ onMounted(async () => {
           :key="t.id"
           type="button"
           class="px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          :class="activeTab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+          :class="activeTab === t.id ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
           :disabled="!memoryFeaturesEnabled && !vectorChecking"
           @click="activeTab = t.id as any"
         >
@@ -752,7 +767,7 @@ onMounted(async () => {
       v-if="vectorChecking"
       class="flex items-center gap-3 py-8 justify-center bg-white border border-gray-200 rounded-lg shadow-sm"
     >
-      <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
       <span class="text-sm text-gray-600">正在检测 Redis 向量检索环境…</span>
     </div>
 
@@ -834,7 +849,7 @@ onMounted(async () => {
         <button
           v-if="canSave"
           type="button"
-          class="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 sm:w-auto sm:py-2"
+          class="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-primary-dark disabled:opacity-50 sm:w-auto sm:py-2"
           :disabled="savingConfig"
           @click="saveConfigs"
         >
@@ -916,7 +931,7 @@ onMounted(async () => {
       </div>
 
       <div v-if="configLoading" class="flex flex-col items-center justify-center py-16">
-        <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
         <p class="text-sm text-gray-500 mt-4">加载配置中...</p>
       </div>
 
@@ -955,7 +970,7 @@ onMounted(async () => {
                         <button
                           v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
                           type="button"
-                          class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                          class="text-gray-400 hover:text-primary dark:hover:text-primary transition-colors p-0.5 inline-flex items-center focus:outline-none"
                         >
                           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -980,7 +995,7 @@ onMounted(async () => {
                       @change="setConfigBool(key, ($event.target as HTMLInputElement).checked)"
                     />
                     <div
-                      class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-disabled:opacity-50 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"
+                      class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-primary peer-disabled:opacity-50 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/25 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"
                     />
                   </label>
                 </div>
@@ -993,7 +1008,7 @@ onMounted(async () => {
                       <button
                         v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
                         type="button"
-                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                        class="text-gray-400 hover:text-primary dark:hover:text-primary transition-colors p-0.5 inline-flex items-center focus:outline-none"
                       >
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1012,7 +1027,7 @@ onMounted(async () => {
                     type="number"
                     min="0"
                     step="1"
-                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:bg-gray-50 dark:bg-gray-900 dark:border-gray-600"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-primary focus:outline-none disabled:bg-gray-50 dark:bg-gray-900 dark:border-gray-600"
                     :value="getConfigNumber(key)"
                     :disabled="!canSave"
                     @input="setConfigNumber(key, ($event.target as HTMLInputElement).value)"
@@ -1027,7 +1042,7 @@ onMounted(async () => {
                       <button
                         v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
                         type="button"
-                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                        class="text-gray-400 hover:text-primary dark:hover:text-primary transition-colors p-0.5 inline-flex items-center focus:outline-none"
                       >
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1047,12 +1062,12 @@ onMounted(async () => {
                       v-model="getConfigItem(key)!.value"
                       :type="showSecrets[key] ? 'text' : 'password'"
                       :disabled="!canSave"
-                      class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-gray-900 dark:border-gray-600"
+                      class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none dark:bg-gray-900 dark:border-gray-600"
                       placeholder="留空则回退系统 LLM Key"
                     />
                     <button
                       type="button"
-                      class="px-3 text-xs text-blue-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+                      class="px-3 text-xs text-primary border border-gray-200 rounded-lg hover:bg-gray-50"
                       @click="showSecrets[key] = !showSecrets[key]"
                     >
                       {{ showSecrets[key] ? '隐藏' : '显示' }}
@@ -1068,7 +1083,7 @@ onMounted(async () => {
                       <button
                         v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
                         type="button"
-                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                        class="text-gray-400 hover:text-primary dark:hover:text-primary transition-colors p-0.5 inline-flex items-center focus:outline-none"
                       >
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1087,7 +1102,7 @@ onMounted(async () => {
                     v-model="getConfigItem(key)!.value"
                     type="text"
                     :disabled="!canSave"
-                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-gray-900 dark:border-gray-600"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none dark:bg-gray-900 dark:border-gray-600"
                   />
                 </div>
 
@@ -1121,7 +1136,7 @@ onMounted(async () => {
                 :key="view.id"
                 type="button"
                 class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-sm font-medium rounded-md transition-colors"
-                :class="dataView === view.id ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
+                :class="dataView === view.id ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-50'"
                 @click="switchDataView(view.id as 'daily' | 'session')"
               >
                 {{ view.label }}
@@ -1137,7 +1152,7 @@ onMounted(async () => {
               @click="runConsolidation"
             >
               <span v-if="consolidating" class="w-4 h-4 border-2 border-emerald-700 border-t-transparent rounded-full animate-spin" />
-              <span v-else>🧠</span>
+              <span v-else class="inline-block h-4 w-4 shrink-0" aria-hidden="true"></span>
               {{ consolidating ? '整理合并中…' : '一键整理合并' }}
             </button>
           </div>
@@ -1186,7 +1201,7 @@ onMounted(async () => {
             </div>
             <button
               type="button"
-              class="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm disabled:opacity-50"
+              class="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark shadow-sm disabled:opacity-50"
               :disabled="dataLoading"
               @click="fetchMemoryData"
             >
@@ -1197,7 +1212,7 @@ onMounted(async () => {
 
         <div class="w-full bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm dark:border-gray-700">
           <div v-if="dataLoading" class="flex justify-center py-16">
-            <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
           <div v-else class="overflow-x-auto">
             <table v-if="dataView === 'daily'" class="w-full text-sm min-w-[760px]">
@@ -1240,7 +1255,7 @@ onMounted(async () => {
                   </td>
                   <td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{{ formatTime(row.last_active) }}</td>
                   <td class="px-3 py-2.5 whitespace-nowrap">
-                    <button type="button" class="text-blue-600 text-xs mr-3 hover:underline" @click="openDetail(row)">
+                    <button type="button" class="text-primary text-xs mr-3 hover:underline" @click="openDetail(row)">
                       详情
                     </button>
                     <button
@@ -1300,7 +1315,7 @@ onMounted(async () => {
                       <button
                         v-if="row.conversation_id"
                         type="button"
-                        class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-0.5 rounded transition-colors"
+                        class="text-gray-400 hover:text-primary dark:hover:text-primary p-0.5 rounded transition-colors"
                         title="复制完整会话 ID"
                         @click.stop="copyToClipboard(row.conversation_id)"
                       >
@@ -1321,7 +1336,7 @@ onMounted(async () => {
                   <td class="px-3 py-2.5 whitespace-nowrap">
                     <span
                       class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium"
-                      :class="row.has_history ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'"
+                      :class="row.has_history ? 'bg-primary/10 text-primary-dark' : 'bg-gray-100 text-gray-500'"
                     >
                       {{ row.has_history ? '有' : '无' }}
                     </span>
@@ -1333,7 +1348,7 @@ onMounted(async () => {
                   </td>
                   <td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{{ formatTime(row.last_active) }}</td>
                   <td class="px-3 py-2.5 whitespace-nowrap">
-                    <button type="button" class="text-blue-600 text-xs mr-3 hover:underline" @click="openDetail(row)">
+                    <button type="button" class="text-primary text-xs mr-3 hover:underline" @click="openDetail(row)">
                       明细
                     </button>
                     <button
@@ -1382,18 +1397,18 @@ onMounted(async () => {
             />
           </div>
           <div class="w-[calc(50%-0.375rem)] sm:w-auto">
-            <label class="text-xs text-gray-500 block mb-1">scope</label>
+            <label class="text-xs text-gray-500 block mb-1">检索范围</label>
             <select
               v-model="searchScope"
               class="border border-gray-300 rounded-lg px-2 py-2 text-sm w-full sm:w-32 bg-white shadow-sm dark:bg-gray-800"
             >
-              <option value="summary">summary</option>
-              <option value="history">history</option>
-              <option value="both">both</option>
+              <option value="summary">会话摘要</option>
+              <option value="history">对话历史</option>
+              <option value="both">全部</option>
             </select>
           </div>
           <div class="w-[calc(50%-0.375rem)] sm:w-auto">
-            <label class="text-xs text-gray-500 block mb-1">limit</label>
+            <label class="text-xs text-gray-500 block mb-1">返回条数</label>
             <input
               v-model.number="searchLimit"
               type="number"
@@ -1402,15 +1417,16 @@ onMounted(async () => {
             />
           </div>
           <div class="w-full sm:w-auto sm:flex-1 sm:min-w-[14rem]">
-            <label class="text-xs text-gray-500 block mb-1">conversation_id</label>
+            <label class="text-xs text-gray-500 block mb-1">限定会话 ID（可选）</label>
             <input
               v-model="searchConvId"
+              placeholder="留空则跨全部会话检索"
               class="border border-gray-300 rounded-lg px-2 py-2 text-sm w-full sm:w-56 bg-white shadow-sm dark:bg-gray-800 font-mono text-xs"
             />
           </div>
           <button
             type="button"
-            class="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm disabled:opacity-50"
+            class="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark shadow-xs disabled:opacity-50 transition-colors"
             :disabled="searchLoading"
             @click="runSearchTest"
           >
@@ -1427,10 +1443,60 @@ onMounted(async () => {
             @keyup.enter.ctrl="runSearchTest"
           />
         </div>
-        <pre
-          v-if="searchResult"
-          class="text-xs bg-white border border-gray-200 p-3 sm:p-4 rounded-lg overflow-auto max-h-96 shadow-sm break-all whitespace-pre-wrap sm:whitespace-pre sm:break-normal"
-        >{{ JSON.stringify(searchResult, null, 2) }}</pre>
+        <div v-if="searchResult" class="space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-xs font-medium text-gray-600">
+              命中结果：<span class="font-semibold text-gray-900 tabular-nums">{{ searchResultItems.length }}</span> 条
+            </div>
+            <button
+              type="button"
+              class="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              @click="showSearchRawJson = !showSearchRawJson"
+            >
+              {{ showSearchRawJson ? '收起原始 JSON' : '查看原始 JSON' }}
+            </button>
+          </div>
+
+          <div v-if="searchResultItems.length" class="space-y-2.5">
+            <article
+              v-for="(hit, idx) in searchResultItems"
+              :key="`${hit.__kind || 'item'}-${hit.id ?? hit.conversation_id ?? ''}-${idx}`"
+              class="rounded-xl border border-gray-200 bg-white p-3.5 shadow-xs dark:border-gray-700 dark:bg-gray-800"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-primary/10 px-1.5 text-[11px] font-semibold text-primary tabular-nums">{{ idx + 1 }}</span>
+                  <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+                    {{ hit.__kind === 'history' ? (hit.role === 'user' ? '用户消息' : '助手消息') : '记忆摘要' }}
+                  </span>
+                  <span class="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {{ hit.title || hit.conversation_title || hit.conversation_id || '命中记忆片段' }}
+                  </span>
+                  <span v-if="hit.source || hit.scope" class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    {{ hit.source || hit.scope }}
+                  </span>
+                </div>
+                <span v-if="hit.score != null" class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 tabular-nums">
+                  相似度 {{ typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score }}
+                </span>
+              </div>
+              <p class="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                {{ hit.summary || hit.content || hit.text || hit.snippet || '（无文本摘要）' }}
+              </p>
+              <div v-if="Array.isArray(hit.tags) && hit.tags.length" class="mt-2 flex flex-wrap gap-1.5">
+                <span v-for="t in hit.tags" :key="t" class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{{ t }}</span>
+              </div>
+            </article>
+          </div>
+          <div v-else class="rounded-xl border border-dashed border-gray-200 bg-gray-50/70 p-6 text-center text-xs text-gray-500">
+            本次检索未命中任何记忆条目，可换个问题或调整检索范围；也可点击右上角「查看原始 JSON」核对原始响应。
+          </div>
+
+          <pre
+            v-if="showSearchRawJson"
+            class="text-xs bg-white border border-gray-200 p-3 sm:p-4 rounded-xl overflow-auto max-h-96 shadow-xs break-all whitespace-pre-wrap sm:whitespace-pre sm:break-normal"
+          >{{ JSON.stringify(searchResult, null, 2) }}</pre>
+        </div>
       </template>
     </div>
     </div>
@@ -1444,7 +1510,7 @@ onMounted(async () => {
       @close="closeDetailModal"
     >
       <div v-if="detailLoading" class="flex justify-center py-12">
-        <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
       <div v-else class="space-y-4">
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-xs">
@@ -1528,7 +1594,7 @@ onMounted(async () => {
                 <span class="font-medium text-sm text-gray-900 truncate">{{ session.title || session.conversation_id }}</span>
                 <span
                   class="shrink-0 text-xs px-2 py-0.5 rounded-full"
-                  :class="session.has_history ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'"
+                  :class="session.has_history ? 'bg-primary/10 text-primary-dark' : 'bg-gray-100 text-gray-500'"
                 >
                   {{ session.has_history ? '有 history' : '无 history' }}
                 </span>
@@ -1548,7 +1614,7 @@ onMounted(async () => {
             <div v-for="(m, i) in detailHistory" :key="i" class="text-sm">
               <span
                 class="inline-block px-1.5 py-0.5 rounded text-xs font-medium mr-2"
-                :class="m.role === 'user' ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-700'"
+                :class="m.role === 'user' ? 'bg-primary/10 text-primary-dark' : 'bg-gray-200 text-gray-700'"
               >
                 {{ m.role }}
               </span>
@@ -1604,9 +1670,9 @@ onMounted(async () => {
       <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20" style="background-color: #9333ea; color: #ffffff;">
+               <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30" style="background-color: #9333ea; color: #ffffff;">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                </div>
                <div>
@@ -1626,7 +1692,7 @@ onMounted(async () => {
                :key="tab"
                @click="activeSpecsTab = tab as any"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-               :class="activeSpecsTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeSpecsTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'architecture' ? '核心架构与数据流 (Architecture & Data Flow)' :
                   tab === 'generation' ? '数据生成机制与参数 (Generation & Parameters)' : '记忆检索与最佳实践 (Retrieval & Best Practice)' }}
@@ -1637,9 +1703,9 @@ onMounted(async () => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Architecture -->
              <div v-if="activeSpecsTab === 'architecture'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-purple-50 to-indigo-50 border-l-4 border-purple-600 p-4 rounded-r-xl shadow-2xs">
-                   <h3 class="font-bold text-purple-900 mb-1">什么是跨会话长期记忆（Long-Term Memory）？</h3>
-                   <p class="text-xs text-purple-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-primary/5 to-primary/5 border-l-4 border-primary p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">什么是跨会话长期记忆（Long-Term Memory）？</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       传统大模型每次新开会话都是“阅后即焚”的。记忆系统让智能体具备像人一样的“长期记忆”能力：在后台自动提炼用户的偏好、历史关键结论与业务背景，并在新会话中秒级召回注入，实现真正懂用户的个性化智能交互。
                    </p>
                 </div>
@@ -1647,7 +1713,7 @@ onMounted(async () => {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-purple-500"></span> 📥 1. 自动防抖摘要提取
+                         <span class="w-2 h-2 rounded-full bg-primary"></span> 1. 自动防抖摘要提取
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          用户与智能体持续对话时，当满足设定的轮数与字数阈值，后台自动异步唤起小模型总结提取会话的核心事实（Key Facts）、实体标签与关键决策。
@@ -1655,7 +1721,7 @@ onMounted(async () => {
                    </div>
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-indigo-500"></span> ⚡ 2. Redis Stack 密集向量索引
+                         <span class="w-2 h-2 rounded-full bg-primary"></span> 2. Redis Stack 密集向量索引
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          摘要内容通过系统全局 Embedding 模型转化为密集向量，写入 Redis 向量索引库（<code>nanzi:idx:memory:session_summary</code>），支持极速 KNN 余弦相似度检索。
@@ -1663,7 +1729,7 @@ onMounted(async () => {
                    </div>
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-blue-500"></span> 🚀 3. 问答推理时语义召回
+                         <span class="w-2 h-2 rounded-full bg-primary"></span> 3. 问答推理时语义召回
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          在新会话中，智能体自动对当前提问做向量相似度匹配，毫秒级召回该用户最相关的 Top-K 条历史记忆片段。
@@ -1671,7 +1737,7 @@ onMounted(async () => {
                    </div>
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
                       <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                         <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 💡 4. 动态注入 Prompt 思考链
+                         <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 4. 动态注入 Prompt 思考链
                       </h4>
                       <p class="text-gray-500 leading-relaxed">
                          将召回的记忆作为系统上下文装配给大模型，模型在回答时即可主动说出“参考您上次关心的华东地区数据...”，实现连贯体验。
@@ -1682,16 +1748,16 @@ onMounted(async () => {
 
              <!-- Tab 2: Generation & Parameters -->
              <div v-else-if="activeSpecsTab === 'generation'" class="space-y-4 max-w-4xl mx-auto text-xs">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">分层记忆模型与核心参数详解</h4>
                  
                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-150 space-y-1">
-                         <span class="font-bold text-purple-900">1. 会话级摘要 (Session Summary)</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/20 space-y-1">
+                         <span class="font-bold text-primary-dark">1. 会话级摘要 (Session Summary)</span>
                          <p class="text-gray-600">按单次对话窗口进行局部归纳，保留该次会话的具体讨论细节、SQL 条件与生成物。</p>
                       </div>
-                      <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-150 space-y-1">
-                         <span class="font-bold text-indigo-900">2. 每日归纳画像 (Daily Consolidation)</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/20 space-y-1">
+                         <span class="font-bold text-primary-dark">2. 每日归纳画像 (Daily Consolidation)</span>
                          <p class="text-gray-600">自动聚合用户当天所有会话的宏观画像，提炼用户长期的工作重点与高频关注指标。</p>
                       </div>
                    </div>
@@ -1699,19 +1765,19 @@ onMounted(async () => {
                    <div class="space-y-2">
                       <h5 class="font-bold text-gray-800 text-sm">核心治理参数：</h5>
                       <div class="space-y-2 font-mono text-[11px]">
-                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center">
                             <span><strong>memory_summarize_debounce_turns</strong>（触发轮数阈值）</span>
                             <span class="text-gray-500">默认 3 轮，避免偶发单句对话频繁开销</span>
                          </div>
-                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center">
                             <span><strong>memory_summarize_min_assistant_chars</strong>（回复字数下限）</span>
                             <span class="text-gray-500">默认 20 字，过滤“好的”等极简回复</span>
                          </div>
-                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center">
                             <span><strong>memory_summary_ttl_days</strong>（记忆有效期）</span>
                             <span class="text-gray-500">默认 30 天，超时自动淘汰释放 Redis 内存</span>
                          </div>
-                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center">
                             <span><strong>memory_search_knn_top_k</strong>（召回数量）</span>
                             <span class="text-gray-500">推荐 3~5 条，平衡 Prompt 长度与相关度</span>
                          </div>
@@ -1722,18 +1788,18 @@ onMounted(async () => {
 
              <!-- Tab 3: Retrieval & Best Practice -->
              <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">记忆调试与安全运维最佳实践</h4>
                    <div class="space-y-3">
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">1. 使用「检索测试」验证召回效果</span>
                          <p class="text-gray-600 leading-relaxed">切换至「检索测试」Tab，输入模拟提问（如“我上次看的销售数据是哪张表”），可直接查看向量命中分数（Score）、匹配的会话内容与提取标签。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">2. 用户间严格数据隔离（Multi-Tenant Scope）</span>
                          <p class="text-gray-600 leading-relaxed">记忆数据严格绑定 <code>user_id</code> 进行物理隔离，普通用户只能检索自己名下的历史记忆，严禁发生跨用户记忆泄露。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">3. Redis Stack / RediSearch 引擎监控</span>
                          <p class="text-gray-600 leading-relaxed">在「服务配置」Tab 顶部实时查看 Redis 向量引擎连通状态与内存占用，支持一键「重建全部索引」修复损坏索引。</p>
                       </div>

@@ -928,9 +928,9 @@ onBeforeUnmount(destroySqlEditor)
       class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-100 dark:border-gray-800"
     >
       <!-- Modal Header -->
-      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gradient-to-r from-blue-50/60 to-indigo-50/40 dark:from-gray-800/80 dark:to-gray-800/40">
+      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gradient-to-r from-primary/5 to-primary/5 dark:from-gray-800/80 dark:to-gray-800/40">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+          <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/20">
             <DocumentPlusIcon class="w-6 h-6" />
           </div>
           <div>
@@ -966,7 +966,7 @@ onBeforeUnmount(destroySqlEditor)
               v-model="form.title"
               type="text"
               placeholder="例如：2026年各部门月度营收汇总"
-              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
+              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
             />
           </div>
 
@@ -978,16 +978,16 @@ onBeforeUnmount(destroySqlEditor)
               v-model="form.tags"
               type="text"
               placeholder="多个标签用逗号分隔，例如：财务, 订单, 月报"
-              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
+              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
             />
           </div>
         </div>
 
         <!-- 关联数据源 -->
-        <div class="p-4 rounded-xl border border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/40 space-y-3">
+        <div class="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/40 space-y-3">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-              <CircleStackIcon class="w-4 h-4 text-blue-600" />
+              <CircleStackIcon class="w-4 h-4 text-primary" />
               选择关联数据源
             </span>
             <div class="flex items-center gap-2 text-xs">
@@ -996,7 +996,7 @@ onBeforeUnmount(destroySqlEditor)
                   v-model="form.sourceType"
                   type="radio"
                   value="connection"
-                  class="text-blue-600 focus:ring-blue-500"
+                  class="text-primary focus:ring-primary"
                 />
                 <span>物理数据源</span>
               </label>
@@ -1005,7 +1005,7 @@ onBeforeUnmount(destroySqlEditor)
                   v-model="form.sourceType"
                   type="radio"
                   value="dataset"
-                  class="text-blue-600 focus:ring-blue-500"
+                  class="text-primary focus:ring-primary"
                 />
                 <span>元数据数据集</span>
               </label>
@@ -1015,7 +1015,7 @@ onBeforeUnmount(destroySqlEditor)
           <div v-if="form.sourceType === 'connection'" class="flex items-center gap-2">
             <select
               v-model="form.connectionId"
-              class="flex-1 px-3 py-2 text-xs font-medium border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500/20 outline-none"
+              class="flex-1 px-3 py-2 text-xs font-medium border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-primary/20 outline-none"
             >
               <option :value="null" disabled>请选择数据源连接</option>
               <option v-for="conn in dbConnections" :key="conn.id" :value="conn.id">
@@ -1024,7 +1024,7 @@ onBeforeUnmount(destroySqlEditor)
             </select>
             <button
               type="button"
-              class="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors"
+              class="p-2 text-gray-500 hover:text-primary hover:bg-gray-100 rounded-lg transition-colors"
               title="刷新数据源列表"
               @click="loadDataSourcesAndDatasets"
             >
@@ -1035,7 +1035,7 @@ onBeforeUnmount(destroySqlEditor)
           <div v-else class="flex items-center gap-2">
             <select
               v-model="form.datasetId"
-              class="flex-1 px-3 py-2 text-xs font-medium border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500/20 outline-none"
+              class="flex-1 px-3 py-2 text-xs font-medium border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-primary/20 outline-none"
             >
               <option :value="null" disabled>请选择所属数据集</option>
               <option v-for="ds in datasets" :key="ds.id" :value="ds.id">
@@ -1053,7 +1053,7 @@ onBeforeUnmount(destroySqlEditor)
           <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
             来源提问
           </label>
-          <div class="w-full px-3.5 py-2 text-sm border border-blue-100 dark:border-blue-900/40 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 text-gray-600 dark:text-gray-300 break-words leading-relaxed">
+          <div class="w-full px-3.5 py-2 text-sm border border-primary/10 dark:border-primary-dark/40 rounded-xl bg-primary/5 dark:bg-primary-dark/20 text-gray-600 dark:text-gray-300 break-words leading-relaxed">
             {{ activeReport.original_query }}
           </div>
         </div>
@@ -1067,7 +1067,7 @@ onBeforeUnmount(destroySqlEditor)
             v-model="form.description"
             rows="2"
             placeholder="说明本报表的统计维度、过滤条件及核心业务口径..."
-            class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 resize-none disabled:bg-gray-100"
+            class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-gray-900 dark:text-gray-100 resize-none disabled:bg-gray-100"
           ></textarea>
         </div>
 
@@ -1082,7 +1082,7 @@ onBeforeUnmount(destroySqlEditor)
               </label>
               <button
                 type="button"
-                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-blue-300 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold text-primary hover:bg-primary/5 dark:border-primary-dark dark:text-primary-hover dark:hover:bg-primary-dark"
                 aria-label="查看动态参数 SQL 写法说明"
                 title="查看动态参数 SQL 写法说明"
                 @click="showSqlHelp = !showSqlHelp"
@@ -1105,7 +1105,7 @@ onBeforeUnmount(destroySqlEditor)
 
           <div
             v-if="showSqlHelp"
-            class="rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-[11px] leading-5 text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-100"
+            class="rounded-xl border border-primary/10 bg-primary/5 p-3 text-[11px] leading-5 text-primary-dark dark:border-primary-dark/50 dark:bg-primary-dark/30 dark:text-primary-bright"
           >
             <p class="font-bold">动态参数说明</p>
             <p>快捷按钮会在光标位置插入占位符，参数不要再额外套单引号；试跑时系统会先用默认日期或月份替换后再执行。</p>
@@ -1121,7 +1121,7 @@ onBeforeUnmount(destroySqlEditor)
               v-for="shortcut in sqlParameterShortcuts"
               :key="shortcut.label"
               type="button"
-              class="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-medium text-gray-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-200"
+              class="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-medium text-gray-600 transition-colors hover:border-primary/25 hover:bg-primary/5 hover:text-primary-dark dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-primary-dark dark:hover:bg-primary-dark dark:hover:text-primary-hover"
               :title="`插入 ${shortcut.insert}`"
               @click="insertSqlFragment(shortcut.insert)"
             >
@@ -1144,35 +1144,35 @@ onBeforeUnmount(destroySqlEditor)
 
           <div
             v-if="customParameterConfigs.length"
-            class="space-y-3 rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/40 dark:bg-violet-950/20"
+            class="space-y-3 rounded-xl border border-primary/10 bg-primary/5 p-3 dark:border-primary-dark/40 dark:bg-primary-dark/20"
           >
             <div class="flex items-center justify-between gap-2">
               <div>
-                <p class="text-xs font-bold text-violet-900 dark:text-violet-200">自定义参数配置</p>
-                <p class="mt-0.5 text-[10px] text-violet-700/80 dark:text-violet-300/80">运行报表时会显示这些参数；试跑使用这里配置的默认值。</p>
+                <p class="text-xs font-bold text-primary-dark dark:text-primary-hover">自定义参数配置</p>
+                <p class="mt-0.5 text-[10px] text-primary-dark/80 dark:text-primary-hover">运行报表时会显示这些参数；试跑使用这里配置的默认值。</p>
               </div>
-              <span class="text-[10px] text-violet-600 dark:text-violet-300">{{ customParameterConfigs.length }} 个参数</span>
+              <span class="text-[10px] text-primary dark:text-primary-hover">{{ customParameterConfigs.length }} 个参数</span>
             </div>
             <div
               v-for="config in customParameterConfigs"
               :key="config.name"
-              class="grid grid-cols-1 gap-2 rounded-lg border border-violet-100 bg-white/80 p-2.5 dark:border-violet-900/40 dark:bg-gray-900/60 md:grid-cols-[1fr_110px_1fr]"
+              class="grid grid-cols-1 gap-2 rounded-lg border border-primary/10 bg-white/80 p-2.5 dark:border-primary-dark/40 dark:bg-gray-900/60 md:grid-cols-[1fr_110px_1fr]"
             >
               <div class="min-w-0">
                 <div class="mb-1 flex items-center gap-2">
-                  <code class="text-[11px] font-bold text-violet-700 dark:text-violet-300" v-text="'{{' + config.name + '}}'"></code>
+                  <code class="text-[11px] font-bold text-primary-dark dark:text-primary-hover" v-text="'{{' + config.name + '}}'"></code>
                   <span class="text-[10px] text-gray-400">参数配置</span>
                 </div>
                 <input
                   v-model="config.label"
                   type="text"
-                  class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
                   placeholder="显示名称，例如：部门"
                 />
               </div>
               <select
                 v-model="config.type"
-                class="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                class="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
               >
                 <option value="text">文本</option>
                 <option value="number">数字</option>
@@ -1182,18 +1182,18 @@ onBeforeUnmount(destroySqlEditor)
                 <input
                   v-model="config.defaultValue"
                   :type="config.type === 'number' ? 'number' : 'text'"
-                  class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
                   :placeholder="config.type === 'select' ? '默认值' : '默认值（试跑使用）'"
                 />
                 <input
                   v-if="config.type === 'select'"
                   v-model="config.optionsText"
                   type="text"
-                  class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                  class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
                   placeholder="候选值，用逗号分隔，例如：华东, 华南"
                 />
                 <label class="mt-1.5 inline-flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400">
-                  <input v-model="config.required" type="checkbox" class="rounded border-gray-300 text-violet-600 focus:ring-violet-500" />
+                  <input v-model="config.required" type="checkbox" class="rounded border-gray-300 text-primary focus:ring-primary" />
                   必填参数
                 </label>
               </div>
@@ -1271,7 +1271,7 @@ onBeforeUnmount(destroySqlEditor)
           </button>
           <button
             type="button"
-            class="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+            class="px-5 py-2 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             :disabled="saving || !form.title.trim() || !form.sqlContent.trim() || !testPassed"
             @click="handleSubmit"
           >
@@ -1296,7 +1296,7 @@ onBeforeUnmount(destroySqlEditor)
     <div class="w-full max-w-md overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
       <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50/60 px-6 py-4 dark:border-gray-700 dark:bg-gray-800/60">
         <div>
-          <h3 class="text-base font-black text-gray-800 dark:text-gray-100">选择试跑参数</h3>
+          <h3 class="text-base font-bold text-gray-800 dark:text-gray-100">选择试跑参数</h3>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">仅用于本次 SQL 试跑，不会修改报表默认运行参数</p>
         </div>
         <button
@@ -1310,7 +1310,7 @@ onBeforeUnmount(destroySqlEditor)
 
       <div class="space-y-4 p-6">
         <div v-if="hasTestDateParameters">
-          <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">日期范围</label>
+          <label class="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">日期范围</label>
           <select
             v-model="testParameterForm.dateRange"
             class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
@@ -1335,7 +1335,7 @@ onBeforeUnmount(destroySqlEditor)
         </div>
 
         <div v-if="hasTestMonthParameters">
-          <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">月份范围</label>
+          <label class="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">月份范围</label>
           <select
             v-model="testParameterForm.monthRange"
             class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
@@ -1361,7 +1361,7 @@ onBeforeUnmount(destroySqlEditor)
           :key="config.name"
           class="space-y-1.5"
         >
-          <label class="block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          <label class="block text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
             {{ config.label || config.name }}
             <span v-if="config.required" class="text-red-500">*</span>
           </label>

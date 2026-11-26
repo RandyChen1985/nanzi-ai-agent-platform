@@ -140,8 +140,8 @@ const BINDING_TYPE_ORDER = ['mcp_server', 'api_tool', 'script_tool', 'script', '
 
 /** 每类一个配色，扫一眼就知道「这条凭据被哪些地方用」 */
 const BINDING_TYPE_STYLE: Record<string, string> = {
-  mcp_server: 'bg-violet-50 text-violet-700',
-  api_tool: 'bg-sky-50 text-sky-700',
+  mcp_server: 'bg-primary/5 text-primary-dark',
+  api_tool: 'bg-sky-50 text-primary-dark',
   script_tool: 'bg-amber-50 text-amber-700',
   script: 'bg-amber-50 text-amber-700',
   script_env: 'bg-amber-50 text-amber-700',
@@ -164,7 +164,7 @@ interface BindingGroup {
 function bindingShadowHint(binding: SecretBindingRef): string {
   const shadow = binding.rule_shadow
   if (shadow === 'fail') {
-    return '\n⚠ 同槽位有规则绑定且 on_miss=fail：规则未命中时会整条失败，不回退到这条固定绑定，所以它目前不会生效'
+    return '\n[WARN] 同槽位有规则绑定且 on_miss=fail：规则未命中时会整条失败，不回退到这条固定绑定，所以它目前不会生效'
   }
   if (shadow === 'fallback_fixed') return '\n同槽位有规则绑定：只有规则未命中时才会回退到这条'
   if (shadow === 'model') return '\n同槽位有规则绑定：只有模型指定了这条凭据才会用到'
@@ -1154,7 +1154,7 @@ onMounted(load)
         </div>
       </div>
       <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
-        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/5 text-primary-dark">
           <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
             <path d="M16 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20" />
             <circle cx="9" cy="7" r="3.2" />
@@ -1226,7 +1226,7 @@ onMounted(load)
           v-model="keyword"
           type="search"
           placeholder="搜索"
-          class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-52"
+          class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none sm:w-52"
         />
         <!-- 视图切换：卡片看得全，列表扫得快 -->
         <div class="flex shrink-0 items-center rounded-lg border border-gray-300 bg-white p-0.5" role="group" aria-label="视图切换">
@@ -1341,7 +1341,7 @@ onMounted(load)
               <SecretKeyChip :secret-key="item.secret_key" />
               <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
             </div>
-            <p v-if="item.value_format === 'json'" class="mt-1 break-all font-mono text-[11px] text-indigo-700">
+            <p v-if="item.value_format === 'json'" class="mt-1 break-all font-mono text-[11px] text-primary-dark">
               {{ item.value_summary || '（无摘要）' }}
             </p>
             <p v-else class="mt-1 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
@@ -1353,7 +1353,7 @@ onMounted(load)
               >
                 {{ SCENE_LABEL[scene] || scene }}
               </span>
-              <span v-if="item.allowed_hosts.length" class="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-700">
+              <span v-if="item.allowed_hosts.length" class="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] text-primary-dark">
                 {{ item.allowed_hosts.join(', ') }}
               </span>
             </div>
@@ -1456,7 +1456,7 @@ onMounted(load)
               :key="binding.id"
               class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-700"
               :class="binding.rule_shadow === 'fail'
-                ? 'bg-gray-50 opacity-60 ring-1 ring-dashed ring-gray-300'
+                ? 'bg-gray-50 opacity-60 border border-dashed border-gray-300'
                 : 'bg-gray-50'"
               :title="`${group.label}：${binding.consumer_name || binding.consumer_id}\n槽位：${binding.slot}\n绑定者：${binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id)}${bindingShadowHint(binding)}`"
             >
@@ -1543,7 +1543,7 @@ onMounted(load)
                 <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
               </div>
               <!-- 结构化凭据没有「可看的前缀」，这里显示后端挑出的非敏感摘要 -->
-              <p v-if="item.value_format === 'json'" class="mt-0.5 break-all font-mono text-[11px] text-indigo-700">
+              <p v-if="item.value_format === 'json'" class="mt-0.5 break-all font-mono text-[11px] text-primary-dark">
                 {{ item.value_summary || '（无摘要）' }}
               </p>
               <p v-else class="mt-0.5 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
@@ -1718,7 +1718,7 @@ onMounted(load)
                   <button
                     type="button"
                     class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
+                    :class="form.secret_type === 'credential' ? 'border-primary bg-primary/5' : 'border-gray-200'"
                     @click="form.secret_type = 'credential'"
                   >
                     <span class="block font-medium text-gray-900">凭证</span>
@@ -1727,7 +1727,7 @@ onMounted(load)
                   <button
                     type="button"
                     class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
+                    :class="form.secret_type === 'variable' ? 'border-primary bg-sky-50' : 'border-gray-200'"
                     @click="form.secret_type = 'variable'"
                   >
                     <span class="block font-medium text-gray-900">变量</span>
@@ -1794,7 +1794,7 @@ onMounted(load)
                   <button
                     v-if="form.expires_at"
                     type="button"
-                    class="text-[11px] text-blue-600 hover:underline"
+                    class="text-[11px] text-primary hover:underline"
                     @click="form.expires_at = ''"
                   >设为长期有效</button>
                 </div>
@@ -1909,14 +1909,14 @@ onMounted(load)
                 :class="grantedToAll
                   ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
                   : grantToAll
-                    ? 'border-blue-300 bg-blue-50'
+                    ? 'border-primary/25 bg-primary/5'
                     : 'border-gray-200 bg-white hover:bg-gray-50'"
               >
                 <input
                   v-model="grantToAll"
                   type="checkbox"
                   :disabled="grantedToAll"
-                  class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                  class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-primary focus:ring-primary disabled:opacity-50"
                 />
                 <span class="min-w-0">
                   <span class="block text-sm font-medium text-gray-800">授权给全体用户</span>
@@ -1953,7 +1953,7 @@ onMounted(load)
                 <button
                   type="button"
                   :disabled="grantBusy || (!grantSelected.length && !grantToAll)"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                  class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-60"
                   @click="submitGrant"
                 >
                   {{ grantBusy ? '授权中…' : '确认授权' }}
@@ -2178,10 +2178,10 @@ onMounted(load)
               <code class="rounded bg-gray-100 px-1 py-0.5">{{ rotateTarget?.secret_key }}</code>
               的所有绑定方会同时用上新值。
             </p>
-            <p v-if="rotateTarget?.value_format === 'json'" class="mt-1 text-[11px] text-blue-700">
+            <p v-if="rotateTarget?.value_format === 'json'" class="mt-1 text-[11px] text-primary-dark">
               这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget?.value_template) }}），
               结构已锁定：轮换只换值、不换模板。换模板会让别处已写好的
-              <code class="rounded bg-blue-50 px-1">${secret:标识.字段}</code> 引用全部失效。
+              <code class="rounded bg-primary/5 px-1">${secret:标识.字段}</code> 引用全部失效。
             </p>
           </div>
 
@@ -2333,7 +2333,7 @@ onMounted(load)
                 <button
                   v-if="editForm.expires_at"
                   type="button"
-                  class="text-[11px] text-blue-600 hover:underline"
+                  class="text-[11px] text-primary hover:underline"
                   @click="editForm.expires_at = ''"
                 >设为长期有效</button>
               </div>
@@ -2483,7 +2483,7 @@ onMounted(load)
                     :href="`/dashboard/chat?conversation_id=${row.conversation_id}`"
                     target="_blank"
                     rel="noopener"
-                    class="text-blue-600 hover:underline"
+                    class="text-primary hover:underline"
                     :title="`打开这次会话：${row.conversation_id}`"
                   >会话 {{ String(row.conversation_id).slice(0, 8) }}</a>
                   <span v-else class="text-gray-300" title="这条流水没有记录会话（注入链路在 2026-11-15 之前不传 conversation_id）">无会话</span>

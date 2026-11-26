@@ -331,8 +331,8 @@ const locationLabel = (name: string): string => {
           v-if="locationOf(p.name)"
           class="rounded px-1.5 py-0.5 text-[11px] font-medium"
           :class="{
-            'bg-purple-50 text-purple-700': locationOf(p.name) === 'path',
-            'bg-blue-50 text-blue-700': locationOf(p.name) === 'query',
+            'bg-primary/5 text-primary-dark': locationOf(p.name) === 'path',
+            'bg-primary/5 text-blue-700': locationOf(p.name) === 'query',
             'bg-green-50 text-green-700': locationOf(p.name) === 'body',
           }"
         >{{ locationLabel(p.name) }}</span>

@@ -13,7 +13,7 @@
             <h2 class="text-lg font-bold text-gray-900">同步第三方用户</h2>
             <button
               type="button"
-              class="flex items-center justify-center w-6 h-6 rounded-full bg-white text-indigo-600 border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors shadow-sm"
+              class="flex items-center justify-center w-6 h-6 rounded-full bg-white text-primary border border-gray-200 hover:border-primary/25 hover:bg-primary/10 transition-colors shadow-sm"
               title="功能说明"
               @click="showHelpModal = true"
             >
@@ -44,13 +44,13 @@
         >
           <!-- 数据源与表映射 -->
           <section class="space-y-4">
-            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">数据源与表映射</h3>
+            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-primary pl-2">数据源与表映射</h3>
 
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">选择数据源</label>
               <select
                 v-model.number="config.connection_config_id"
-                class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-50"
+                class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 outline-none disabled:bg-gray-50"
                 :disabled="!config.enabled"
                 @change="onDatasourceChange"
               >
@@ -68,7 +68,7 @@
                 <button
                   ref="tableTriggerRef"
                   type="button"
-                  class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-left focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed flex items-center justify-between gap-2"
+                  class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-left focus:ring-2 focus:ring-primary/30 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed flex items-center justify-between gap-2"
                   :disabled="!config.enabled || !config.connection_config_id || loadingTables"
                   @click.stop="toggleTablePicker"
                 >
@@ -114,12 +114,12 @@
                         v-for="t in filteredTables"
                         :key="t.name"
                         type="button"
-                        class="w-full px-3 py-2.5 text-left transition-colors hover:bg-indigo-50"
-                        :class="config.table_name === t.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-800'"
+                        class="w-full px-3 py-2.5 text-left transition-colors hover:bg-primary/10"
+                        :class="config.table_name === t.name ? 'bg-primary/10 text-primary' : 'text-gray-800'"
                         @click.stop="selectTable(t.name)"
                       >
                         <div class="text-sm font-medium truncate">{{ t.name }}</div>
-                        <div class="text-xs truncate mt-0.5" :class="config.table_name === t.name ? 'text-indigo-500/80' : 'text-gray-400'">
+                        <div class="text-xs truncate mt-0.5" :class="config.table_name === t.name ? 'text-primary/80' : 'text-gray-400'">
                           {{ tableSubtitle(t) }}
                         </div>
                       </button>
@@ -164,7 +164,7 @@
                 >
                   <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
-                      <code class="text-xs font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{{ field.localField }}</code>
+                      <code class="text-xs font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded">{{ field.localField }}</code>
                       <span class="text-sm font-medium text-gray-800">{{ field.label }}</span>
                       <span v-if="field.required" class="text-red-500 text-xs">必填</span>
                     </div>
@@ -200,11 +200,11 @@
                 <div class="flex items-center justify-between gap-3">
                   <div>
                     <h4 class="text-sm font-semibold text-gray-800">扩展字段映射</h4>
-                    <p class="text-xs text-gray-400 mt-0.5">将来源表多个字段聚合为 JSON，写入本平台 <code class="font-mono text-indigo-600">extra_data</code></p>
+                    <p class="text-xs text-gray-400 mt-0.5">将来源表多个字段聚合为 JSON，写入本平台 <code class="font-mono text-primary">extra_data</code></p>
                   </div>
                   <button
                     type="button"
-                    class="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    class="text-xs font-medium text-primary hover:text-primary-dark disabled:opacity-50"
                     :disabled="!config.enabled || loadingColumns"
                     @click="addExtraDataMapping"
                   >
@@ -213,10 +213,10 @@
                 </div>
 
                 <div class="rounded-xl border border-dashed border-gray-200 overflow-hidden">
-                  <div class="grid grid-cols-[1fr_auto_1fr] items-center bg-violet-50 border-b border-violet-100 text-xs font-semibold text-gray-500">
+                  <div class="grid grid-cols-[1fr_auto_1fr] items-center bg-primary/10 border-b border-primary/25 text-xs font-semibold text-gray-500">
                     <div class="px-4 py-2.5">
                       <div class="text-gray-700">本平台</div>
-                      <div class="mt-0.5 font-normal text-violet-600 truncate">extra_data · JSON 键名</div>
+                      <div class="mt-0.5 font-normal text-primary truncate">extra_data · JSON 键名</div>
                     </div>
                     <div class="px-2 py-2.5 text-center">←</div>
                     <div class="px-4 py-2.5">
@@ -242,7 +242,7 @@
                         v-model="mapping.json_key"
                         type="text"
                         placeholder="JSON 键名，如 id / dept_code"
-                        class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-violet-500 outline-none disabled:bg-gray-50"
+                        class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary/30 outline-none disabled:bg-gray-50"
                         :disabled="!config.enabled"
                       />
                       <p class="text-xs text-gray-400 mt-1">写入 extra_data["{{ mapping.json_key || '...' }}"]</p>
@@ -282,10 +282,10 @@
 
                 <div
                   v-if="extraDataPreviewExample"
-                  class="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2"
+                  class="rounded-lg border border-primary/25 bg-primary/10 px-3 py-2"
                 >
-                  <p class="text-[11px] font-semibold text-violet-700 mb-1">同步后 extra_data 示例</p>
-                  <pre class="text-[11px] text-violet-900 font-mono whitespace-pre-wrap break-all">{{ extraDataPreviewExample }}</pre>
+                  <p class="text-[11px] font-semibold text-primary mb-1">同步后 extra_data 示例</p>
+                  <pre class="text-[11px] text-primary font-mono whitespace-pre-wrap break-all">{{ extraDataPreviewExample }}</pre>
                 </div>
               </div>
             </div>
@@ -297,7 +297,7 @@
 
           <!-- 部门同步（可选）：只把人挂到已存在的部门上 -->
           <section class="space-y-3">
-            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">部门同步</h3>
+            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-primary pl-2">部门同步</h3>
 
             <label
               class="flex items-start gap-3 rounded-xl border border-gray-200 px-4 py-3 transition-colors"
@@ -307,7 +307,7 @@
                 v-model="config.dept_sync.enabled"
                 type="checkbox"
                 :disabled="!config.enabled"
-                class="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                class="mt-0.5 rounded border-gray-300 text-primary focus:ring-primary/30"
               />
               <span class="min-w-0">
                 <span class="block text-sm font-semibold text-gray-800">同步部门归属</span>
@@ -323,7 +323,7 @@
                 <select
                   v-model="config.dept_sync.source_column"
                   :disabled="!config.enabled"
-                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
+                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:bg-gray-50"
                 >
                   <option :value="null">请选择部门编码列</option>
                   <option v-for="col in columns" :key="col.name" :value="col.name">
@@ -350,10 +350,10 @@
                     type="button"
                     :disabled="!config.enabled"
                     class="px-3 py-2.5 rounded-xl border text-left transition-all disabled:cursor-not-allowed"
-                    :class="config.dept_sync.mode === opt.value ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'"
+                    :class="config.dept_sync.mode === opt.value ? 'border-primary bg-primary/10' : 'border-gray-200 hover:border-gray-300'"
                     @click="config.dept_sync.mode = opt.value"
                   >
-                    <div class="text-sm font-medium" :class="config.dept_sync.mode === opt.value ? 'text-indigo-700' : 'text-gray-700'">{{ opt.label }}</div>
+                    <div class="text-sm font-medium" :class="config.dept_sync.mode === opt.value ? 'text-primary' : 'text-gray-700'">{{ opt.label }}</div>
                     <div class="text-xs text-gray-500 mt-0.5">{{ opt.desc }}</div>
                   </button>
                 </div>
@@ -363,7 +363,7 @@
 
           <!-- 定时同步 -->
           <section class="space-y-3">
-            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">定时同步</h3>
+            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-primary pl-2">定时同步</h3>
             <div class="grid grid-cols-2 gap-2">
               <button
                 v-for="opt in scheduleOptions"
@@ -372,7 +372,7 @@
                 :disabled="!config.enabled"
                 @click="config.schedule = opt.value"
                 class="px-4 py-3 rounded-xl border text-sm font-medium transition-all text-left disabled:cursor-not-allowed"
-                :class="config.schedule === opt.value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'"
+                :class="config.schedule === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-gray-200 text-gray-600 hover:border-gray-300'"
               >
                 <div>{{ opt.label }}</div>
                 <div class="text-xs font-normal mt-0.5 opacity-70">{{ opt.desc }}</div>
@@ -383,12 +383,12 @@
           <!-- 手动同步 -->
           <section class="space-y-3">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">手动同步</h3>
+              <h3 class="text-sm font-bold text-gray-800 border-l-4 border-primary pl-2">手动同步</h3>
               <button
                 type="button"
                 @click="loadPreview"
                 :disabled="!config.enabled || loadingPreview || !canPreview"
-                class="text-sm text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
+                class="text-sm text-primary hover:text-primary-dark font-medium disabled:opacity-50"
               >
                 刷新预览
               </button>
@@ -400,13 +400,13 @@
                 type="checkbox"
                 id="hide-existing-tp"
                 :disabled="!config.enabled"
-                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                class="rounded border-gray-300 text-primary focus:ring-primary/30"
               />
               <label for="hide-existing-tp" class="text-sm text-gray-600">仅显示待新增用户</label>
             </div>
 
             <div v-if="loadingPreview" class="h-40 flex items-center justify-center text-gray-400">
-              <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              <div class="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
             </div>
 
             <div v-else-if="!canPreview" class="h-32 flex items-center justify-center text-gray-400 text-sm bg-gray-50 rounded-xl border border-dashed border-gray-200">
@@ -427,7 +427,7 @@
                         :checked="isAllSelected"
                         :disabled="!config.enabled"
                         @change="toggleSelectAll"
-                        class="rounded border-gray-300 text-indigo-600"
+                        class="rounded border-gray-300 text-primary"
                       />
                     </th>
                     <th class="px-3 py-2 text-left">用户名</th>
@@ -450,7 +450,7 @@
                         :disabled="!config.enabled"
                         @click.stop
                         @change="toggleSelect(user.user_name)"
-                        class="rounded border-gray-300 text-indigo-600"
+                        class="rounded border-gray-300 text-primary"
                       />
                     </td>
                     <td class="px-3 py-2 font-medium">{{ user.user_name }}</td>
@@ -459,7 +459,7 @@
                     <td class="px-3 py-2">
                       <span
                         class="text-xs px-2 py-0.5 rounded-full"
-                        :class="user.is_existing ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'"
+                        :class="user.is_existing ? 'bg-primary/5 text-primary-dark' : 'bg-green-50 text-green-700'"
                       >
                         {{ user.is_existing ? '将更新' : '待新增' }}
                       </span>
@@ -487,7 +487,7 @@
             type="button"
             @click="runSyncAll"
             :disabled="!config.enabled || syncing || !canPreview || previewUsers.length === 0"
-            class="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-200 disabled:opacity-50"
+            class="px-4 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 disabled:opacity-50"
           >
             同步全部 ({{ previewUsers.length }})
           </button>
@@ -495,7 +495,7 @@
             type="button"
             @click="runSyncSelected"
             :disabled="!config.enabled || syncing || selectedUserNames.length === 0"
-            class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+            class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark disabled:opacity-50 flex items-center gap-2"
           >
             <span v-if="syncing" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
             同步选中 ({{ selectedUserNames.length }})
@@ -522,7 +522,7 @@
 
         <div class="p-6 sm:p-8 space-y-5">
           <div class="flex items-center gap-3 border-b border-gray-100 pb-4 pr-8">
-            <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black text-sm">?</div>
+            <div class="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center font-bold text-sm">?</div>
             <div>
               <h3 class="text-lg font-bold text-gray-900">第三方用户同步说明</h3>
               <p class="text-xs text-gray-400 mt-0.5">从外部业务库拉取账号，写入平台用户表</p>
@@ -531,18 +531,18 @@
 
           <section class="space-y-2">
             <h4 class="text-sm font-bold text-gray-800 flex items-center gap-2">
-              <span class="w-1 h-3.5 bg-indigo-500 rounded-full"></span>
+              <span class="w-1 h-3.5 bg-primary rounded-full"></span>
               功能作用
             </h4>
             <p class="text-sm text-gray-600 leading-relaxed pl-3">
-              将第三方数据库中的用户账号同步到本平台 <code class="text-indigo-600 bg-indigo-50 px-1 rounded">ai_agent_users</code>，
+              将第三方数据库中的用户账号同步到本平台 <code class="text-primary bg-primary/10 px-1 rounded">ai_agent_users</code>，
               用于统一登录身份、API Key 发放与权限管理。支持手动触发与定时自动同步。
             </p>
           </section>
 
           <section class="space-y-2">
             <h4 class="text-sm font-bold text-gray-800 flex items-center gap-2">
-              <span class="w-1 h-3.5 bg-indigo-500 rounded-full"></span>
+              <span class="w-1 h-3.5 bg-primary rounded-full"></span>
               核心映射原则
             </h4>
             <ul class="text-sm text-gray-600 leading-relaxed pl-3 space-y-1.5 list-disc list-inside">
@@ -554,12 +554,12 @@
 
           <section class="space-y-2">
             <h4 class="text-sm font-bold text-gray-800 flex items-center gap-2">
-              <span class="w-1 h-3.5 bg-violet-500 rounded-full"></span>
+              <span class="w-1 h-3.5 bg-primary rounded-full"></span>
               字段怎么配
             </h4>
             <div class="pl-3 space-y-2 text-sm text-gray-600 leading-relaxed">
               <p><strong>基础字段映射</strong>：左侧是本平台字段，右侧选择来源表列。至少配置「用户名」。</p>
-              <p><strong>扩展字段映射</strong>：可把来源表多个列聚合为 JSON，写入本平台 <code class="text-violet-600 bg-violet-50 px-1 rounded">extra_data</code>（如 id、部门编码等）。</p>
+              <p><strong>扩展字段映射</strong>：可把来源表多个列聚合为 JSON，写入本平台 <code class="text-primary bg-primary/10 px-1 rounded">extra_data</code>（如 id、部门编码等）。</p>
             </div>
           </section>
 
@@ -1078,11 +1078,5 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-@keyframes slide-in-right {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-.animate-slide-in-right {
-  animation: slide-in-right 0.25s ease-out;
-}
+
 </style>

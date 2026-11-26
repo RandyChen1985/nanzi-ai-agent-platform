@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MegaphoneIcon } from "@heroicons/vue/24/outline";
 import Modal from "../Modal.vue";
 
 const props = defineProps<{
@@ -20,7 +21,7 @@ const emit = defineEmits(["update:model", "save"]);
   >
     <div class="space-y-5 py-2">
       <div class="bg-emerald-50 p-5 rounded-xl border border-emerald-100 flex items-start space-x-3">
-        <span class="text-xl">📢</span>
+        <span class="text-xl"><MegaphoneIcon class="h-5 w-5" aria-hidden="true" /></span>
         <div>
           <p class="text-sm font-bold text-emerald-800">配置说明</p>
           <p class="text-xs text-emerald-600 mt-2 leading-relaxed">

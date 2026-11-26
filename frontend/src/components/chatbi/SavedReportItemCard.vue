@@ -1,11 +1,11 @@
 <template>
   <div
     v-if="variant === 'list'"
-    class="group/item flex min-w-0 items-center gap-3 rounded-lg border border-blue-100/60 bg-white p-2.5 shadow-xs dark:border-blue-900/30 dark:bg-gray-900/40"
+    class="group/item flex min-w-0 items-center gap-3 rounded-lg border border-primary/10 bg-white p-2.5 shadow-xs dark:border-primary-dark/30 dark:bg-gray-900/40"
   >
     <button
       type="button"
-      class="min-w-0 flex-1 text-left transition-colors hover:text-blue-600"
+      class="min-w-0 flex-1 text-left transition-colors hover:text-primary"
       :aria-label="detailTitle"
       @click="emit('detail', report)"
     >
@@ -25,7 +25,7 @@
         <span v-if="report.status === 'error'" class="shrink-0 text-red-500">最近运行失败</span>
         <span v-else-if="report.last_success_at" class="shrink-0 text-emerald-500">已运行</span>
         <span v-if="report.subscription_status" class="shrink-0 text-emerald-600 dark:text-emerald-300">订阅中</span>
-        <span v-for="tag in (report.tags || []).slice(0, 2)" :key="tag" class="hidden shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-blue-600 dark:bg-blue-950/30 dark:text-blue-300 sm:inline-block">
+        <span v-for="tag in (report.tags || []).slice(0, 2)" :key="tag" class="hidden shrink-0 rounded bg-primary/5 px-1.5 py-0.5 text-primary dark:bg-primary-dark/30 dark:text-primary-hover sm:inline-block">
           {{ tag }}
         </span>
       </span>
@@ -34,7 +34,7 @@
       <div>最近运行：{{ recentRunLabel }}</div>
       <div class="mt-1">运行次数：{{ userRunCount }}</div>
     </div>
-    <div class="flex shrink-0 items-center gap-1 border-l border-blue-50 pl-2 text-gray-400 dark:border-blue-950/20">
+    <div class="flex shrink-0 items-center gap-1 border-l border-primary/5 pl-2 text-gray-400 dark:border-primary-dark/20">
       <button
         type="button"
         class="inline-flex min-h-8 items-center gap-1 rounded-md px-1.5 text-[10px] font-semibold transition-colors"
@@ -51,7 +51,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex min-h-8 items-center rounded-md px-1.5 text-[10px] font-semibold text-indigo-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/40"
+        class="inline-flex min-h-8 items-center rounded-md px-1.5 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/5 hover:text-primary-dark dark:hover:bg-primary-dark/40"
         title="打开报表详情"
         @click.stop="emit('detail', report)"
       >
@@ -71,11 +71,11 @@
   </div>
   <div
     v-else
-    class="group/item relative flex flex-col rounded-lg border border-blue-100/60 dark:border-blue-900/30 bg-white dark:bg-gray-900/40 hover:border-blue-300 dark:hover:border-blue-700/60 overflow-visible shadow-xs"
+    class="group/item relative flex flex-col rounded-lg border border-primary/10 dark:border-primary-dark/30 bg-white dark:bg-gray-900/40 hover:border-primary/25 dark:hover:border-primary-dark/60 overflow-visible shadow-xs"
   >
     <button
       type="button"
-      class="w-full flex flex-col p-2.5 text-left transition-all min-w-0 active:scale-[0.99] hover:bg-blue-50/30 dark:hover:bg-blue-950/20"
+      class="w-full flex flex-col p-2.5 text-left transition-all min-w-0 active:scale-[0.99] hover:bg-primary/5 dark:hover:bg-primary-dark/20"
       :class="isDisabled ? 'opacity-90' : ''"
       :aria-label="detailTitle"
       @click="emit('detail', report)"
@@ -112,7 +112,7 @@
         <span
           v-for="tag in report.tags.slice(0, 3)"
           :key="tag"
-          class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-[9px] text-blue-600 dark:text-blue-300"
+          class="px-1.5 py-0.5 rounded bg-primary/5 dark:bg-primary-dark/30 text-[9px] text-primary dark:text-primary-hover"
         >
           {{ tag }}
         </span>
@@ -127,7 +127,7 @@
         <span class="shrink-0">运行次数：{{ userRunCount }}</span>
       </span>
     </button>
-    <div class="flex flex-wrap items-center justify-end px-2.5 py-1.5 bg-gray-50/50 dark:bg-gray-900/10 border-t border-blue-50/30 dark:border-blue-950/20 text-gray-400 gap-1.5">
+    <div class="flex flex-wrap items-center justify-end px-2.5 py-1.5 bg-gray-50/50 dark:bg-gray-900/10 border-t border-primary/5 dark:border-primary-dark/20 text-gray-400 gap-1.5">
       <button
         v-if="report.is_owner && report.subscription_status"
         type="button"
@@ -155,7 +155,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex min-h-9 items-center rounded-md px-2 text-[10px] font-semibold text-indigo-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/40"
+        class="inline-flex min-h-9 items-center rounded-md px-2 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/5 hover:text-primary-dark dark:hover:bg-primary-dark/40"
         title="打开报表详情"
         @click.stop="emit('detail', report)"
       >
@@ -165,7 +165,7 @@
       <button
         v-if="report.is_owner"
         type="button"
-        class="flex items-center justify-center p-1 rounded hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all duration-200 cursor-pointer"
+        class="flex items-center justify-center p-1 rounded hover:text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/40 transition-all duration-200 cursor-pointer"
         title="编辑暂存"
         @click.stop="emit('edit', report)"
       >
@@ -175,7 +175,7 @@
       </button>
       <button
         type="button"
-        class="flex items-center justify-center p-1 rounded hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all duration-200 cursor-pointer"
+        class="flex items-center justify-center p-1 rounded hover:text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/40 transition-all duration-200 cursor-pointer"
         title="报表详情"
         @click.stop="emit('detail', report)"
       >
@@ -197,7 +197,7 @@
       <button
         type="button"
         class="flex items-center justify-center p-1 rounded transition-all duration-200 cursor-pointer"
-        :class="report.pinned_at ? 'text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40'"
+        :class="report.pinned_at ? 'text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/40' : 'text-gray-400 hover:text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/40'"
         title="置顶"
         @click.stop="emit('pin', report)"
       >
@@ -269,7 +269,7 @@
       >
         <button v-if="report.is_owner" type="button" class="menu-action" @click="dispatchMore('edit')">编辑报表</button>
         <button type="button" class="menu-action" :class="report.is_favorite ? 'text-amber-600' : ''" @click="dispatchMore('favorite')">{{ report.is_favorite ? '取消收藏' : '收藏' }}</button>
-        <button type="button" class="menu-action" :class="report.pinned_at ? 'text-blue-600' : ''" @click="dispatchMore('pin')">{{ report.pinned_at ? '取消置顶' : '置顶' }}</button>
+        <button type="button" class="menu-action" :class="report.pinned_at ? 'text-primary' : ''" @click="dispatchMore('pin')">{{ report.pinned_at ? '取消置顶' : '置顶' }}</button>
         <button v-if="report.is_owner" type="button" class="menu-action" @click="dispatchMore('share')">共享报表</button>
         <button v-else type="button" class="menu-action" :disabled="isDisabled" @click="dispatchMore('copy')">复制为我的报表</button>
         <button v-if="report.is_owner && report.subscription_status" type="button" class="menu-action" @click="dispatchMore('subscription')">订阅设置</button>

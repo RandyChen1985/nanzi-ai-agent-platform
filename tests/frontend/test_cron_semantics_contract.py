@@ -101,7 +101,7 @@ def test_task_center_advanced_cron_input_marks_itself_red_when_invalid():
     assert ':aria-invalid="cronExprValidation.valid ? \'false\' : \'true\'"' in source
 
     # 说明框整体跟随切换配色，并在错误态换成醒目标签
-    assert "cronExprValidation.valid ? 'bg-blue-50/50 border-blue-100/50' : 'bg-rose-50/60 border-rose-200'" in source
+    assert "cronExprValidation.valid ? 'bg-primary/5 border-primary/10' : 'bg-rose-50/60 border-rose-200'" in source
     assert "⚠ 格式有误:" in source
 
     # 报警文案要具体到字段，不能只回一句「表达式格式不正确」

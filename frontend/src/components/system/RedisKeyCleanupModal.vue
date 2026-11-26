@@ -320,7 +320,7 @@ watch(groupMode, () => {
                         class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border"
                         :class="
                           item.type === 'string' ? 'bg-green-50 text-green-700 border-green-100' :
-                          item.type === 'hash' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                          item.type === 'hash' ? 'bg-primary/5 text-primary-dark border-primary/10' :
                           item.type === 'list' ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
                           'bg-gray-50 text-gray-600 border-gray-100'
                         "
@@ -357,7 +357,7 @@ watch(groupMode, () => {
                   </div>
                   <div v-else-if="keyDetail" class="p-3 space-y-2">
                     <div class="flex flex-wrap items-center gap-2 text-[10px]">
-                      <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
+                      <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-primary/5 text-primary-dark border border-primary/10">
                         {{ keyDetail.type }}
                       </span>
                       <span class="font-mono text-gray-500">TTL: {{ formatTtl(keyDetail.ttl) }}</span>

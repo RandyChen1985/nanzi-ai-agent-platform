@@ -32,7 +32,7 @@
         v-for="item in visibleItems"
         :key="item.id"
         type="button"
-        class="group flex w-full items-center gap-2.5 border-b border-gray-50 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-blue-50/40 dark:border-gray-800/60 dark:hover:bg-blue-950/20"
+        class="group flex w-full items-center gap-2.5 border-b border-gray-50 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-primary/5 dark:border-gray-800/60 dark:hover:bg-primary-dark/20"
         @click="$emit('open-item', item)"
       >
         <span
@@ -90,7 +90,7 @@
         <button
           v-if="viewAllLabel"
           type="button"
-          class="text-[11.5px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          class="text-[11.5px] font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
           @click="$emit('view-all', activeFilter)"
         >
           {{ viewAllLabel }} →
@@ -183,7 +183,7 @@ const statusClass = (item: WorkbenchItem) => {
 /**
  * 类型图标用内联 SVG。
  *
- * 旧实现在 workbenchDisplay 里给每类配了 emoji（⏱📰📊💬🔔），跟平台其他位置
+ * 旧实现在 workbenchDisplay 里给每类配了 emoji（），跟平台其他位置
  * 统一使用线性图标的约定不一致，这里一并换掉。
  */
 const kindOf = (item: WorkbenchItem): WorkbenchKind => resolveWorkbenchKind(item)
@@ -227,16 +227,16 @@ const kindBg = (item: WorkbenchItem) => {
     return "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400"
   }
   if (kind === "conversation") {
-    return "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+    return "bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
   }
   if (kind === "report") {
-    return "bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400"
+    return "bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
   }
   if (kind === "notification") {
     return "bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400"
   }
   if (kind === "digest") {
-    return "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400"
+    return "bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
   }
   return "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
 }

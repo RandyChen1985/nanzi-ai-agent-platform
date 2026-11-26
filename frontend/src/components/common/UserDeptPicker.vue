@@ -150,7 +150,7 @@ void load()
         v-model="keyword"
         type="search"
         :placeholder="activeType === 'user' ? '搜索姓名 / 账号 / 邮箱' : '搜索部门名称'"
-        class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
         @input="onInput"
       />
     </div>
@@ -166,14 +166,14 @@ void load()
         type="button"
         :disabled="isDisabled(candidate)"
         class="flex w-full items-center gap-2.5 border-b border-gray-100 px-3 py-2 text-left last:border-b-0 disabled:cursor-not-allowed disabled:bg-gray-50"
-        :class="!isDisabled(candidate) && isSelected(candidate) ? 'bg-blue-50' : ''"
+        :class="!isDisabled(candidate) && isSelected(candidate) ? 'bg-primary/5' : ''"
         @click="toggle(candidate)"
       >
         <span
           class="flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] text-white"
           :class="isDisabled(candidate)
             ? 'border-gray-300 bg-gray-300'
-            : (isSelected(candidate) ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white')"
+            : (isSelected(candidate) ? 'border-primary bg-primary' : 'border-gray-300 bg-white')"
         >{{ isDisabled(candidate) ? '·' : (isSelected(candidate) ? '✓' : '') }}</span>
         <span class="min-w-0 flex-1">
           <span

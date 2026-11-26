@@ -57,7 +57,7 @@ const setTab = (tab: PersonalResourceTab) => {
     >
       <!-- Header -->
       <div class="flex justify-between items-center px-5 sm:px-6 pt-5 pb-3 flex-shrink-0">
-        <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">
+        <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest">
           我的资源
         </h3>
         <button
@@ -88,7 +88,7 @@ const setTab = (tab: PersonalResourceTab) => {
           class="whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-bold transition-colors"
           :class="
             activeTab === spec.tab
-              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'
+              ? 'bg-primary/5 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover'
               : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/50 dark:hover:text-gray-200'
           "
           @click="setTab(spec.tab)"
@@ -129,20 +129,6 @@ const setTab = (tab: PersonalResourceTab) => {
 
 <style scoped>
 /* 弹窗入场：原先模板里就写了 animate-fade-in-up，但全局没有这个 keyframes，实际不生效 */
-.animate-fade-in-up {
-  animation: personal-resource-fade-in-up 0.16s ease-out both;
-}
-
-@keyframes personal-resource-fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 
 /* Tab 内容切换：只做透明度/位移，不参与布局，固定高度下不会有尺寸抖动 */
 .panel-switch {

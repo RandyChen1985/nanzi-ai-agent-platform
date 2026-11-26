@@ -9,7 +9,7 @@
       <template #action>
         <button
           type="button"
-          class="text-[11.5px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          class="text-[11.5px] font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
           @click="$emit('view-all')"
         >
           全部任务 →
@@ -22,7 +22,7 @@
         v-for="item in sortedItems"
         :key="item.id"
         type="button"
-        class="relative flex w-full items-center gap-3 border-b border-gray-50 py-3 pl-3.5 pr-4 text-left transition-colors last:border-b-0 hover:bg-blue-50/40 dark:border-gray-800/60 dark:hover:bg-blue-950/20"
+        class="relative flex w-full items-center gap-3 border-b border-gray-50 py-3 pl-3.5 pr-4 text-left transition-colors last:border-b-0 hover:bg-primary/5 dark:border-gray-800/60 dark:hover:bg-primary-dark/20"
         @click="$emit('open-item', item)"
       >
         <!-- 左侧竖条是紧急性唯一的常驻色彩，不靠底色铺满整行 -->

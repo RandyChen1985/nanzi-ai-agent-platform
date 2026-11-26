@@ -49,16 +49,20 @@ import { copyToClipboard } from "../utils/clipboard";
 import { groupToolsForDisplay } from "../utils/toolGrouping";
 import { getTemperatureGuidance } from "../utils/temperatureGuidance";
 import {
+  BoltIcon,
   BookOpenIcon,
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
+  CircleStackIcon,
   CpuChipIcon,
   DocumentDuplicateIcon,
   FolderIcon,
   PencilSquareIcon,
   TrashIcon,
   UserCircleIcon,
+  UserGroupIcon,
+  ShieldCheckIcon,
 } from "@heroicons/vue/24/outline";
 import { isSkillEnabled } from '@/utils/skillEnabled'
 import { agentSystemApi } from '../api/agent'
@@ -336,22 +340,22 @@ const applyPreviewTheme = () => {
 const AGENT_TYPE_OPTIONS = [
   {
     value: "GENERAL",
-    icon: "✨",
     label: "通用助手",
+    icon: ChatBubbleLeftRightIcon,
     description: "问答、写作与专业任务",
     capability: "general_chat",
   },
   {
     value: "CHATBI",
-    icon: "📊",
     label: "数据分析（ChatBI）",
+    icon: ChartBarIcon,
     description: "查数、指标与报表分析",
     capability: "data_query",
   },
   {
     value: "KNOWLEDGE_BASE",
-    icon: "📚",
     label: "知识库助手",
+    icon: BookOpenIcon,
     description: "企业文档检索与问答",
     capability: "knowledge_base",
   },
@@ -2983,7 +2987,7 @@ const versionStatusLabel = computed(() => {
 });
 
 const versionStatusClass = computed(() => {
-  if (!versionForm.value.id) return 'bg-blue-50 text-blue-700 border-blue-100';
+  if (!versionForm.value.id) return 'bg-primary/5 text-primary-dark border-primary/10';
   if (versionForm.value.status === 'DRAFT') return 'bg-amber-50 text-amber-700 border-amber-100';
   if (versionForm.value.status === 'PUBLISHED') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
   return 'bg-gray-50 text-gray-600 border-gray-200';
@@ -4985,17 +4989,14 @@ const getAgentIcon = (agent: AIAgent) => {
 };
 
 const getAgentColorTheme = (agent: AIAgent) => {
+  // 智能体头像/卡片的 hash 主题色：只用 6 种克制色，不再用 indigo/purple/pink 那套彩虹板
   const themes = [
-    { bg: 'bg-blue-50', border: 'border-blue-100', text: 'text-blue-600', accent: 'bg-blue-600', light: 'bg-blue-50/50' },
-    { bg: 'bg-indigo-50', border: 'border-indigo-100', text: 'text-indigo-600', accent: 'bg-indigo-600', light: 'bg-indigo-50/50' },
-    { bg: 'bg-purple-50', border: 'border-purple-100', text: 'text-purple-600', accent: 'bg-purple-600', light: 'bg-purple-50/50' },
-    { bg: 'bg-pink-50', border: 'border-pink-100', text: 'text-pink-600', accent: 'bg-pink-600', light: 'bg-pink-50/50' },
-    { bg: 'bg-rose-50', border: 'border-rose-100', text: 'text-rose-600', accent: 'bg-rose-600', light: 'bg-rose-50/50' },
-    { bg: 'bg-orange-50', border: 'border-orange-100', text: 'text-orange-600', accent: 'bg-orange-600', light: 'bg-orange-50/50' },
-    { bg: 'bg-amber-50', border: 'border-amber-100', text: 'text-amber-600', accent: 'bg-amber-600', light: 'bg-amber-50/50' },
+    { bg: 'bg-primary/5', border: 'border-primary/20', text: 'text-primary', accent: 'bg-primary', light: 'bg-primary/5' },
     { bg: 'bg-emerald-50', border: 'border-emerald-100', text: 'text-emerald-600', accent: 'bg-emerald-600', light: 'bg-emerald-50/50' },
+    { bg: 'bg-amber-50', border: 'border-amber-100', text: 'text-amber-600', accent: 'bg-amber-600', light: 'bg-amber-50/50' },
+    { bg: 'bg-sky-50', border: 'border-sky-100', text: 'text-sky-600', accent: 'bg-sky-600', light: 'bg-sky-50/50' },
     { bg: 'bg-teal-50', border: 'border-teal-100', text: 'text-teal-600', accent: 'bg-teal-600', light: 'bg-teal-50/50' },
-    { bg: 'bg-cyan-50', border: 'border-cyan-100', text: 'text-cyan-600', accent: 'bg-cyan-600', light: 'bg-cyan-50/50' },
+    { bg: 'bg-rose-50', border: 'border-rose-100', text: 'text-rose-600', accent: 'bg-rose-600', light: 'bg-rose-50/50' },
   ];
   let hash = 0;
   const str = agent?.id || agent?.name || 'default';
@@ -5357,7 +5358,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <button
           v-else-if="showAgentFlowGuide"
           type="button"
-          class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-100 sm:inline-flex"
+          class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm font-medium text-primary-dark shadow-sm transition-colors hover:bg-primary/10 sm:inline-flex"
           title="收起智能体全流程指引"
           @click="closeAgentFlowGuide"
         >
@@ -5435,7 +5436,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <button
             type="button"
             class="rounded-md px-2 py-1.5 text-xs font-medium transition-all"
-            :class="batchMode ? 'border border-blue-200 bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+            :class="batchMode ? 'border border-primary/20 bg-white text-primary-dark shadow-sm' : 'text-gray-500 hover:text-gray-800'"
             title="批量选择启用/禁用"
             @click="toggleBatchMode"
           >
@@ -5567,7 +5568,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <!-- 团队：前两个是「是/否」，第三个按团主 id 过滤。
                并排三个正好一行，与上面 6 个条件同一套视觉，不新开一层折叠。 -->
           <div class="mt-3 border-t border-gray-100 pt-3">
-            <div class="mb-2 flex items-center gap-2 text-[11px] font-bold text-teal-700">
+            <div class="mb-2 flex items-center gap-2 text-[11px] font-bold text-primary-dark">
               <span class="h-px flex-1 bg-teal-100"></span>
               <span>团队</span>
               <span class="h-px flex-1 bg-teal-100"></span>
@@ -5678,12 +5679,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         v-for="chip in activeFilterChips"
         :key="chip.key"
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 font-medium text-blue-700 transition-colors hover:bg-blue-100 cursor-pointer"
+        class="inline-flex items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 font-medium text-primary-dark transition-colors hover:bg-primary/10 cursor-pointer"
         :title="`移除「${chip.label}」`"
         @click="chip.clear()"
       >
         {{ chip.label }}
-        <span class="text-blue-400">✕</span>
+        <span class="text-primary">✕</span>
       </button>
       <button type="button" class="cursor-pointer text-gray-500 underline hover:text-gray-700" @click="clearAllAgentFilters">
         清除全部
@@ -5909,8 +5910,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
          独立面板而不复用下面的管理列表：列表区挂着批量操作、分组页签、
          管理筛选器，那些对使用者既无意义也会算错口径。 -->
     <div v-if="workspaceTab === 'assigned'" class="space-y-3">
-      <div class="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
-        <svg class="mt-0.5 h-4 w-4 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <div class="flex items-start gap-2 rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
+        <svg class="mt-0.5 h-4 w-4 shrink-0 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
         </svg>
         <span>
@@ -5960,7 +5961,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           class="flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm transition-colors hover:border-primary/40"
         >
           <div class="flex items-start gap-3 px-4 pt-4">
-            <div class="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-blue-100 bg-blue-50 text-sm font-semibold text-blue-700">
+            <div class="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-primary/10 bg-primary/5 text-sm font-semibold text-primary-dark">
               <img v-if="agent.avatar_url" :src="agent.avatar_url" :alt="agent.display_name" class="h-full w-full object-cover" />
               <span v-else>{{ (agent.display_name || agent.name || '?').slice(0, 1) }}</span>
             </div>
@@ -5969,7 +5970,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 {{ agent.display_name || agent.name }}
               </p>
               <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                <span class="rounded-full bg-indigo-50 px-2 py-px text-[10px] font-semibold text-indigo-700">平台提供</span>
+                <span class="rounded-full bg-primary/5 px-2 py-px text-[10px] font-semibold text-primary-dark">平台提供</span>
                 <span class="rounded-full bg-amber-50 px-2 py-px text-[10px] font-semibold text-amber-700">只读</span>
               </div>
             </div>
@@ -6030,9 +6031,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         >
           <!-- 头部：团名 + 可用度 + 展开/收起 -->
           <div class="flex items-start gap-3">
-            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-lg">
-              👥
-            </div>
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-lg"><UserGroupIcon class="h-5 w-5" aria-hidden="true" /></div>
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <h3 class="truncate text-sm font-bold text-gray-900">{{ resolveTeamName(team) }}</h3>
@@ -6102,7 +6101,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <span
                     class="shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium"
                     :class="
-                      member.is_lead ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
+                      member.is_lead ? 'bg-sky-50 text-primary-dark' : 'bg-emerald-50 text-emerald-700'
                     "
                     >{{ member.is_lead ? "主专家" : "子专家" }}</span
                   >
@@ -6255,7 +6254,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             // 方案 A：卡片不再按引擎上彩色描边、也不再有顶部色条——留下的 ring 只表示
             // 「需要你看一眼」，颜色不再承担「这是哪个引擎」这种可读文字也能表达的信息。
             batchMode && selectedAgentIds.has(agent.id)
-              ? 'ring-2 ring-blue-400 border-blue-300'
+              ? 'ring-2 ring-primary border-primary/25'
               : agentHasConfigIssue(agent)
                 ? 'ring-2 ring-red-300'
                 : isPendingReview(agent) ? 'ring-1 ring-amber-200 bg-amber-50/20' : '',
@@ -6328,20 +6327,20 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   v-if="agent.is_expert_team_lead && !isMainAgent(agent)"
                   class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
                   :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
-                >👥 专家团</span>
+                > 专家团</span>
                 <!-- 子专家徽标可点：单团直接筛，多团先选是哪个团。
                      只在「被团收录」时出现，普通智能体不加，否则每张卡都挂一个等于噪音。 -->
                 <button
                   v-if="subAgentBadge(agent)"
                   type="button"
-                  class="max-w-[8.5rem] shrink-0 cursor-pointer truncate rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                  class="max-w-[8.5rem] shrink-0 cursor-pointer truncate rounded-full border border-primary/20 bg-primary/5 px-1.5 py-px text-[10px] font-semibold text-primary-dark transition-colors hover:border-primary/25 hover:bg-primary/10"
                   :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
                   :aria-label="`${subAgentBadge(agent)?.title}，点击只看这个团`"
                   @click.stop="openTeamPicker($event, agent)"
                 >{{ subAgentBadge(agent)?.label }}</button>
                 <span
                   v-if="agent.is_system"
-                  class="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-50 text-indigo-500 border border-indigo-100"
+                  class="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary/5 text-primary border border-primary/10"
                   title="系统内置"
                 >
                   <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -6416,8 +6415,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         >
           <div class="flex items-center justify-between pb-2 border-b border-amber-100">
             <div class="flex items-center gap-1.5 text-xs font-bold text-gray-800">
-              <span class="text-amber-500">⚡</span>
-              <span>配置就绪检查</span>
+                          <span>配置就绪检查</span>
             </div>
             <button
               type="button"
@@ -6527,7 +6525,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <button
               v-if="agentGroupName(agent)"
               type="button"
-              class="inline-flex max-w-full items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+              class="inline-flex max-w-full items-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary-dark transition-colors hover:bg-primary/10"
               :title="`只看「${agentGroupName(agent)}」分组`"
               @click.stop="agentGroupFilter = agentGroupName(agent)"
             >
@@ -6547,7 +6545,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             :title="`待完善：${formatReadinessMissing(agent).join('、')}；点击去补齐`"
             @click.stop="followReadinessGap(agent)"
           >
-            <span class="shrink-0 text-amber-500">⚠</span>
+            <BoltIcon class="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" />
             <span class="min-w-0 flex-1 leading-relaxed">
               待完善：{{ formatReadinessMissing(agent).slice(0, 3).join('、') }}<span v-if="formatReadinessMissing(agent).length > 3">…</span>
             </span>
@@ -6586,10 +6584,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <!-- 数据集绑定是范围上限（且会与用户自身权限取交集），和知识库的默认挂载不同，用蓝色标出 -->
             <span
               v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-primary/5 text-primary-dark ring-1 ring-inset ring-primary/20"
               :title="`仅限查询这 ${agent.metadata_dataset_count} 个数据集（用户仍需具备对应数据权限）`"
             >
-              <span class="font-normal text-blue-500">仅限数据集</span>
+              <span class="font-normal text-primary">仅限数据集</span>
               <span class="tabular-nums font-semibold">{{ agent.metadata_dataset_count }}</span>
             </span>
             <span
@@ -6627,7 +6625,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             class="mt-3 flex w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-600"
             :title="systemBaselineHint(agent)"
           >
-            <span class="shrink-0 text-slate-400">🛡</span>
+            <ShieldCheckIcon class="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
             <span class="truncate">{{ systemBaselineHint(agent) }}</span>
           </div>
         </div>
@@ -6765,7 +6763,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     @click="openSystemPublish(agent, 'apply')"
                     class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
                   >
-                    <svg class="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg class="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                     </svg>
                     申请发布为系统级
@@ -6865,15 +6863,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <tr
                 v-for="agent in filteredAgents"
                 :key="agent.id"
-                class="hover:bg-blue-50/30 transition-colors group"
+                class="hover:bg-primary/5 transition-colors group"
                 :class="[
                   !agent.is_enabled ? 'opacity-55 grayscale bg-gray-50/60' : '',
                   // 表格行同样要标出来；批量模式下的选中底色优先，避免两种底色打架
                   batchMode && selectedAgentIds.has(agent.id)
-                    ? 'bg-blue-50/50'
+                    ? 'bg-primary/5'
                     : agentHasConfigIssue(agent) ? 'bg-red-50/50' : '',
                   canDragAgents && !batchMode ? 'cursor-grab active:cursor-grabbing' : '',
-                  dragOverId === agent.id ? 'bg-blue-50/60 ring-1 ring-inset ring-primary/30' : '',
+                  dragOverId === agent.id ? 'bg-primary/5 ring-1 ring-inset ring-primary/30' : '',
                   dragSourceId === agent.id ? 'opacity-50' : '',
                   savingAgentOrder ? 'pointer-events-none' : '',
                 ]"
@@ -6920,11 +6918,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         v-if="agent.is_expert_team_lead && !isMainAgent(agent)"
                         class="ml-1.5 inline-flex shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
                         :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
-                      >👥 专家团</span>
+                      > 专家团</span>
                       <button
                         v-if="subAgentBadge(agent)"
                         type="button"
-                        class="ml-1.5 inline-flex max-w-[7rem] cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                        class="ml-1.5 inline-flex max-w-[7rem] cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-full border border-primary/20 bg-primary/5 px-1.5 py-px text-[10px] font-semibold text-primary-dark transition-colors hover:border-primary/25 hover:bg-primary/10"
                         :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
                         :aria-label="`${subAgentBadge(agent)?.title}，点击只看这个团`"
                         @click.stop="openTeamPicker($event, agent)"
@@ -6939,7 +6937,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 </td>
                 <td class="w-36 min-w-[9rem] px-6 py-4 hidden md:table-cell">
                   <div class="flex w-full flex-col items-start gap-1">
-                    <span class="rounded border px-1.5 py-0.5 text-[10px] font-medium" :class="agent.is_system ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-100'">
+                    <span class="rounded border px-1.5 py-0.5 text-[10px] font-medium" :class="agent.is_system ? 'bg-primary/5 text-primary border-primary/10' : 'bg-slate-50 text-slate-500 border-slate-100'">
                       {{ agent.is_system ? '系统内置' : '自定义' }}
                     </span>
                     <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 whitespace-nowrap">
@@ -6965,7 +6963,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     </template>
                     <span
                       v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-                      class="px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-700 tabular-nums ring-1 ring-inset ring-blue-200"
+                      class="px-1.5 py-0.5 rounded text-[10px] bg-primary/5 text-primary-dark tabular-nums ring-1 ring-inset ring-primary/20"
                       :title="`仅限查询这 ${agent.metadata_dataset_count} 个数据集（用户仍需具备对应数据权限）`"
                     >
                       仅限数据集 {{ agent.metadata_dataset_count }}
@@ -7019,7 +7017,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <button
                       type="button"
                       @click.stop="openPreview(agent)"
-                      class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-primary bg-blue-50/80 border border-blue-200 hover:bg-blue-100 transition-colors shadow-2xs cursor-pointer"
+                      class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-primary bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors shadow-2xs cursor-pointer"
                       title="预览对话"
                     >
                       <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
@@ -7198,7 +7196,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </template>
 
       <div class="space-y-4">
-        <div class="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs leading-relaxed text-blue-900">
+        <div class="rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 text-xs leading-relaxed text-primary-dark">
           将复制
           <strong>{{ duplicateSource?.display_name }}</strong>
           的元数据与<strong>已发布版本</strong>配置（提示词、模型、工具、技能、欢迎卡片）。
@@ -7377,12 +7375,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               class="rounded-xl border border-gray-200 bg-gray-50/70 p-3"
             >
               <div v-if="!isEditingAgent" class="flex items-center gap-1.5">
-                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400"
+                <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-400"
                   >执行引擎 (Execution Engine)</label
                 >
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-white text-xs font-bold text-blue-600 hover:bg-blue-50"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-white text-xs font-bold text-primary hover:bg-primary/5"
                   aria-label="查看执行引擎说明"
                   title="查看三个引擎的区别"
                   @click="showEngineHelp = true"
@@ -7394,12 +7392,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <div
                   @click="selectEngineType('LOCAL')"
                   class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
-                  :class="agentForm.engine_type === 'LOCAL' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-100 hover:border-blue-200'"
+                  :class="agentForm.engine_type === 'LOCAL' ? 'bg-primary/5 border-primary shadow-sm' : 'bg-white border-gray-100 hover:border-primary/20'"
                 >
-                  <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center text-xl mb-2 group-hover:scale-110 transition-transform">🧠</div>
-                  <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'LOCAL' ? 'text-blue-700' : 'text-gray-600'">NanZi Engine</div>
+                  <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <CpuChipIcon class="h-5 w-5 text-primary" aria-hidden="true" />
+                  </div>
+                  <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'LOCAL' ? 'text-primary-dark' : 'text-gray-600'">NanZi Engine</div>
                   <div class="text-[9px] text-gray-400 mt-0.5">自主智能体</div>
-                  <div v-if="agentForm.engine_type === 'LOCAL'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-blue-500 text-white rounded-full flex items-center justify-center shadow-sm">
+                  <div v-if="agentForm.engine_type === 'LOCAL'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-primary text-white rounded-full flex items-center justify-center shadow-sm">
                     <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
                   </div>
                 </div>
@@ -7408,12 +7408,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <div
                   @click="selectEngineType('RAGFLOW')"
                   class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
-                  :class="agentForm.engine_type === 'RAGFLOW' ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-gray-100 hover:border-indigo-200'"
+                  :class="agentForm.engine_type === 'RAGFLOW' ? 'bg-primary/5 border-primary shadow-sm' : 'bg-white border-gray-100 hover:border-primary/20'"
                 >
-                  <div class="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center text-xl mb-2 group-hover:scale-110 transition-transform">🌊</div>
-                  <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'RAGFLOW' ? 'text-indigo-700' : 'text-gray-600'">RAGFlow</div>
+                  <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <CircleStackIcon class="h-5 w-5 text-primary" aria-hidden="true" />
+                  </div>
+                  <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'RAGFLOW' ? 'text-primary-dark' : 'text-gray-600'">RAGFlow</div>
                   <div class="text-[9px] text-gray-400 mt-0.5">工作流编排</div>
-                  <div v-if="agentForm.engine_type === 'RAGFLOW'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-sm">
+                  <div v-if="agentForm.engine_type === 'RAGFLOW'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-primary text-white rounded-full flex items-center justify-center shadow-sm">
                     <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
                   </div>
                 </div>
@@ -7424,7 +7426,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
                   :class="agentForm.engine_type === 'OPENCLAW' ? 'bg-orange-50 border-orange-500 shadow-sm' : 'bg-white border-gray-100 hover:border-orange-200'"
                 >
-                  <div class="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center text-xl mb-2 group-hover:scale-110 transition-transform">🦞</div>
+                  <div class="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <BoltIcon class="h-5 w-5 text-orange-600" aria-hidden="true" />
+                  </div>
                   <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'OPENCLAW' ? 'text-orange-700' : 'text-gray-600'">OpenClaw</div>
                   <div class="text-[9px] text-gray-400 mt-0.5">任务自动化</div>
                   <div v-if="agentForm.engine_type === 'OPENCLAW'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-orange-500 text-white rounded-full flex items-center justify-center shadow-sm">
@@ -7436,7 +7440,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <!-- Engine Config Fields -->
               <div
                 v-if="agentForm.engine_type !== 'LOCAL'"
-                class="mt-3 border-t border-gray-200 pt-3 animate-fade-in-down"
+                class="mt-3 border-t border-gray-200 pt-3 animate-fade-in-up"
                 :class="agentForm.engine_type === 'RAGFLOW' ? 'grid grid-cols-1 gap-3 md:grid-cols-2' : 'space-y-3'"
               >
                 <!-- OpenClaw Config (Address, Key, Model) -->
@@ -7480,7 +7484,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <div class="flex items-center justify-between gap-3">
                       <div class="flex flex-col">
                         <span class="text-xs font-bold text-orange-800 flex items-center">
-                          🛡️ 内容安全审查
+                           内容安全审查
                         </span>
                         <span class="text-[10px] text-orange-600/70 mt-0.5">调用系统模型检测用户输入是否合规</span>
                       </div>
@@ -7503,7 +7507,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       <div class="p-2.5 bg-white/50 border border-orange-100 rounded-lg">
                         <div class="flex items-center justify-between mb-2">
                           <label class="text-[10px] font-bold text-orange-800 flex items-center">
-                            <span class="mr-1">📥</span> 输入审计 (Input Audit)
+                            输入审计 (Input Audit)
                           </label>
                           <div class="flex items-center bg-orange-100/50 p-0.5 rounded text-[9px] border border-orange-200">
                             <button
@@ -7533,14 +7537,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           </button>
                         </div>
-                        <p class="text-[9px] text-orange-400/70 mt-1 italic">💡 留空将自动应用系统内置的输入合规审计逻辑</p>
+                        <p class="text-[9px] text-orange-400/70 mt-1 italic"> 留空将自动应用系统内置的输入合规审计逻辑</p>
                       </div>
 
                       <!-- Output Audit Section -->
                       <div class="p-2.5 bg-white/50 border border-orange-100 rounded-lg">
                         <div class="flex items-center justify-between mb-2">
                           <label class="text-[10px] font-bold text-orange-800 flex items-center">
-                            <span class="mr-1">📤</span> 输出审计 (Output Audit)
+                            输出审计 (Output Audit)
                           </label>
                           <div class="flex items-center bg-orange-100/50 p-0.5 rounded text-[9px] border border-orange-200">
                             <button
@@ -7570,7 +7574,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           </button>
                         </div>
-                        <p class="text-[9px] text-orange-400/70 mt-1 italic">💡 留空将自动应用系统内置的输出合规审计逻辑</p>
+                        <p class="text-[9px] text-orange-400/70 mt-1 italic"> 留空将自动应用系统内置的输出合规审计逻辑</p>
                       </div>
                     </div>
                   </div>
@@ -7578,18 +7582,18 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
                 <!-- App ID (Only for RAGFlow) -->
                 <div v-if="agentForm.engine_type === 'RAGFLOW'">
-                  <label class="block text-xs font-bold text-indigo-700 mb-1"
+                  <label class="block text-xs font-bold text-primary-dark mb-1"
                     >RAGFlow App ID <span class="text-red-500">*</span></label
                   >
                   <div class="flex items-center space-x-2">
                     <input
                       v-model="engineConfigUI.app_id"
                       placeholder="Paste the App/Dialog ID from RAGFlow"
-                      class="flex-1 px-3 py-2 text-sm border border-indigo-200 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      class="flex-1 px-3 py-2 text-sm border border-primary/20 rounded focus:ring-2 focus:ring-primary focus:border-primary outline-none"
                     />
                     <button
                       @click="openRagSelector('agent', 'app_id')"
-                      class="p-2 bg-indigo-50 text-indigo-600 rounded border border-indigo-200 hover:bg-indigo-100 transition-colors"
+                      class="p-2 bg-primary/5 text-primary rounded border border-primary/20 hover:bg-primary/10 transition-colors"
                       title="从 RAGFlow 选择智能体"
                     >
                       <svg
@@ -7643,7 +7647,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 </div>
 
                 <!-- RAGFlow Advanced Params -->
-                <div v-if="agentForm.engine_type === 'RAGFLOW'" class="grid grid-cols-2 gap-4 pt-2 bg-indigo-50/50 p-2 rounded border border-indigo-100 md:col-span-2">
+                <div v-if="agentForm.engine_type === 'RAGFLOW'" class="grid grid-cols-2 gap-4 pt-2 bg-primary/5 p-2 rounded border border-primary/10 md:col-span-2">
                    <div>
                       <label class="block text-xs font-bold text-gray-700 mb-1 flex justify-between">
                          <span>相似度阈值 (Threshold)</span>
@@ -7657,7 +7661,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                             step="0.05"
                             :value="engineConfigUI.ragflow_similarity_threshold || 0"
                             @input="(e) => engineConfigUI.ragflow_similarity_threshold = (e.target as HTMLInputElement).value"
-                            class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                            class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
                           />
                           <input
                             type="number"
@@ -7683,7 +7687,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                             step="0.05"
                             :value="engineConfigUI.ragflow_vector_weight || 0"
                             @input="(e) => engineConfigUI.ragflow_vector_weight = (e.target as HTMLInputElement).value"
-                             class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                             class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
                           />
                           <input
                             type="number"
@@ -7747,13 +7751,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   @click="selectAgentType(option.value)"
                   class="text-left rounded-xl border p-3 transition-all"
                   :class="agentForm.agent_type === option.value
-                    ? 'border-primary bg-blue-50 ring-1 ring-primary/20'
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
                     : isEditingAgent
                       ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-55'
-                      : 'border-gray-200 bg-white hover:border-blue-300'"
+                      : 'border-gray-200 bg-white hover:border-primary/25'"
                 >
                   <div class="flex items-center gap-2 font-semibold text-gray-800">
-                    <span>{{ option.icon }}</span>
+                    <component :is="option.icon" class="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
                     <span>{{ option.label }}</span>
                   </div>
                   <p class="mt-1 text-xs leading-5 text-gray-500">{{ option.description }}</p>
@@ -7767,7 +7771,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </div>
               </template>
 
-              <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600">
+              <div class="mt-3 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs text-gray-600">
                 <template v-if="agentForm.agent_type === 'CHATBI'">
                   数据查询流程和门禁由类型锁定；查数工具必需，数据集可选，未绑定时使用当前用户有权访问的数据集。
                 </template>
@@ -7782,7 +7786,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
             <div
               v-else-if="agentForm.engine_type === 'RAGFLOW' || agentForm.engine_type === 'OPENCLAW'"
-              class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600"
+              class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs text-gray-600"
             >
               <div class="font-semibold text-gray-800">智能体类型：通用助手</div>
               <p class="mt-1 leading-5">
@@ -7798,7 +7802,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <div class="flex items-center gap-1.5 text-sm font-medium text-gray-700">
-                    <span>👥</span><span>专家团主专家</span>
+                    <UserGroupIcon class="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" /><span>专家团主专家</span>
                   </div>
                   <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
                     打开后会在智能体中心以「专家团」形式展示；关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
@@ -7875,17 +7879,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <label class="text-sm font-bold text-gray-800">扩展能力标签</label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-xs font-bold text-primary hover:bg-primary/10"
                   aria-label="查看扩展能力标签说明"
                   title="查看扩展能力标签说明"
                   @click.stop="showCapabilityHelp = true"
                 >?</button>
               </div>
               <p class="mt-1 text-xs text-gray-500">主类型能力由系统锁定；这里可补充 contract_review 等自定义委派标签。</p>
-              <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
-                <div class="text-[10px] font-bold uppercase tracking-wider text-blue-600">系统内置标签</div>
-                <span class="mt-2 inline-flex items-center rounded-full border border-blue-200 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-blue-700">
-                  🔒 {{ lockedCapabilityForForm }}
+              <div class="mt-3 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2">
+                <div class="text-[10px] font-bold uppercase tracking-wider text-primary">系统内置标签</div>
+                <span class="mt-2 inline-flex items-center rounded-full border border-primary/20 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-primary-dark">
+                   {{ lockedCapabilityForForm }}
                 </span>
               </div>
               <div class="mt-3 flex items-center space-x-2">
@@ -7924,7 +7928,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <!-- 知识库检索范围确认：智能体级配置，随「保存」一并提交 -->
             <div
               v-if="agentForm.agent_type === 'KNOWLEDGE_BASE'"
-              class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"
+              class="rounded-xl border border-primary/10 bg-primary/5 p-4"
             >
               <label class="text-sm font-bold text-gray-800">知识库检索范围确认</label>
               <p class="mt-1 text-xs leading-5 text-gray-500">
@@ -7943,7 +7947,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <label class="text-sm font-bold text-gray-800">推荐排版样式</label>
                 <button
                   type="button"
-                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/5 text-xs font-bold text-primary hover:bg-primary/10"
                   aria-label="查看排版样式效果预览说明"
                   title="查看排版样式效果预览说明"
                   @click.stop="showThemePreviewHelp = true"
@@ -7961,7 +7965,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   class="py-2 px-3 text-xs border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1.5 active:scale-95"
                   :class="
                     selectedMarkdownTheme === themeOpt.value
-                      ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm font-bold'
+                      ? 'bg-primary/5 border-primary/20 text-primary shadow-sm font-bold'
                       : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                   "
                 >
@@ -7985,9 +7989,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="isOnboardingFlow && onboardingStep === 'VERSION'" class="space-y-5">
-          <div class="rounded-xl border border-blue-100 bg-blue-50/70 p-4">
-            <div class="text-sm font-semibold text-blue-900">V1 初始版本草稿已创建</div>
-            <p class="mt-1 text-xs leading-5 text-blue-700">系统已按智能体类型带入基础模板，你可以直接调整模型、提示词和工具。</p>
+          <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
+            <div class="text-sm font-semibold text-primary-dark">V1 初始版本草稿已创建</div>
+            <p class="mt-1 text-xs leading-5 text-primary-dark">系统已按智能体类型带入基础模板，你可以直接调整模型、提示词和工具。</p>
           </div>
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -8178,7 +8182,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-gray-700 hover:bg-primary/10 hover:text-primary"
             @click="applyTeamFilter(team.id)"
           >
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400"></span>
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></span>
             <span class="min-w-0 flex-1 truncate">{{ team.name }}</span>
             <span class="shrink-0 text-[10.5px] text-primary">只看这个团 →</span>
           </button>
@@ -8217,7 +8221,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <h4 class="text-sm font-bold text-gray-900">如何影响委派</h4>
                 <p class="mt-2 text-sm leading-relaxed text-gray-600">Main 会构建“能力 → 子智能体”映射。多个智能体拥有相同标签时，优先选择排序权重更高且当前用户有权限调用的智能体。</p>
               </section>
-              <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+              <section class="rounded-xl border border-primary/10 bg-primary/5 p-4">
                 <h4 class="text-sm font-bold text-gray-900">如何填写</h4>
                 <p class="mt-2 text-sm leading-relaxed text-gray-600">建议填写 1～3 个简短、明确的小写英文标签，使用下划线分词，例如 contract_review、ops_diagnosis。</p>
               </section>
@@ -8298,9 +8302,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </button>
           </div>
           <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
-            <div class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <div class="rounded-xl border border-primary/10 bg-primary/5 p-4">
               <div class="flex items-center gap-2">
-                <span class="text-xl">🧠</span>
+                <span class="text-xl"><CpuChipIcon class="h-5 w-5" aria-hidden="true" /></span>
                 <h4 class="text-sm font-bold text-gray-900">NanZi Engine（平台原生）</h4>
               </div>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -8314,7 +8318,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </div>
             <div class="rounded-xl border border-cyan-100 bg-cyan-50/40 p-4">
               <div class="flex items-center gap-2">
-                <span class="text-xl">🌊</span>
+                <span class="text-xl"><CircleStackIcon class="h-5 w-5" aria-hidden="true" /></span>
                 <h4 class="text-sm font-bold text-gray-900">RAGFlow（外部智能体）</h4>
               </div>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -8328,7 +8332,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </div>
             <div class="rounded-xl border border-orange-100 bg-orange-50/40 p-4">
               <div class="flex items-center gap-2">
-                <span class="text-xl">🦞</span>
+                <span class="text-xl"><BoltIcon class="h-5 w-5" aria-hidden="true" /></span>
                 <h4 class="text-sm font-bold text-gray-900">OpenClaw（外部任务机器人）</h4>
               </div>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">
@@ -8562,7 +8566,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div v-if="safetyModalType === 'input'">
           <div class="flex items-center justify-between mb-2 border-b border-orange-100 pb-1">
             <h5 class="text-sm font-bold text-orange-800 flex items-center">
-              <span class="mr-2">📥</span> 输入审计提示词 (Input Audit)
+              输入审计提示词 (Input Audit)
             </h5>
             <button
               @click="copyText(DEFAULT_SAFETY_PROMPTS.input, '输入审计提示词')"
@@ -8581,7 +8585,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div v-if="safetyModalType === 'output'">
           <div class="flex items-center justify-between mb-2 border-b border-orange-100 pb-1">
             <h5 class="text-sm font-bold text-orange-800 flex items-center">
-              <span class="mr-2">📤</span> 输出审计提示词 (Output Audit)
+              输出审计提示词 (Output Audit)
             </h5>
             <button
               @click="copyText(DEFAULT_SAFETY_PROMPTS.output, '输出审计提示词')"
@@ -8612,9 +8616,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
+               <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/20" style="background-color: #2563eb; color: #ffffff;">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                </div>
                <div>
@@ -8627,7 +8631,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 v-if="!showAgentFlowGuide"
                 type="button"
                 @click="restoreAgentFlowGuide"
-                class="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-100/70 hover:bg-blue-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 text-xs font-medium text-primary-dark bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 <span>恢复顶部流程提示</span>
@@ -8645,7 +8649,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                :key="tab"
                @click="activeHelpTab = tab as any"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-               :class="activeHelpTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeHelpTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'flow' ? '全流程指引 (Workflow)' :
                   tab === 'routing' ? '调度与委派机制 (Delegation)' : '就绪度与发布规范 (Readiness)' }}
@@ -8656,9 +8660,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Workflow Flow -->
              <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
-                   <h3 class="font-bold text-blue-900 mb-1">智能体 5 步全生命周期构建体系</h3>
-                   <p class="text-xs text-blue-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-primary/5 to-primary/5 border-l-4 border-primary p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">智能体 5 步全生命周期构建体系</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       智能体涵盖需求定义、模型装配、多版本隔离、权限下发与渠道落地。注意：系统智能体由主专家统一自动委派；必须在「角色管理」中完成授权分配，普通用户方可访问。
                    </p>
                 </div>
@@ -8668,7 +8672,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">1</span>
                             <h4 class="font-bold text-gray-900 text-sm">定义与系统标识</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -8686,7 +8690,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                          <button
                             type="button"
                             @click="showHelp = false; startAgentCreation()"
-                            class="text-xs text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             新建智能体 &rarr;
                          </button>
@@ -8697,7 +8701,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">模型与能力装配</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -8708,7 +8712,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/skills')"
-                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往技能工作台 &rarr;
                          </button>
@@ -8735,7 +8739,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">角色授权与访问权限</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -8746,7 +8750,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/roles')"
-                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往角色管理 &rarr;
                          </button>
@@ -8781,21 +8785,21 @@ const formatSkillCountLabel = (agent: AIAgent) => {
              <div v-else-if="activeHelpTab === 'routing'" class="space-y-4 max-w-4xl mx-auto">
                 <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">主专家自动委派规则</h4>
-                   <div class="flex items-start gap-3 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
-                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">1</span>
+                   <div class="flex items-start gap-3 p-3 bg-primary/5 rounded-xl border border-primary/10">
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white text-xs font-bold">1</span>
                       <div>
                          <div class="font-semibold text-gray-900">主专家自动委派机制</div>
                          <div class="text-xs text-gray-600 mt-0.5">
-                            未指定专家时，主对话默认进入 <span class="font-bold text-blue-600">主专家 Main</span>；主专家会根据任务需要直接回答，或从已启用且有权限的系统智能体中自动委派。系统智能体的描述用于辅助委派判断。
+                            未指定专家时，主对话默认进入 <span class="font-bold text-primary">主专家 Main</span>；主专家会根据任务需要直接回答，或从已启用且有权限的系统智能体中自动委派。系统智能体的描述用于辅助委派判断。
                          </div>
                       </div>
                    </div>
-                   <div class="flex items-start gap-3 p-3 bg-purple-50/50 rounded-xl border border-purple-100">
-                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white text-xs font-bold">2</span>
+                   <div class="flex items-start gap-3 p-3 bg-primary/5 rounded-xl border border-primary/10">
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white text-xs font-bold">2</span>
                       <div>
                          <div class="font-semibold text-gray-900">个人与自定义智能体访问</div>
                          <div class="text-xs text-gray-600 mt-0.5">
-                            非系统智能体属于独立专属沙箱助手，不会自动进入主专家的委派目录；用户可在对话框输入 <code class="font-mono bg-purple-100 text-purple-700 px-1 rounded">@智能体名称</code> 进行显式手动调用。
+                            非系统智能体属于独立专属沙箱助手，不会自动进入主专家的委派目录；用户可在对话框输入 <code class="font-mono bg-primary/10 text-primary-dark px-1 rounded">@智能体名称</code> 进行显式手动调用。
                          </div>
                       </div>
                    </div>
@@ -8818,13 +8822,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                    <p class="text-xs text-gray-500">发布或启用智能体前，系统会自动对配置完整度进行静态与运行时校验：</p>
                    <div class="space-y-2.5">
                       <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                         <span class="font-bold text-gray-800">✅ 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被主专家委派。
+                         <span class="font-bold text-gray-800"> 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被主专家委派。
                       </div>
                       <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                         <span class="font-bold text-gray-800">✅ 主类型能力匹配 (Primary Capability)</span>：ChatBI 类型必须装配 SQL/数据查询工具；知识库类型必须挂载知识库或检索工具。
+                         <span class="font-bold text-gray-800"> 主类型能力匹配 (Primary Capability)</span>：ChatBI 类型必须装配 SQL/数据查询工具；知识库类型必须挂载知识库或检索工具。
                       </div>
                       <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                         <span class="font-bold text-gray-800">✅ 资源绑定完备性 (Resource Bindings)</span>：若配置了显式数据集或知识库，需保证所引用的资源在平台中存在且处于可用状态。
+                         <span class="font-bold text-gray-800"> 资源绑定完备性 (Resource Bindings)</span>：若配置了显式数据集或知识库，需保证所引用的资源在平台中存在且处于可用状态。
                       </div>
                    </div>
                 </div>
@@ -8855,7 +8859,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             class="py-2 px-1 rounded-lg text-[10px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 active:scale-95"
             :class="
               previewTheme === themeOpt.value
-                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200/50 dark:border-gray-700'
+                ? 'bg-white dark:bg-gray-800 text-primary dark:text-primary shadow-sm border border-gray-200/50 dark:border-gray-700'
                 : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
             "
           >
@@ -8865,7 +8869,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
         
         <!-- 效果预览区域 -->
-        <div class="border border-gray-150 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
+        <div class="border border-gray-200 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
           <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">样式效果预览</div>
           
           <!-- 使用真实的 MessageRenderer 展示排版效果 -->
@@ -8881,7 +8885,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div class="flex justify-end gap-3">
           <button
             @click="applyPreviewTheme"
-            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition-all"
+            class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-medium shadow-sm transition-all"
           >
             使用该样式
           </button>

@@ -2,7 +2,7 @@
   <div class="relative" data-department-picker>
     <button
       type="button"
-      class="flex w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-4 py-2 text-left text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+      class="flex w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-4 py-2 text-left text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
       :disabled="disabled"
       @click="toggle"
     >
@@ -31,7 +31,7 @@
             type="search"
             placeholder="搜索部门名称或代码"
             data-department-search
-            class="w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            class="w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             @input="onSearchInput"
             @keydown.esc.stop="keyword = ''"
           />
@@ -69,7 +69,7 @@
             v-if="selected.includes(row.node.id)"
             type="button"
             class="flex-shrink-0 rounded px-1 text-[11px] font-bold"
-            :class="primaryId === row.node.id ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300' : 'text-gray-400 hover:text-gray-600'"
+            :class="primaryId === row.node.id ? 'bg-primary/5 text-primary dark:bg-primary/10 dark:text-primary-hover' : 'text-gray-400 hover:text-gray-600'"
             title="设为主部门（决定部门代码与数据过滤口径）"
             @click.stop="setPrimary(row.node.id)"
           >主</button>

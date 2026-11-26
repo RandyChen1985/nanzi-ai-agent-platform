@@ -11,6 +11,7 @@ def _source(path: str) -> str:
 
 def test_skill_flow_guide_banner_contract():
     banner = _source("frontend/src/components/skill/SkillFlowGuideBanner.vue")
+    strip = _source("frontend/src/components/common/FlowGuideStrip.vue")
     view = _source("frontend/src/views/SkillsManagement.vue")
 
     # 1. 验证 5 步流程定义与核心业务规则
@@ -25,7 +26,7 @@ def test_skill_flow_guide_banner_contract():
     assert "前往待审核" in banner
     assert "平台技能" in banner
     assert "/dashboard/agent-management" in banner
-    assert "不再提示" in banner
+    assert "不再提示" in strip
 
     # 3. 验证主视图中的组件引入与持久化机制
     assert "SkillFlowGuideBanner" in view

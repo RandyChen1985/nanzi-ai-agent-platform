@@ -52,7 +52,7 @@
 
     <!-- Persistent Global Watermark (Fixed position, now in background) -->
     <div v-if="currentUser?.watermark ? currentUser.watermark.enabled : true" class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-[0.04] select-none grid grid-cols-2 sm:grid-cols-3 gap-x-10 gap-y-24 p-10 justify-items-center items-center h-full w-full" aria-hidden="true">
-        <div v-for="n in 60" :key="n" class="text-[10px] sm:text-xs font-black -rotate-[30deg] whitespace-nowrap uppercase tracking-tighter">
+        <div v-for="n in 60" :key="n" class="text-[10px] sm:text-xs font-bold -rotate-[30deg] whitespace-nowrap uppercase tracking-tighter">
             <template v-if="currentUser?.watermark?.style === 'custom'">
                 {{ currentUser?.watermark?.text || branding.product_name }}
             </template>
@@ -74,7 +74,7 @@
           class="flex-shrink-0 flex items-start justify-between gap-2 border-b border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
         >
           <div class="flex items-start gap-2 min-w-0">
-            <span class="font-semibold shrink-0">⚠ 兼容模式</span>
+            <span class="font-semibold shrink-0">兼容模式</span>
             <span class="text-amber-800/90 dark:text-amber-200/80 break-words">
               检测到兼容模式接入，密钥存在泄露风险。请联系开发人员升级为 <strong>Ticket 模式</strong>。
             </span>
@@ -146,7 +146,7 @@
                          互斥条件必须显式写出来，否则生成中会同时出现徽章和状态点。 -->
                     <span
                         v-if="headerExpertLabel && !isProcessing"
-                        class="inline-flex items-center px-1.5 py-0.2 rounded-full bg-primary/10 text-primary text-[9px] font-semibold uppercase tracking-wider shrink-0"
+                        class="inline-flex items-center px-1.5 py-px rounded-full bg-primary/10 text-primary text-[9px] font-semibold uppercase tracking-wider shrink-0"
                     >
                         锁定
                     </span>
@@ -154,14 +154,14 @@
                          只在抽屉里标 TEAM 的话，用户会以为自己在跟一个普通专家聊。 -->
                     <span
                         v-if="headerExpertLabel && !isProcessing && currentExpertAgent?.is_expert_team_lead"
-                        class="inline-flex items-center gap-0.5 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-semibold text-teal-700 shrink-0 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                        class="inline-flex items-center gap-0.5 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-semibold text-teal-700 dark:text-teal-300 shrink-0 dark:border-primary-dark dark:bg-primary-dark/40 dark:text-teal-300"
                         :title="`专家团主专家：${currentExpertAgent.team_name || currentExpertAgent.display_name}${
                           currentExpertAgent.team_member_count
                             ? ` · ${currentExpertAgent.team_member_count} 位子专家`
                             : ''
                         }`"
                     >
-                        👥 TEAM
+                        TEAM
                     </span>
                 </div>
                 <div class="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
@@ -425,7 +425,7 @@
                       class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
                       @click="runHeaderMoreShortcuts"
                     >
-                      <CommandLineIcon class="h-5 w-5 shrink-0 text-indigo-500" aria-hidden="true" />
+                      <CommandLineIcon class="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                       <span class="flex-1 text-left font-medium">快捷指令</span>
                     </button>
 
@@ -443,7 +443,7 @@
                       class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
                       @click="runHeaderMoreBrowser"
                     >
-                      <svg class="h-5 w-5 shrink-0 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
+                      <svg class="h-5 w-5 shrink-0 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
                       <span class="flex-1 text-left font-medium">服务端浏览器</span>
                       <span v-if="browserPanelVisible" class="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
                     </button>
@@ -469,7 +469,7 @@
                       class="flex w-full items-center gap-3 border-t border-gray-100 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:border-gray-700 dark:text-gray-200 dark:hover:bg-primary/20"
                       @click="runHeaderMoreAccount"
                     >
-                      <svg class="h-5 w-5 shrink-0 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                      <svg class="h-5 w-5 shrink-0 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                       <span class="flex-1 text-left font-medium">我的账号</span>
                     </button>
                   </div>
@@ -644,7 +644,7 @@
                         <svg class="w-3 h-3 transform transition-transform duration-200 group-open/sys:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
                         </svg>
-                        <span>⚙️ 附加系统元数据说明 (点击展开)</span>
+                        <span>附加系统元数据说明 (点击展开)</span>
                       </summary>
                       <div class="mt-1.5 p-2 rounded bg-black/15 text-white/85 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all select-text selection:bg-white/20">
                         {{ parts.contextPart }}
@@ -666,25 +666,15 @@
                           @click="(url) => handlePreviewImageUrl(url, file.filename)"
                         />
                         <!-- Skill Icon -->
-                        <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono">
-                            ⚙️
-                        </div>
+                        <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono"><Cog6ToothIcon class="h-4 w-4" aria-hidden="true" /></div>
                         <!-- Metadata Dataset Icon -->
-                        <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
-                            📊
-                        </div>
+                        <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2"><ChartBarIcon class="h-4 w-4" aria-hidden="true" /></div>
                         <!-- Knowledge Base Icon -->
-                        <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
-                            📚
-                        </div>
+                        <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2"><BookOpenIcon class="h-4 w-4" aria-hidden="true" /></div>
                         <!-- Memory Icon -->
-                        <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
-                            🧠
-                        </div>
+                        <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2"><CircleStackIcon class="h-4 w-4" aria-hidden="true" /></div>
                         <!-- File Icon -->
-                        <div v-else class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
-                            📄
-                        </div>
+                        <div v-else class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2"><DocumentIcon class="h-4 w-4" aria-hidden="true" /></div>
                         <div class="flex-1 min-w-0 flex flex-col">
                             <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'metadata_dataset' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
                             <template v-else>
@@ -800,17 +790,9 @@
              :class="{ 'space-x-2': !config.hideChatAvatar }">
           <!-- Agent Avatar (Clickable for Settings) -->
           <div v-if="!config.hideChatAvatar" class="relative group">
-            <!-- Pulse/Glow Effect -->
             <div
-              class="absolute inset-0 rounded-full animate-pulse-slow transition-opacity"
-              :class="(!msg.agentName || msg.isThinking) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-              :style="{
-                backgroundColor: 'var(--primary-color, #1677ff)',
-                filter: 'blur(4px)',
-              }"
-            ></div>
-            <div
-              class="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden cursor-pointer hover:scale-110 hover:shadow-md active:scale-95 transition-all duration-200"
+              class="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/30 active:scale-95 transition-all duration-150"
+              :class="msg.isThinking ? 'ring-2 ring-primary/35' : ''"
               @click.stop="showSettings = true; fetchAllowedAgents()"
               title="点击配置主题"
             >
@@ -820,14 +802,6 @@
                 alt="NanZi AI agent"
                 @error="handleAgentAvatarError"
               />
-            </div>
-            <!-- Tiny indicator dot to pulse when NOT hovered -->
-            <div
-              class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border-2 border-white dark:border-gray-900 rounded-full group-hover:hidden"
-            >
-              <div
-                class="absolute inset-0 rounded-full animate-ping bg-green-400 opacity-75"
-              ></div>
             </div>
           </div>
           <div class="w-full min-w-0" :class="config.hideChatAvatar ? 'max-w-full' : 'max-w-[90%]'">
@@ -919,10 +893,10 @@
               <!-- External Tool Execution -->
               <div
                 v-if="msg.pendingExternalExecution"
-                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs transition-all"
+                class="mt-3 rounded-lg border border-sky-200 dark:border-primary-dark/50 bg-sky-50/80 dark:bg-primary-dark/20 p-3 text-xs transition-all"
               >
                 <div class="flex items-start gap-2">
-                  <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300">
+                  <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 dark:bg-primary-dark/40 text-primary-dark dark:text-sky-300">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
@@ -935,25 +909,25 @@
                       @click="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
                     >
                       <div class="flex min-w-0 flex-1 items-center gap-2">
-                        <div class="font-bold text-sky-900 dark:text-sky-100 shrink-0">
+                        <div class="font-bold text-primary-dark dark:text-sky-100 shrink-0">
                           {{ msg.pendingExternalExecution.title || '外部工具执行' }}
                         </div>
                         <!-- Collapsed summary preview -->
                         <span
                           v-if="!(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) && (msg.pendingExternalExecution.tool_call?.name || msg.pendingExternalExecution.details)"
-                          class="min-w-0 flex-1 truncate text-[11px] text-sky-800/70 dark:text-sky-200/70 font-normal"
+                          class="min-w-0 flex-1 truncate text-[11px] text-primary-dark/70 dark:text-sky-200/70 font-normal"
                         >
                           {{ msg.pendingExternalExecution.tool_call?.name ? `${msg.pendingExternalExecution.tool_call.name}${msg.pendingExternalExecution.tool_call.args ? ': ' + JSON.stringify(msg.pendingExternalExecution.tool_call.args) : ''}` : msg.pendingExternalExecution.details }}
                         </span>
                       </div>
                       <div class="flex items-center gap-1.5 shrink-0">
-                        <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-primary-dark dark:bg-primary-dark/40 dark:text-sky-300">
                           {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
                         </span>
                         <!-- Fold/Unfold Arrow -->
                         <button
                           type="button"
-                          class="flex h-5 w-5 items-center justify-center rounded text-sky-600 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200 transition-colors"
+                          class="flex h-5 w-5 items-center justify-center rounded text-primary hover:text-primary-dark dark:text-primary dark:hover:text-sky-200 transition-colors"
                           :aria-label="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '收起执行' : '展开执行'"
                           @click.stop="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
                         >
@@ -972,14 +946,14 @@
 
                     <!-- Expanded Content -->
                     <div v-show="msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')" class="mt-2">
-                      <div class="text-sky-800/80 dark:text-sky-200/80 break-words">
+                      <div class="text-primary-dark/80 dark:text-sky-200/80 break-words">
                         {{ msg.pendingExternalExecution.details }}
                       </div>
                       <div
                         v-if="msg.pendingExternalExecution.tool_call?.name"
-                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
+                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-primary-dark/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
                       >
-                        <div class="font-semibold text-sky-900 dark:text-sky-200 mb-0.5">{{ msg.pendingExternalExecution.tool_call.name }}</div>
+                        <div class="font-semibold text-primary-dark dark:text-sky-200 mb-0.5">{{ msg.pendingExternalExecution.tool_call.name }}</div>
                         <pre v-if="msg.pendingExternalExecution.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingExternalExecution.tool_call.args, null, 2) }}</pre>
                       </div>
                       <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
@@ -987,12 +961,12 @@
                           v-model="msg.pendingExternalExecution.outputDraft"
                           rows="4"
                           placeholder="在此粘贴客户端执行该工具后的输出结果..."
-                          class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+                          class="w-full rounded-md border border-sky-200 dark:border-primary-dark bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
                         />
                         <button
                           @click="submitPendingExternalExecution(msg)"
                           :disabled="msg.pendingExternalExecution.isSubmitting"
-                          class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           提交结果并继续
                         </button>
@@ -1131,17 +1105,17 @@
                                   class="mt-2"
                                 >
                                   <span
-                                    class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-blue-200/55 dark:bg-blue-900/55 border border-blue-200/80 dark:border-blue-900/50 text-[11px] text-blue-600 dark:text-blue-300 select-none animate-fade-in align-middle backdrop-blur-sm shadow-sm"
+                                    class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-primary/20 dark:bg-primary-dark/55 border border-primary/20 dark:border-primary-dark/50 text-[11px] text-primary dark:text-primary-hover select-none animate-fade-in align-middle backdrop-blur-sm shadow-sm"
                                   >
-                                    <svg class="w-3 h-3 text-blue-500 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                                    <svg class="w-3 h-3 text-primary animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
                                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
                                       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                     </svg>
                                     <span>AI 还在思考，请稍后</span>
                                     <span class="inline-flex space-x-0.5 ml-0.5">
-                                      <span class="animate-bounce-dot text-blue-500 font-bold" style="animation-delay: 0s">.</span>
-                                      <span class="animate-bounce-dot text-blue-500 font-bold" style="animation-delay: 0.15s">.</span>
-                                      <span class="animate-bounce-dot text-blue-500 font-bold" style="animation-delay: 0.3s">.</span>
+                                      <span class="animate-bounce-dot text-primary font-bold" style="animation-delay: 0s">.</span>
+                                      <span class="animate-bounce-dot text-primary font-bold" style="animation-delay: 0.15s">.</span>
+                                      <span class="animate-bounce-dot text-primary font-bold" style="animation-delay: 0.3s">.</span>
                                     </span>
                                   </span>
                                 </div>
@@ -1433,7 +1407,7 @@
         class="absolute bottom-52 left-1/2 -translate-x-1/2 z-30"
       >        <button
           @click="scrollToBottom(true)"
-          class="flex items-center space-x-2 px-4 py-2.5 bg-primary text-white shadow-2xl shadow-primary/40 rounded-full text-xs font-black hover:-translate-y-0.5 active:scale-95 transition-all group"
+          class="flex items-center space-x-2 px-4 py-2.5 bg-primary text-white shadow-2xl shadow-primary/40 rounded-full text-xs font-bold hover:-translate-y-0.5 active:scale-95 transition-all group"
           :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
         >
           <svg class="w-4 h-4 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg>
@@ -1623,7 +1597,7 @@
                 class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
               >
                 <div class="flex items-start gap-2 min-w-0">
-                  <span class="font-semibold shrink-0">⚠ 沙箱降级</span>
+                  <span class="font-semibold shrink-0">沙箱降级</span>
                   <span class="text-amber-800/90 dark:text-amber-200/80 break-words">{{ sandboxDegradedMessage }}</span>
                 </div>
                 <button
@@ -1801,13 +1775,13 @@
                       <!-- Watermark Number -->
                       <div
                           v-if="activeHistoryIndex >= 0"
-                          class="flex items-center justify-center w-5 h-5 rounded-full border flex-shrink-0 text-[9px] font-black select-none pointer-events-none -rotate-12 opacity-80"
+                          class="flex items-center justify-center w-5 h-5 rounded-full border flex-shrink-0 text-[9px] font-bold select-none pointer-events-none -rotate-12 opacity-80"
                           :style="{ color: `hsl(${(activeHistoryIndex * 137.5) % 360}, 70%, 50%)`, borderColor: `hsl(${(activeHistoryIndex * 137.5) % 360}, 70%, 40%, 0.3)` }"
                       >
                           {{ activeHistoryIndex + 1 }}
                       </div>
 
-                      <h3 class="text-sm sm:text-lg font-black text-gray-800 dark:text-gray-100 truncate">会话回溯详情</h3>
+                      <h3 class="text-sm sm:text-lg font-bold text-gray-800 dark:text-gray-100 truncate">会话回溯详情</h3>
                       <!-- 排查「两个窗口是不是同一个会话」时，界面上必须有个地方能看到会话 ID；
                            只露前 8 位（完整 UUID 会挤爆标题行），title 给全文，点击复制完整值。 -->
                       <button
@@ -1830,7 +1804,7 @@
                       <button
                           v-if="traceLogData"
                           @click.stop="continueChatFromTrace"
-                          class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-black border border-primary/20"
+                          class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-bold border border-primary/20"
                           title="加载此会话并继续聊天"
                       >
                           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1889,8 +1863,8 @@
                           >
                               <!-- Turn Header -->
                               <div class="flex justify-between items-center mb-4">
-                                  <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                      <span class="w-2 h-2 rounded-full bg-blue-500 shadow-sm shadow-blue-500/20"></span>
+                                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                      <span class="w-2 h-2 rounded-full bg-primary shadow-sm shadow-primary/20"></span>
                                       对话回合 #{{ tIdx + 1 }}
                                   </span>
                                   <span class="text-[9px] text-gray-400 font-mono bg-gray-50 dark:bg-gray-700/50 px-2 py-0.5 rounded-full">{{ formatDate(turn.created_at) }}</span>
@@ -1899,13 +1873,13 @@
                               <!-- Q&A Content -->
                               <div class="space-y-4">
                                   <div>
-                                      <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">提问 · Query</div>
+                                      <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 opacity-70">提问 · Query</div>
                                       <div class="text-gray-800 dark:text-gray-200 text-sm font-bold leading-relaxed whitespace-pre-wrap bg-gray-50/50 dark:bg-gray-900/30 p-3 rounded-xl border border-gray-100 dark:border-gray-800">
                                           {{ turn.query || 'N/A' }}
                                       </div>
                                   </div>
                                   <div>
-                                      <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
+                                      <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                                       <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm leading-relaxed">
                                           <MessageRenderer
                                             :content="stripInternalContextBlocks(turn.summary || 'N/A')"
@@ -1924,7 +1898,7 @@
                                       @click="toggleTurnSteps(turn)"
                                       class="flex items-center justify-between w-full p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-all group/btn"
                                   >
-                                      <div class="flex items-center space-x-2 text-[11px] font-black text-gray-500 group-hover/btn:text-primary transition-colors uppercase tracking-widest">
+                                      <div class="flex items-center space-x-2 text-[11px] font-bold text-gray-500 group-hover/btn:text-primary transition-colors uppercase tracking-widest">
                                           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                           <span>执行全链路 (Steps)</span>
                                           <span v-if="turn.steps?.length" class="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded text-[9px] font-mono">{{ turn.steps.length }}</span>
@@ -1946,19 +1920,19 @@
                                       <div v-if="turn.steps && turn.steps.length > 0" class="space-y-4">
                                           <div v-for="(step, sIdx) in turn.steps" :key="sIdx" class="relative group/step">
                                               <!-- Step Dot -->
-                                              <div class="absolute -left-[26px] top-1 w-5 h-5 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-center text-[9px] font-black text-white z-10"
-                                                  :class="step.status === 'error' ? 'bg-amber-500' : 'bg-blue-500'">
+                                              <div class="absolute -left-[26px] top-1 w-5 h-5 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-center text-[9px] font-bold text-white z-10"
+                                                  :class="step.status === 'error' ? 'bg-amber-500' : 'bg-primary'">
                                                   {{ Number(sIdx) + 1 }}
                                               </div>
                                               <!-- Step Card -->
                                               <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-3 shadow-sm">
                                                   <div class="flex justify-between items-center mb-2">
                                                       <div class="flex items-center gap-2">
-                                                          <span class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
-                                                              :class="step.event_type === 'thought' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'">
+                                                          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-tighter"
+                                                              :class="step.event_type === 'thought' ? 'bg-primary/5 text-primary' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'">
                                                               {{ step.event_type }}
                                                           </span>
-                                                          <span v-if="step.tool_name" class="text-[9px] font-black text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">
+                                                          <span v-if="step.tool_name" class="text-[9px] font-bold text-primary bg-primary/5 px-1.5 py-0.5 rounded">
                                                               {{ step.tool_name }}
                                                           </span>
                                                       </div>
@@ -1966,7 +1940,7 @@
                                                   </div>
                                                   <div class="space-y-2">
                                                       <pre v-if="step.tool_input" class="bg-gray-50 dark:bg-gray-900 p-2 rounded-lg text-[9px] text-gray-500 overflow-x-auto font-mono border border-gray-100 dark:border-gray-800">{{ typeof step.tool_input === 'string' ? step.tool_input : JSON.stringify(step.tool_input, null, 2) }}</pre>
-                                                      <div v-if="step.tool_output && step.tool_output.content" class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed bg-blue-50/20 p-2 rounded-lg border border-blue-100/10">
+                                                      <div v-if="step.tool_output && step.tool_output.content" class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed bg-primary/5 p-2 rounded-lg border border-primary/10">
                                                           {{ step.tool_output.content }}
                                                       </div>
                                                   </div>
@@ -1981,7 +1955,7 @@
 
                               <!-- Indicator for current trace -->
                               <div v-if="turn.trace_id === traceLogData.trace_id" class="absolute top-0 right-0">
-                                  <div class="bg-primary text-white text-[8px] font-black px-2.5 py-1 rounded-bl-xl uppercase tracking-tighter shadow-sm animate-pulse">
+                                  <div class="bg-primary text-white text-[8px] font-bold px-2.5 py-1 rounded-bl-xl uppercase tracking-tighter shadow-sm animate-pulse">
                                       Current Turn
                                   </div>
                               </div>
@@ -2143,7 +2117,7 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">使用指南</h3>
+              <h3 class="text-base font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest">使用指南</h3>
             </div>
             <button type="button" aria-label="关闭使用指南" @click="showHelpModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -2154,43 +2128,43 @@
           <div class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
             <!-- Intro -->
             <section>
-              <h4 class="text-xs font-black text-primary uppercase tracking-widest mb-3 flex items-center">
+              <h4 class="text-xs font-bold text-primary uppercase tracking-widest mb-3 flex items-center">
                  <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
                  系统简介
               </h4>
               <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
-                🚀 欢迎使用<b>本智能体平台</b>。本系统是一个集成多模型能力的 🤖 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、📊 数据查询分析、📚 私有文档检索及 ⚙️ 复杂业务流程处理。
+                欢迎使用<b>本智能体平台</b>。本系统是一个集成多模型能力的 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、数据查询分析、私有文档检索及 复杂业务流程处理。
               </p>
             </section>
 
             <!-- Interaction -->
             <section>
-              <h4 class="text-xs font-black text-primary uppercase tracking-widest mb-4 flex items-center">
+              <h4 class="text-xs font-bold text-primary uppercase tracking-widest mb-4 flex items-center">
                  <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
                  如何交互
               </h4>
               <div class="grid grid-cols-1 gap-3">
                  <div class="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 flex items-start space-x-3">
-                    <div class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono text-blue-500 font-bold">/</div>
+                    <div class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono text-primary font-bold">/</div>
                     <div>
-                      <div class="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase mb-0.5">快捷指令</div>
-                      <p class="text-[10px] text-gray-500 mb-2">Web 端支持<b>直接点击</b>快捷按钮；移动端输入斜杠 <span class="font-mono text-blue-500">/</span> 即可快速唤起。</p>
-                      <p class="text-[10px] text-gray-500 mb-2"><span class="font-mono text-blue-500">{{ DATASET_PORTAL_SLASH_COMMAND }}</span> 会基于与 ChatBI 相同的数据集目录，由 AI 生成我的数据门户与可点击追问按钮。</p>
+                      <div class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase mb-0.5">快捷指令</div>
+                      <p class="text-[10px] text-gray-500 mb-2">Web 端支持<b>直接点击</b>快捷按钮；移动端输入斜杠 <span class="font-mono text-primary">/</span> 即可快速唤起。</p>
+                      <p class="text-[10px] text-gray-500 mb-2"><span class="font-mono text-primary">{{ DATASET_PORTAL_SLASH_COMMAND }}</span> 会基于与 ChatBI 相同的数据集目录，由 AI 生成我的数据门户与可点击追问按钮。</p>
                       <div class="flex flex-wrap gap-1.5">
-                        <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">{{ DATASET_PORTAL_SLASH_COMMAND }}</span>
-                        <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/new</span>
-                        <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/history</span>
+                        <span class="px-1.5 py-0.5 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary text-[9px] rounded border border-primary/10 dark:border-primary-dark font-medium">{{ DATASET_PORTAL_SLASH_COMMAND }}</span>
+                        <span class="px-1.5 py-0.5 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary text-[9px] rounded border border-primary/10 dark:border-primary-dark font-medium">/new</span>
+                        <span class="px-1.5 py-0.5 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary text-[9px] rounded border border-primary/10 dark:border-primary-dark font-medium">/history</span>
                       </div>
                     </div>
                  </div>
                  <div class="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 flex items-start space-x-3">
-                    <div class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono text-purple-500 font-bold">@</div>
+                    <div class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono text-primary font-bold">@</div>
                     <div>
-                      <div class="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase mb-0.5">提及专家</div>
-                      <p class="text-[10px] text-gray-500 mb-2">Web 端可<b>从专家列表点击</b>指定；移动端输入艾特符号 <span class="font-mono text-purple-500">@</span> 即可指定专业智能体。</p>
+                      <div class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase mb-0.5">提及专家</div>
+                      <p class="text-[10px] text-gray-500 mb-2">Web 端可<b>从专家列表点击</b>指定；移动端输入艾特符号 <span class="font-mono text-primary">@</span> 即可指定专业智能体。</p>
                       <div class="flex flex-wrap gap-1.5">
-                        <span class="px-1.5 py-0.5 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-[9px] rounded border border-purple-100 dark:border-purple-800 font-medium">@运维专家</span>
-                        <span class="px-1.5 py-0.5 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-[9px] rounded border border-purple-100 dark:border-purple-800 font-medium">@数据分析</span>
+                        <span class="px-1.5 py-0.5 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary text-[9px] rounded border border-primary/10 dark:border-primary-dark font-medium">@运维专家</span>
+                        <span class="px-1.5 py-0.5 bg-primary/5 dark:bg-primary-dark/30 text-primary dark:text-primary text-[9px] rounded border border-primary/10 dark:border-primary-dark font-medium">@数据分析</span>
                       </div>
                     </div>
                  </div>
@@ -2199,14 +2173,14 @@
 
             <!-- Features -->
             <section>
-              <h4 class="text-xs font-black text-primary uppercase tracking-widest mb-4 flex items-center">
+              <h4 class="text-xs font-bold text-primary uppercase tracking-widest mb-4 flex items-center">
                  <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
                  支持功能与示例 (点击可复制)
               </h4>
               <div class="space-y-4">
                  <div class="group">
                     <div class="flex items-start space-x-3 mb-2">
-                      <div class="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg text-indigo-500">
+                      <div class="p-2 bg-primary/5 dark:bg-primary-dark/20 rounded-lg text-primary">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
                       </div>
                       <div>
@@ -2223,7 +2197,7 @@
                           @click="handleQuickQuestion('帮我写一个关于机房节能降耗的宣传文案。'); showHelpModal = false;"
                           class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/item:opacity-100 hover:scale-105 transition-all flex items-center shadow-sm"
                         >
-                          🚀 试一试
+                          试一试
                         </button>
                         <div class="transition-all duration-300">
                           <svg v-if="copiedId === 'help_chat'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2235,7 +2209,7 @@
 
                  <div class="group">
                     <div class="flex items-start space-x-3 mb-2">
-                      <div class="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-blue-500">
+                      <div class="p-2 bg-primary/5 dark:bg-primary-dark/20 rounded-lg text-primary">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                       </div>
                       <div>
@@ -2252,7 +2226,7 @@
                           @click="handleQuickQuestion('查询上海区域所有机房的剩余机柜数'); showHelpModal = false;"
                           class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/item:opacity-100 hover:scale-105 transition-all flex items-center shadow-sm"
                         >
-                          🚀 试一试
+                          试一试
                         </button>
                         <div class="transition-all duration-300">
                           <svg v-if="copiedId === 'help_bi'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2281,7 +2255,7 @@
                           @click="handleQuickQuestion('本周的 CS 和 ops 工单有哪些？'); showHelpModal = false;"
                           class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/item:opacity-100 hover:scale-105 transition-all flex items-center shadow-sm"
                         >
-                          🚀 试一试
+                          试一试
                         </button>
                         <div class="transition-all duration-300">
                           <svg v-if="copiedId === 'help_kb'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2310,7 +2284,7 @@
                           @click="handleQuickQuestion('查询最近 1 小时的网络延迟报警，并写一封邮件告知运维团队。'); showHelpModal = false;"
                           class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/item:opacity-100 hover:scale-105 transition-all flex items-center shadow-sm"
                         >
-                          🚀 试一试
+                          试一试
                         </button>
                         <div class="transition-all duration-300">
                           <svg v-if="copiedId === 'help_task'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2324,7 +2298,7 @@
 
             <!-- Typical Scenarios -->
             <section>
-              <h4 class="text-xs font-black text-primary uppercase tracking-widest mb-4 flex items-center">
+              <h4 class="text-xs font-bold text-primary uppercase tracking-widest mb-4 flex items-center">
                  <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
                  常见场景 (点击可复制)
               </h4>
@@ -2342,7 +2316,7 @@
                         @click="handleQuickQuestion('查看 B7 机房最近的所有高压报警，并给出可能的根本原因分析。'); showHelpModal = false;"
                         class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/scenario:opacity-100 hover:scale-105 transition-all shadow-sm"
                       >
-                        🚀 试一试
+                        试一试
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_scenario_fault'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2363,7 +2337,7 @@
                         @click="handleQuickQuestion('统计各机房昨天的监控指标数据量，并进行分析。'); showHelpModal = false;"
                         class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/scenario:opacity-100 hover:scale-105 transition-all shadow-sm"
                       >
-                        🚀 试一试
+                        试一试
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_scenario_inspect'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2384,7 +2358,7 @@
                         @click="handleQuickQuestion('查找 2024 年 Q4 季度的所有变更审批记录，汇总为表格。'); showHelpModal = false;"
                         class="px-1.5 py-0.5 bg-primary text-white text-[9px] rounded opacity-0 group-hover/scenario:opacity-100 hover:scale-105 transition-all shadow-sm"
                       >
-                        🚀 试一试
+                        试一试
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_scenario_audit'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
@@ -2400,7 +2374,7 @@
           <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
             <button
               @click="showHelpModal = false"
-              class="px-6 py-2 bg-primary text-white text-xs font-black uppercase tracking-widest rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+              class="px-6 py-2 bg-primary text-white text-xs font-bold uppercase tracking-widest rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20"
               :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
             >
               我明白了
@@ -2427,37 +2401,7 @@
         <div class="p-4 space-y-4">
           <div>
             <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">显示名称</label>
-            <input v-model="newCommand.label" type="text" placeholder="如：🏢 查机房" class="w-full text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-primary transition-all dark:text-gray-100 disabled:bg-gray-100" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">指令内容</label>
-            <textarea v-model="newCommand.command" rows="2" placeholder="输入要发送给 AI 的文字..." class="w-full text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-primary transition-all dark:text-gray-100 resize-none disabled:bg-gray-100"></textarea>
-          </div>
-          <button @click="addCommand" :disabled="!newCommand.label || !newCommand.command" class="w-full py-2.5 bg-primary text-white text-sm font-bold rounded-lg hover:opacity-90 disabled:opacity-50 transition-all shadow-md shadow-primary/20" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
-            添加指令
-          </button>
-        </div>
-      </div>
-    </div>
-    <!-- Modal: Add Command -->
-    <div
-      v-if="showAddModal"
-      class="absolute inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4"
-      @click.self="showAddModal = false"
-    >
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700">
-        <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
-          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">新建快捷指令</h3>
-          <button type="button" aria-label="关闭新建快捷指令" @click="showAddModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div class="p-4 space-y-4">
-          <div>
-            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">显示名称</label>
-            <input v-model="newCommand.label" type="text" placeholder="如：🏢 查机房" class="w-full text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-primary transition-all dark:text-gray-100 disabled:bg-gray-100" />
+            <input v-model="newCommand.label" type="text" placeholder="如：查机房" class="w-full text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-primary transition-all dark:text-gray-100 disabled:bg-gray-100" />
           </div>
           <div>
             <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">指令内容</label>
@@ -2570,9 +2514,9 @@
         class="absolute inset-0 flex flex-col items-center justify-center bg-white/70 dark:bg-gray-900/80 backdrop-blur-[2px] p-6 text-center"
         data-testid="embed-awaiting-mask"
       >
-        <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
+        <div class="p-4 bg-primary/5 dark:bg-primary-dark/10 rounded-full mb-4">
           <svg
-            class="w-12 h-12 text-blue-500 animate-spin"
+            class="w-12 h-12 text-primary animate-spin"
             fill="none"
             viewBox="0 0 24 24"
           >
@@ -2683,6 +2627,13 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from "vue";
 import { CommandLineIcon } from "@heroicons/vue/24/outline";
+import {
+  BookOpenIcon,
+  ChartBarIcon,
+  CircleStackIcon,
+  Cog6ToothIcon,
+  DocumentIcon,
+} from "@heroicons/vue/24/outline";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
@@ -4210,7 +4161,7 @@ const usesLegacyUrlToken = ref(false);
  * 于是「清掉 URL 里的凭据 → 刷新即失效」；同时 Cookie 是整浏览器一个槽，多个嵌入实例
  * 会互相覆盖，刷新后可能变成另一个用户。
  *
- * ⚠️ 隔离粒度必须说准：sessionStorage 的边界是 **tab + origin**，不是 iframe。
+ * 隔离粒度必须说准：sessionStorage 的边界是 **tab + origin**，不是 iframe。
  * 同一 tab 里的多个**同源** iframe 共享同一个 sessionStorage。平台明确支持一页多实例
  * （`instance_id` 正是为此而生：会话 ID、消息归属都按它分桶），因此存储键也必须带
  * `instance_id`——否则同页两个实例会互相覆盖，A 刷新后读到 B 的令牌，照样串号。
@@ -4274,7 +4225,7 @@ const clearEmbedSession = (): void => {
 /** 从地址栏移除凭据（长期 Key 或一次性 Ticket），避免其残留在浏览器历史、录屏与
  * 分享链接中。
  *
- * ⚠️ **只能在确认「刷新有凭据可依」后调用**，即满足以下任一条：
+ * **只能在确认「刷新有凭据可依」后调用**，即满足以下任一条：
  *   - 本 tab 已把会话令牌写入 sessionStorage（`persistEmbedSession` 返回真）——
  *     跨站 iframe 同样成立，这是主要的判定依据；
  *   - 后端确认已下发 `embed_session` Cookie（`session_cookie_issued`）——同站场景。
@@ -5602,7 +5553,7 @@ const resourceModalOptionSelected = (type: ResourceScopeGroupKey, option: any) =
   modalDraftSelections(type).some((item) => resourceEntryMatchesOption(item, option));
 
 const resourceOptionInitial = (option: any) => String(option.name || option.id || '?').trim().charAt(0).toUpperCase();
-const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-sky-500'][index % 5] || 'bg-teal-500';
+const resourceOptionAccent = (index: number) => ['bg-primary', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-teal-500'][index % 5] || 'bg-primary';
 
 const filteredResourceOptions = (type: ResourceScopeGroupKey) => {
   const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
@@ -8805,7 +8756,7 @@ const handleExportChatFromSidebar = async (item: any) => {
 
     let md = `# 会话导出记录\n\n- **会话 ID**: \`${targetConvId}\`\n- **导出时间**: ${new Date().toLocaleString()}\n- **消息条数**: ${turns.length}\n\n---\n\n`;
     turns.forEach((turn) => {
-      const role = turn.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
+      const role = turn.role === "user" ? "**用户**" : "**AI 助手**";
       const time = turn.createdAt ? ` _(${new Date(turn.createdAt).toLocaleString()})_` : "";
       md += `### ${role}${time}\n\n${turn.content}\n\n---\n\n`;
     });
@@ -9170,7 +9121,6 @@ watch(showSettings, (visible) => {
 });
 const showHelpModal = ref(false);
 
-
 // 固化报表暂存状态
 const showSaveReportModal = ref(false);
 const isEditingReport = ref(false);
@@ -9448,7 +9398,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   messages.value.push({
     id: Date.now(),
     role: "user",
-    content: `📌 执行固化 SQL 报表: ${report.title}`,
+    content: `执行固化 SQL 报表: ${report.title}`,
     timestamp: new Date().toISOString(),
   });
 
@@ -9549,7 +9499,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
 
     const errorMsg = extractSavedReportExecuteErrorMessage(error);
 
-    agentMsg.value.content = `### ❌ 报表执行失败\n\n在直连执行 SQL 报表时遇到错误：\n\n\`\`\`\n${errorMsg}\n\`\`\``;
+    agentMsg.value.content = `### 报表执行失败\n\n在直连执行 SQL 报表时遇到错误：\n\n\`\`\`\n${errorMsg}\n\`\`\``;
     agentMsg.value.logs = [
       {
         id: `log_${Date.now()}`,
@@ -9700,7 +9650,6 @@ const handleMemoryCleared = (payload: { conversationIds: string[]; all?: boolean
     });
   }
 };
-
 
 /** 聊天作用域候选（GET /api/portal/models?scope=chat，后端已按白名单收窄；未配置白名单 = 全量） */
 const chatScopedModels = ref<AIModel[]>([]);
@@ -12283,8 +12232,6 @@ watch(
   { deep: true }
 );
 
-
-
 // 钉住面板的让位宽度与右侧偏移统一由下方 pinnedDrawerLayout 计算。
 // 这里不再保留「各面板宽度 / 16 累加成 rem」的第二套真源：那套算法既没有上限
 // （两个面板就能把对话区挤成 0），又要临时拼一个 Tailwind 工具类交给模板——
@@ -13378,7 +13325,7 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
             messages.value.push({
               id: Date.now() + 1,
               role: "agent",
-              content: `✨ 已为您本地秒级重绘图表，将图表形式调整为：${newType === 'line' ? '折线图' : newType === 'bar' ? '柱状图' : newType === 'pie' ? '饼图' : '标红调整'}。`,
+              content: `已为您本地秒级重绘图表，将图表形式调整为：${newType === 'line' ? '折线图' : newType === 'bar' ? '柱状图' : newType === 'pie' ? '饼图' : '标红调整'}。`,
               timestamp: new Date().toISOString(),
             });
             return true;
@@ -14187,7 +14134,7 @@ const BOTTOM_THRESHOLD_PX = 80;
  * 进入视口被真正渲染，scrollHeight 才会变大。这里在随后几帧里继续贴底，只在**强制贴底**
  * （打开会话 / 发送 / 切会话）时使用。
  *
- * ⚠️ 流式增量绝不能走这条链：委派时高度每帧都在长，`height !== lastHeight` 恒真，12 帧
+ * 流式增量绝不能走这条链：委派时高度每帧都在长，`height !== lastHeight` 恒真，12 帧
  * 会全部跑满，而每帧都要读一次 `scrollHeight`——等于把每次贴底的强制布局放大成十几倍，
  * 叠加 scroll 事件里的读取就是主线程被打满的直接原因（Chrome「页面无响应」）。
  */
@@ -15083,19 +15030,7 @@ onUnmounted(() => {
 });
 </script>
 <style>
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.animate-fade-in-up {
-  animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
+
 @keyframes pulse-fast {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -15212,7 +15147,7 @@ onUnmounted(() => {
 :deep(.markdown-body pre) {
   margin-top: 1em;
   margin-bottom: 1em;
-  padding: 1.25em 1em 1em 1em;
+  padding: 0.875em 1em;
   background-color: #f8fafc;
   color: #0f172a;
   border: 1px solid #e5e7eb;
@@ -15227,18 +15162,6 @@ onUnmounted(() => {
   background-color: #0f172a;
   color: #f1f5f9;
   border-color: #1e293b;
-}
-:deep(.markdown-body pre):before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 12px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: #ff5f56;
-  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
-  z-index: 1;
 }
 :deep(.markdown-body ul, .markdown-body ol) {
   padding-left: 1.5em;

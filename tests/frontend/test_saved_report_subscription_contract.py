@@ -39,7 +39,8 @@ def test_saved_report_card_body_opens_detail_and_has_explicit_run_button():
 def test_saved_report_lists_offer_subscribed_smart_filter_and_switch_to_my_scope():
     for surface in (SOURCE, BROWSER):
         assert 'value: "subscribed"' in surface
-        assert "🔔" in surface
+        # 铃铛从 emoji 字段换成了 BellIcon，断言要跟着验证图标，而不是直接丢掉
+        assert "BellIcon" in surface, "「订阅中」筛选项要有铃铛图标"
         assert "已订阅" in surface
         assert "subscription_status" in surface
     assert 'savedReportScope.value = "my"' in SOURCE

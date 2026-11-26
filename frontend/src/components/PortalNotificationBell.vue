@@ -406,37 +406,37 @@ defineExpose({ open: openFromExternal, toggle });
     >
       <div class="border-b border-gray-100">
         <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">
-          <div class="min-w-0"><h3 class="text-sm font-black text-gray-800">站内通知</h3><p class="mt-0.5 truncate text-[10px] text-gray-400">报表运行与系统消息</p></div>
+          <div class="min-w-0"><h3 class="text-sm font-bold text-gray-800">站内通知</h3><p class="mt-0.5 truncate text-[10px] text-gray-400">报表运行与系统消息</p></div>
           <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="关闭通知" aria-label="关闭通知" @click="closeNotifications"><svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
         </div>
         <div class="notification-header-actions flex items-center gap-1.5 px-3 pb-3 whitespace-nowrap">
           <button type="button" class="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-50" :disabled="refreshing" title="刷新消息" aria-label="刷新消息" @click="refreshNotifications()"><svg class="h-3.5 w-3.5" :class="refreshing ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15" /></svg><span>{{ refreshing ? '刷新中' : '刷新' }}</span></button>
-          <button class="rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-600 hover:bg-blue-100" @click="markAllRead">全部已读</button>
+          <button class="rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10" @click="markAllRead">全部已读</button>
           <button type="button" class="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!hasReadNotifications" @click="requestClearRead">清空已读</button>
         </div>
       </div>
       <div class="max-h-[28rem] overflow-y-auto">
         <p v-if="loading" class="py-10 text-center text-xs text-gray-400">正在加载...</p>
         <p v-else-if="!notifications.length" class="py-10 text-center text-xs text-gray-400">暂无通知</p>
-        <div v-for="item in notifications" v-else :key="item.id" class="group flex border-b border-gray-50 hover:bg-gray-50" :class="!item.read_at ? 'bg-blue-50/50' : 'bg-white'">
+        <div v-for="item in notifications" v-else :key="item.id" class="group flex border-b border-gray-50 hover:bg-gray-50" :class="!item.read_at ? 'bg-primary/5' : 'bg-white'">
           <button class="min-w-0 flex-1 px-4 py-3 text-left" @click="openNotification(item)">
             <div class="flex gap-2">
               <span
                 class="mt-1.5 w-2 h-2 rounded-full shrink-0"
-                :class="!item.read_at ? 'bg-blue-500' : 'bg-gray-200'"
+                :class="!item.read_at ? 'bg-primary' : 'bg-gray-200'"
                 :title="item.read_at ? '已读' : '未读'"
               ></span>
               <div class="min-w-0">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <span
-                    class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black"
+                    class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
                     :class="isSavedReportNotification(item) ? 'bg-amber-50 text-amber-700 border border-amber-100' : 'bg-slate-100 text-slate-600 border border-slate-200'"
                   >{{ isSavedReportNotification(item) ? '⭐ 固化报表' : notificationKindLabel(item) }}</span>
                   <span
                     v-if="!item.read_at"
-                    class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-black text-blue-600"
+                    class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary"
                   >未读</span>
-                  <p class="truncate text-xs" :class="!item.read_at ? 'font-black text-gray-800' : 'font-medium text-gray-500'">{{ item.title }}</p>
+                  <p class="truncate text-xs" :class="!item.read_at ? 'font-bold text-gray-800' : 'font-medium text-gray-500'">{{ item.title }}</p>
                 </div>
                 <p class="text-[11px] mt-1 line-clamp-2" :class="!item.read_at ? 'text-gray-600' : 'text-gray-400'">{{ previewText(item.content) }}</p>
                 <p class="text-[10px] text-gray-400 mt-1">{{ formatDate(item.created_at) }}</p>
@@ -459,7 +459,7 @@ defineExpose({ open: openFromExternal, toggle });
           <div class="border-b border-gray-100 dark:border-gray-700">
             <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">
               <div class="min-w-0">
-                <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">站内消息</h3>
+                <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">站内消息</h3>
                 <p class="mt-0.5 truncate text-[10px] text-gray-400">报表运行与系统消息</p>
               </div>
               <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700" title="关闭通知" aria-label="关闭通知" @click="closeNotifications">
@@ -471,32 +471,32 @@ defineExpose({ open: openFromExternal, toggle });
                 <svg class="h-3.5 w-3.5" :class="refreshing ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15" /></svg>
                 <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
               </button>
-              <button class="rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300" @click="markAllRead">全部已读</button>
+              <button class="rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10 dark:bg-primary-dark/30 dark:text-primary-hover" @click="markAllRead">全部已读</button>
               <button type="button" class="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!hasReadNotifications" @click="requestClearRead">清空已读</button>
             </div>
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto">
             <p v-if="loading" class="py-10 text-center text-xs text-gray-400">正在加载...</p>
             <p v-else-if="!notifications.length" class="py-10 text-center text-xs text-gray-400">暂无通知</p>
-            <div v-for="item in notifications" v-else :key="item.id" class="group flex border-b border-gray-50 hover:bg-gray-50 dark:border-gray-700/60 dark:hover:bg-gray-700/40" :class="!item.read_at ? 'bg-blue-50/50 dark:bg-blue-950/20' : 'bg-white dark:bg-transparent'">
+            <div v-for="item in notifications" v-else :key="item.id" class="group flex border-b border-gray-50 hover:bg-gray-50 dark:border-gray-700/60 dark:hover:bg-gray-700/40" :class="!item.read_at ? 'bg-primary/5 dark:bg-primary-dark/20' : 'bg-white dark:bg-transparent'">
               <button class="min-w-0 flex-1 px-4 py-3 text-left" @click="openNotification(item)">
                 <div class="flex gap-2">
                   <span
                     class="mt-1.5 h-2 w-2 shrink-0 rounded-full"
-                    :class="!item.read_at ? 'bg-blue-500' : 'bg-gray-200'"
+                    :class="!item.read_at ? 'bg-primary' : 'bg-gray-200'"
                     :title="item.read_at ? '已读' : '未读'"
                   ></span>
                   <div class="min-w-0">
                     <div class="flex min-w-0 items-center gap-1.5">
                       <span
-                        class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black"
+                        class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
                         :class="isSavedReportNotification(item) ? 'border border-amber-100 bg-amber-50 text-amber-700' : 'border border-slate-200 bg-slate-100 text-slate-600'"
                       >{{ isSavedReportNotification(item) ? '⭐ 固化报表' : notificationKindLabel(item) }}</span>
                       <span
                         v-if="!item.read_at"
-                        class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-black text-blue-600"
+                        class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary"
                       >未读</span>
-                      <p class="truncate text-xs" :class="!item.read_at ? 'font-black text-gray-800 dark:text-gray-100' : 'font-medium text-gray-500'">{{ item.title }}</p>
+                      <p class="truncate text-xs" :class="!item.read_at ? 'font-bold text-gray-800 dark:text-gray-100' : 'font-medium text-gray-500'">{{ item.title }}</p>
                     </div>
                     <p class="mt-1 line-clamp-2 text-[11px]" :class="!item.read_at ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400'">{{ previewText(item.content) }}</p>
                     <p class="mt-1 text-[10px] text-gray-400">{{ formatDate(item.created_at) }}</p>
@@ -522,13 +522,13 @@ defineExpose({ open: openFromExternal, toggle });
           <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
             <div class="min-w-0">
               <div class="mb-1.5 flex flex-wrap items-center gap-2">
-                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600">{{ notificationKindLabel(detailItem) }}</span>
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{{ notificationKindLabel(detailItem) }}</span>
                 <span
-                  class="rounded-full px-2 py-0.5 text-[10px] font-black"
-                  :class="detailItem.level === 'error' ? 'bg-red-50 text-red-600' : detailItem.level === 'success' ? 'bg-emerald-50 text-emerald-700' : detailItem.level === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-600'"
+                  class="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  :class="detailItem.level === 'error' ? 'bg-red-50 text-red-600' : detailItem.level === 'success' ? 'bg-emerald-50 text-emerald-700' : detailItem.level === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-primary/5 text-primary'"
                 >{{ detailItem.level || 'info' }}</span>
               </div>
-              <h3 class="text-base font-black text-gray-800">{{ detailItem.title }}</h3>
+              <h3 class="text-base font-bold text-gray-800">{{ detailItem.title }}</h3>
               <p class="mt-1 text-[11px] text-gray-400">{{ formatDate(detailItem.created_at) }}</p>
               <!-- 管理员群发的公告：标出发件人，避免和系统自动消息混为一谈 -->
               <p
@@ -548,7 +548,7 @@ defineExpose({ open: openFromExternal, toggle });
             <button
               type="button"
               class="absolute top-3 right-5 z-20 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95"
-              :class="detailCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-600 opacity-100' : 'text-gray-400 hover:border-blue-300 hover:bg-white hover:text-blue-600'"
+              :class="detailCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-600 opacity-100' : 'text-gray-400 hover:border-primary/25 hover:bg-white hover:text-primary'"
               :title="detailCopied ? '已复制到剪贴板' : '复制内容'"
               aria-label="复制消息内容"
               @click="copyDetailContent"
@@ -569,7 +569,7 @@ defineExpose({ open: openFromExternal, toggle });
             <button
               v-if="isTaskCenterNotification(detailItem) && !isModalVariant"
               type="button"
-              class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+              class="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white hover:bg-primary-dark"
               @click="goToTaskCenter"
             >前往任务中心</button>
             <button type="button" class="rounded-lg border px-3 py-2 text-xs font-bold text-gray-600" @click="closeDetail">关闭</button>
@@ -580,7 +580,7 @@ defineExpose({ open: openFromExternal, toggle });
 
     <teleport to="body"><div v-if="deleteMode" class="fixed inset-0 z-[280] flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px]" @click.self="closeDeleteConfirm">
       <div class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-        <h3 class="text-sm font-black text-gray-800">{{ deleteMode === 'read' ? '确认清空已读消息？' : '确认删除这条消息？' }}</h3>
+        <h3 class="text-sm font-bold text-gray-800">{{ deleteMode === 'read' ? '确认清空已读消息？' : '确认删除这条消息？' }}</h3>
         <p class="mt-2 text-xs leading-relaxed text-gray-500">{{ deleteMode === 'read' ? '所有已读站内消息将被永久删除，未读消息不受影响。' : '只会删除这条站内消息，不会删除关联报表和运行历史。' }}</p>
         <p v-if="deleteTarget" class="mt-2 truncate rounded-lg bg-gray-50 px-3 py-2 text-xs font-bold text-gray-700">{{ deleteTarget.title }}</p>
         <p v-if="deleteError" class="mt-2 text-xs text-red-500">{{ deleteError }}</p>

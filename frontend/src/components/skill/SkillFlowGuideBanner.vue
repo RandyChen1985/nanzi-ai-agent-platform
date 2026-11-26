@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import FlowGuideStrip from '../common/FlowGuideStrip.vue'
 
 /**
- * 个人技能页（个人中心 / 嵌入式个人资源面板）与无平台技能管理权限时传 false。
+ * 平台**管理分区**是否可用（待审核 / 已发布 / 智能体中心），即 `canAccessPlatformWorkspace`。
  *
- * 第 3/4/5 步指向「待审核 / 平台技能 / 智能体中心」，而这些视图在个人技能页根本
- * 不渲染（tab bar 整体 `v-if="!personalOnly"`）；点进去只会让技能列表整块消失，
- * 页面看起来像坏了。因此这些入口在个人技能页一律隐藏，改为文案说明。
+ * 「平台技能」列表对所有登录用户开放（没有写权限时只读），因此它不再受这个开关限制。
+ * 第 3、5 步指向「待审核 / 智能体中心」，这些视图在个人技能页根本不渲染
+ * （tab bar 整体 `v-if="!personalOnly"`），无写权限时也不可达；点进去只会让技能列表
+ * 整块消失，页面看起来像坏了。因此这两个入口在不可用时一律隐藏，改为文案说明。
  */
 const props = withDefaults(defineProps<{ platformWorkspaceAvailable?: boolean }>(), {
   platformWorkspaceAvailable: true,
@@ -20,7 +22,8 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const isCollapsed = ref(true)
+
+type ActionType = 'create' | 'review' | 'global' | 'agents'
 
 interface FlowGuideStep {
   step: number
@@ -31,11 +34,11 @@ interface FlowGuideStep {
   tagClass: string
   iconBg: string
   actionText: string
-  actionType: 'create' | 'review' | 'global' | 'agents' | null
+  actionType: ActionType | null
   hintText: string
-  secondaryActionText: string | null
-  secondaryActionType: string | null
-  /** 该步的目标视图只有平台技能管理员可达（个人技能页不渲染） */
+  secondaryActionText?: string | null
+  secondaryActionType?: ActionType | null
+  /** 该步的目标视图属平台管理分区：只有 `element:skills:admin` 可达（个人技能页不渲染） */
   requiresPlatformAdmin?: boolean
 }
 
@@ -46,10 +49,10 @@ const steps: FlowGuideStep[] = [
     subtitle: 'SKILL.md 与 YAML 声明',
     desc: '设定英文 ID、中文名称与业务描述（Description 是大模型识别调用意图的关键）；自动生成 SKILL.md 入口。',
     tag: '规范创建',
-    tagClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    iconBg: 'bg-emerald-600 text-white font-bold',
+    tagClass: 'bg-gray-50 text-gray-600 border-gray-200',
+    iconBg: 'bg-primary/10 text-primary font-semibold',
     actionText: '新建技能',
-    actionType: 'create' as const,
+    actionType: 'create',
     hintText: '',
     secondaryActionText: null,
     secondaryActionType: null
@@ -60,8 +63,8 @@ const steps: FlowGuideStep[] = [
     subtitle: '多文件目录与代码实现',
     desc: '在内置工作台编写多级文件树（scripts/ 脚本、resources/ 模板、references/ 规范）；支持 Markdown 在线预览。',
     tag: '开发沉淀',
-    tagClass: 'bg-blue-50 text-blue-700 border-blue-200',
-    iconBg: 'bg-blue-600 text-white font-bold',
+    tagClass: 'bg-gray-50 text-gray-600 border-gray-200',
+    iconBg: 'bg-primary/10 text-primary font-semibold',
     actionText: '',
     actionType: null,
     hintText: '点击卡片进入文件树编辑',
@@ -74,10 +77,10 @@ const steps: FlowGuideStep[] = [
     subtitle: '申请发布与管理员审核',
     desc: '个人技能成熟后在抽屉中点击「申请发布至平台」；管理员在「待审核」Tab 下审查文件 Diff 与代码合规性。',
     tag: '提审合规',
-    tagClass: 'bg-amber-50 text-amber-700 border-amber-200',
-    iconBg: 'bg-amber-600 text-white font-bold',
+    tagClass: 'bg-gray-50 text-gray-600 border-gray-200',
+    iconBg: 'bg-primary/10 text-primary font-semibold',
     actionText: '前往待审核',
-    actionType: 'review' as const,
+    actionType: 'review',
     hintText: '',
     secondaryActionText: null,
     secondaryActionType: null,
@@ -89,14 +92,13 @@ const steps: FlowGuideStep[] = [
     subtitle: '全员共享与多版本基线',
     desc: '审批通过后晋升为平台公共技能，对全体业务角色公开；严格实现生产发布版本与开发草稿隔离，互不干扰。',
     tag: '生产就绪',
-    tagClass: 'bg-purple-50 text-purple-700 border-purple-200',
-    iconBg: 'bg-purple-600 text-white font-bold',
+    tagClass: 'bg-gray-50 text-gray-600 border-gray-200',
+    iconBg: 'bg-primary/10 text-primary font-semibold',
     actionText: '平台技能',
-    actionType: 'global' as const,
+    actionType: 'global',
     hintText: '',
     secondaryActionText: null,
-    secondaryActionType: null,
-    requiresPlatformAdmin: true
+    secondaryActionType: null
   },
   {
     step: 5,
@@ -104,10 +106,10 @@ const steps: FlowGuideStep[] = [
     subtitle: '多智能体装配与意图调度',
     desc: '在智能体中心为目标助手显式勾选挂载该技能，或由大模型意图感知动态加载；支持查看智能体使用分布。',
     tag: '生产消费',
-    tagClass: 'bg-teal-50 text-teal-700 border-teal-200',
-    iconBg: 'bg-teal-600 text-white font-bold',
+    tagClass: 'bg-gray-50 text-gray-600 border-gray-200',
+    iconBg: 'bg-primary/10 text-primary font-semibold',
     actionText: '前往智能体中心',
-    actionType: 'agents' as const,
+    actionType: 'agents',
     hintText: '',
     secondaryActionText: null,
     secondaryActionType: null,
@@ -115,14 +117,25 @@ const steps: FlowGuideStep[] = [
   }
 ]
 
-/** 仅平台管理入口：个人技能页 / 无权限时既不显示按钮，也不允许触发跳转。 */
+/** 仅平台管理分区入口：个人技能页 / 无权限时既不显示按钮，也不允许触发跳转。 */
 const isAdminOnlyStep = (item: { requiresPlatformAdmin?: boolean }) =>
   Boolean(item.requiresPlatformAdmin) && !props.platformWorkspaceAvailable
 
-const handleAction = (type: 'create' | 'review' | 'global' | 'agents' | null) => {
+/** 不可用的管理分区入口降级为纯文案提示，按钮整块不渲染 */
+const visibleSteps = computed(() =>
+  steps.map((item) =>
+    isAdminOnlyStep(item)
+      ? { ...item, actionType: null, hintText: '仅平台技能管理员可用' }
+      : item,
+  ),
+)
+
+const handleAction = (type: string | null) => {
   if (!type) return
-  // 兜底守卫：即使调用方漏了 v-if，也不把个人技能页切到不可见的平台视图 / 越界跳转
-  if (type !== 'create' && !props.platformWorkspaceAvailable) return
+  // 兜底守卫：即使调用方漏了 v-if，也不把个人技能页切到不可见的平台视图 / 越界跳转。
+  // 「新建技能」「平台技能」对所有能进页面的用户合法（后者只读也能看），
+  // 只有「待审核」「智能体中心」这两个管理分区受闸。
+  if (type !== 'create' && type !== 'global' && !props.platformWorkspaceAvailable) return
   if (type === 'create') {
     emit('action', 'create')
   } else if (type === 'review') {
@@ -144,161 +157,16 @@ const handleDismiss = () => {
 </script>
 
 <template>
-  <section
-    aria-label="技能工作台全流程指引"
-    class="relative overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-slate-50/60 p-4 shadow-sm transition-all sm:p-5"
-  >
-    <!-- 背景光晕装饰 -->
-    <div
-      class="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-emerald-200/30 blur-3xl"
-      aria-hidden="true"
-    ></div>
-    <div
-      class="pointer-events-none absolute left-1/3 -bottom-20 h-40 w-40 rounded-full bg-teal-200/25 blur-2xl"
-      aria-hidden="true"
-    ></div>
-
-    <!-- 顶部标题与控制栏 -->
-    <div class="relative z-10 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div
-          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-md shadow-emerald-600/30"
-          style="background-color: #059669; color: #ffffff;"
-        >
-          <svg class="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h3 class="text-sm font-bold text-gray-900 sm:text-base">
-              技能工作台全生命周期研发指引
-            </h3>
-            <span
-              class="rounded-full bg-emerald-100/80 px-2 py-0.5 text-[11px] font-semibold text-emerald-700"
-            >
-              5 步研发体系
-            </span>
-          </div>
-          <p class="mt-0.5 text-xs text-gray-500">
-            从 SKILL.md 规范定义、代码脚本沉淀，到发布审批、平台多版本隔离与智能体动态装配激活
-          </p>
-        </div>
-      </div>
-
-      <!-- 右侧快捷控制按钮 -->
-      <div class="flex items-center gap-1.5 sm:gap-2">
-        <button
-          type="button"
-          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-600 shadow-2xs hover:bg-white hover:text-gray-900 transition-colors cursor-pointer"
-          @click="isCollapsed = !isCollapsed"
-        >
-          <span>{{ isCollapsed ? '展开流程' : '收起' }}</span>
-          <svg
-            class="h-3.5 w-3.5 transition-transform duration-200"
-            :class="{ 'rotate-180': !isCollapsed }"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-500 shadow-2xs hover:bg-white hover:text-amber-600 transition-colors cursor-pointer"
-          title="下次进入不再主动弹出此引导"
-          @click="handleDismiss"
-        >
-          <svg class="h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
-          </svg>
-          <span>不再提示</span>
-        </button>
-
-        <button
-          type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-200/50 hover:text-gray-700 transition-colors cursor-pointer"
-          title="关闭本次指引"
-          @click="handleClose"
-        >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- 5 步骤流程卡片网格 -->
-    <div
-      v-show="!isCollapsed"
-      class="relative z-10 mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
-    >
-      <div
-        v-for="(item, idx) in steps"
-        :key="item.step"
-        class="group relative flex flex-col justify-between rounded-xl border border-white/80 bg-white/85 p-3 shadow-2xs backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md"
-      >
-        <!-- 连接箭头（仅在桌面端第 1~4 步显示） -->
-        <div
-          v-if="idx < steps.length - 1"
-          class="pointer-events-none absolute -right-2 top-1/2 z-20 hidden -translate-y-1/2 text-emerald-300 lg:block"
-        >
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
-          </svg>
-        </div>
-
-        <div>
-          <!-- 卡片头部：序号与标签 -->
-          <div class="flex items-start justify-between gap-1.5">
-            <div class="flex items-center gap-1.5 min-w-0">
-              <span
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold shadow-2xs"
-                :class="item.iconBg"
-              >
-                {{ item.step }}
-              </span>
-              <span class="text-xs font-bold text-gray-900 leading-tight truncate" :title="item.title">{{ item.title }}</span>
-            </div>
-            <span
-              class="rounded-md border px-1.5 py-0.5 text-[10px] font-semibold shrink-0 whitespace-nowrap leading-none"
-              :class="item.tagClass"
-            >
-              {{ item.tag }}
-            </span>
-          </div>
-
-          <!-- 副标题与说明文案 -->
-          <div class="mt-2.5">
-            <p class="text-[11px] font-medium text-emerald-900/80">{{ item.subtitle }}</p>
-            <p class="mt-1 text-[11px] leading-relaxed text-gray-500">{{ item.desc }}</p>
-          </div>
-        </div>
-
-        <!-- 底部快捷动作 -->
-        <div class="mt-3.5 border-t border-gray-100/80 pt-2.5">
-          <div v-if="item.actionType && !isAdminOnlyStep(item)" class="flex items-center gap-1.5">
-            <button
-              type="button"
-              class="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/60 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
-              @click="handleAction(item.actionType)"
-            >
-              <span>{{ item.actionText }}</span>
-              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-          <div
-            v-else
-            class="flex items-center justify-center rounded-lg bg-gray-50/80 py-1 text-[11px] font-medium text-gray-400"
-          >
-            <span>{{ isAdminOnlyStep(item) ? '仅平台技能管理员可用' : item.hintText }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <FlowGuideStrip
+    ariaLabel="技能工作台全流程指引"
+    title="技能工作台全生命周期研发指引"
+    badge="5 步研发体系"
+    subtitle="从 SKILL.md 规范定义、代码脚本沉淀，到发布审批、平台多版本隔离与智能体动态装配激活"
+    :steps="visibleSteps"
+    icon-path="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+    action-button-class="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/60 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
+    @action="handleAction"
+    @close="handleClose"
+    @dismiss="handleDismiss"
+  />
 </template>

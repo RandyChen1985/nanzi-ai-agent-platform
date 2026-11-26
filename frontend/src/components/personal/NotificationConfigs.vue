@@ -9,9 +9,9 @@
       <button 
         @click="refreshAll"
         :disabled="loading"
-        class="inline-flex items-center px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 rounded-lg transition-colors duration-200 disabled:opacity-50"
+        class="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary bg-primary/5 hover:bg-primary/10 active:bg-primary/20 rounded-lg transition-colors duration-200 disabled:opacity-50"
       >
-        <svg v-if="loading" class="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5 text-blue-600" fill="none" viewBox="0 0 24 24">
+        <svg v-if="loading" class="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5 text-primary" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
@@ -21,7 +21,7 @@
 
     <!-- Main Container -->
     <div v-if="loading && Object.keys(configs).length === 0" class="flex flex-col items-center justify-center py-12">
-      <svg class="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
+      <svg class="animate-spin h-8 w-8 text-primary" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
       </svg>
@@ -38,7 +38,7 @@
           @click="toggleChannelCard('dingtalk')"
         >
           <div class="flex items-center space-x-3">
-            <div class="p-2 bg-blue-50 rounded-lg text-blue-500">
+            <div class="p-2 bg-primary/5 rounded-lg text-primary">
               <!-- Dingtalk Icon (using SVG) -->
               <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12.012 2C6.488 2 2 6.488 2 12.012c0 5.524 4.488 10.012 10.012 10.012 5.524 0 10.012-4.488 10.012-10.012C22.024 6.488 17.536 2 12.012 2zm3.328 14.88h-6.68c-.372 0-.672-.3-.672-.672 0-.256.148-.488.38-.6l6.68-3.232c.332-.16.736.008.868.344.032.088.048.18.048.272 0 .372-.3.672-.672.672l-5.632.008 5.632 2.544c.336.152.484.552.332.888-.112.248-.364.4-.64.4zm.008-5.36h-6.68c-.372 0-.672-.3-.672-.672 0-.256.148-.488.38-.6l6.68-3.232c.332-.16.736.008.868.344.032.088.048.18.048.272 0 .372-.3.672-.672.672l-5.632.008 5.632 2.544c.336.152.484.552.332.888-.112.248-.364.4-.64.4z"/>
@@ -49,7 +49,7 @@
                 <h4 class="font-medium text-gray-800">钉钉群机器人通知</h4>
                 <button
                   type="button"
-                  class="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer focus:outline-none"
+                  class="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-gray-400 hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer focus:outline-none"
                   title="查看配置指引与资源获取"
                   aria-label="查看配置指引与资源获取"
                   @click.stop="openGuide('dingtalk')"
@@ -65,7 +65,7 @@
           <div class="flex items-center gap-3">
             <span
               v-if="channelDirty.dingtalk"
-              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              class="px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 bg-amber-100 rounded"
               title="该渠道有改动尚未保存"
             >未保存</span>
             <span
@@ -74,7 +74,7 @@
             >{{ groupCounts.dingtalk.enabled }}/{{ groupCounts.dingtalk.total }} 个群</span>
             <span
               v-if="groupCounts.dingtalk.total > 0"
-              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              class="px-2 py-0.5 text-[10px] font-bold rounded-full border whitespace-nowrap"
               :class="channelBadge('dingtalk').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('dingtalk').reason"
             >{{ channelBadge('dingtalk').label }}</span>
@@ -139,7 +139,7 @@
           <div class="flex items-center gap-3">
             <span
               v-if="channelDirty.wechat_work"
-              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              class="px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 bg-amber-100 rounded"
               title="该渠道有改动尚未保存"
             >未保存</span>
             <span
@@ -148,7 +148,7 @@
             >{{ groupCounts.wechat_work.enabled }}/{{ groupCounts.wechat_work.total }} 个群</span>
             <span
               v-if="groupCounts.wechat_work.total > 0"
-              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              class="px-2 py-0.5 text-[10px] font-bold rounded-full border whitespace-nowrap"
               :class="channelBadge('wechat_work').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('wechat_work').reason"
             >{{ channelBadge('wechat_work').label }}</span>
@@ -186,7 +186,7 @@
           @click="toggleChannelCard('feishu')"
         >
           <div class="flex items-center space-x-3">
-            <div class="p-2 bg-cyan-50 rounded-lg text-cyan-600">
+            <div class="p-2 bg-cyan-50 rounded-lg text-cyan-700 dark:text-cyan-300">
               <!-- Feishu Icon (Paper plane / Lark icon) -->
               <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -197,7 +197,7 @@
                 <h4 class="font-medium text-gray-800">飞书群机器人通知</h4>
                 <button
                   type="button"
-                  class="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-colors cursor-pointer focus:outline-none"
+                  class="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-gray-400 hover:text-primary hover:bg-cyan-50 transition-colors cursor-pointer focus:outline-none"
                   title="查看配置指引与资源获取"
                   aria-label="查看配置指引与资源获取"
                   @click.stop="openGuide('feishu')"
@@ -213,7 +213,7 @@
           <div class="flex items-center gap-3">
             <span
               v-if="channelDirty.feishu"
-              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              class="px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 bg-amber-100 rounded"
               title="该渠道有改动尚未保存"
             >未保存</span>
             <span
@@ -222,7 +222,7 @@
             >{{ groupCounts.feishu.enabled }}/{{ groupCounts.feishu.total }} 个群</span>
             <span
               v-if="groupCounts.feishu.total > 0"
-              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              class="px-2 py-0.5 text-[10px] font-bold rounded-full border whitespace-nowrap"
               :class="channelBadge('feishu').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('feishu').reason"
             >{{ channelBadge('feishu').label }}</span>
@@ -287,7 +287,7 @@
           <div class="flex items-center gap-3">
             <span
               v-if="configs.email.is_enabled"
-              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              class="px-2 py-0.5 text-[10px] font-bold rounded-full border whitespace-nowrap"
               :class="channelBadge('email').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('email').reason"
             >{{ channelBadge('email').label }}</span>
@@ -348,7 +348,7 @@
           </div>
 
           <!-- 全局概览：只展示服务器与发件人，绝不显示密码 -->
-          <div v-if="configs.email.smtp_source !== 'custom'" class="rounded-lg border border-gray-150 bg-gray-50/70 p-3.5 space-y-2">
+          <div v-if="configs.email.smtp_source !== 'custom'" class="rounded-lg border border-gray-200 bg-gray-50/70 p-3.5 space-y-2">
             <!-- 已启用（判据来自 /auth/me，全角色可用） -->
             <template v-if="mailServiceAvailable !== false">
               <!-- 明细需系统配置权限；普通用户读不到，只给中性说明，
@@ -437,7 +437,7 @@
           </template>
 
           <!-- 收件人区 -->
-          <div class="rounded-lg border border-gray-150 p-3.5 space-y-3">
+          <div class="rounded-lg border border-gray-200 p-3.5 space-y-3">
             <label class="flex items-start space-x-2.5 cursor-pointer" :class="!canIncludeSelf ? 'opacity-60 cursor-not-allowed' : ''">
               <input
                 type="checkbox"
@@ -542,7 +542,7 @@
         <!-- 步骤指引卡片 -->
         <div>
           <div class="flex items-center space-x-1.5 mb-2.5 sm:mb-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-            <span class="w-1.5 h-3.5 bg-blue-600 rounded-sm inline-block"></span>
+            <span class="w-1.5 h-3.5 bg-primary rounded-sm inline-block"></span>
             <span>配置步骤指引</span>
           </div>
           <div class="space-y-2 sm:space-y-2.5">
@@ -551,7 +551,7 @@
               :key="index"
               class="flex items-start p-2.5 sm:p-3 bg-white rounded-lg border border-gray-100 hover:border-gray-200 transition-colors"
             >
-              <span class="flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 text-blue-600 text-xs font-bold shrink-0 mt-0.5 mr-2.5 sm:mr-3">
+              <span class="flex items-center justify-center w-5 h-5 rounded-full bg-primary/5 text-primary text-xs font-bold shrink-0 mt-0.5 mr-2.5 sm:mr-3">
                 {{ index + 1 }}
               </span>
               <div class="flex-1 min-w-0">
@@ -575,15 +575,15 @@
               :href="link.url"
               target="_blank"
               rel="noopener noreferrer"
-              class="flex items-center justify-between p-2.5 sm:p-3 rounded-lg border border-gray-100 bg-gray-50/70 hover:bg-blue-50/50 hover:border-blue-200 text-xs text-gray-700 hover:text-blue-600 transition-all group"
+              class="flex items-center justify-between p-2.5 sm:p-3 rounded-lg border border-gray-100 bg-gray-50/70 hover:bg-primary/5 hover:border-primary/20 text-xs text-gray-700 hover:text-primary transition-all group"
             >
               <div class="flex items-center space-x-2 truncate">
-                <svg class="w-4 h-4 text-gray-400 group-hover:text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-gray-400 group-hover:text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
                 <span class="truncate font-medium">{{ link.label }}</span>
               </div>
-              <span class="text-[11px] text-gray-400 group-hover:text-blue-500 shrink-0 ml-2">访问 &rarr;</span>
+              <span class="text-[11px] text-gray-400 group-hover:text-primary shrink-0 ml-2">访问 &rarr;</span>
             </a>
           </div>
         </div>
@@ -606,7 +606,7 @@
         <div class="flex justify-end">
           <button
             type="button"
-            class="w-full sm:w-auto px-5 py-2.5 sm:py-1.5 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 sm:text-gray-700 sm:bg-gray-100 sm:hover:bg-gray-200 rounded-xl sm:rounded-lg shadow-sm sm:shadow-none transition-all cursor-pointer text-center"
+            class="w-full sm:w-auto px-5 py-2.5 sm:py-1.5 text-xs sm:text-sm font-medium text-white bg-primary hover:bg-primary-dark active:bg-primary-dark sm:text-gray-700 sm:bg-gray-100 sm:hover:bg-gray-200 rounded-xl sm:rounded-lg shadow-sm sm:shadow-none transition-all cursor-pointer text-center"
             @click="showGuideModal = false"
           >
             我知道了
@@ -781,9 +781,9 @@ const GUIDE_DATA: Record<string, ChannelGuide> = {
     channel: 'dingtalk',
     title: '钉钉群自定义机器人配置指引',
     subtitle: '通过 Webhook 将任务结果与系统警报推送到钉钉群聊',
-    badgeColor: 'bg-blue-50 text-blue-600 border-blue-200',
+    badgeColor: 'bg-primary/5 text-primary border-primary/20',
     steps: [
-      { title: '打开群设置', content: '在电脑端钉钉打开需要接收通知的群聊，点击右上角「⚙️ 群设置」图标。' },
+      { title: '打开群设置', content: '在电脑端钉钉打开需要接收通知的群聊，点击右上角「群设置」图标。' },
       { title: '添加智能群助手', content: '在群设置面板中选择「智能群助手」 ➔ 点击「添加机器人」。' },
       { title: '选择自定义机器人', content: '在机器人库列表中找到并点击「自定义（通过 Webhook 接入自定义服务）」 ➔ 点击「添加」。' },
       { title: '配置安全设置与名称', content: '输入机器人名称（如“AI智能体通知”）。安全设置推荐勾选「加签」，复制出以 SEC 开头的加签密钥；也可添加自定义关键词（如“测试”、“通知”）。' },
@@ -816,9 +816,9 @@ const GUIDE_DATA: Record<string, ChannelGuide> = {
     channel: 'feishu',
     title: '飞书群自定义机器人配置指引',
     subtitle: '利用飞书交互卡片将富文本结论和指标表格优雅投递至飞书群',
-    badgeColor: 'bg-cyan-50 text-cyan-600 border-cyan-200',
+    badgeColor: 'bg-cyan-50 text-cyan-700 dark:text-cyan-300 border-cyan-200',
     steps: [
-      { title: '进入飞书群设置', content: '在电脑端飞书打开接收通知的群聊，点击右上角「⚙️ 设置」图标 ➔ 进入「群机器人」菜单。' },
+      { title: '进入飞书群设置', content: '在电脑端飞书打开接收通知的群聊，点击右上角「设置」图标 ➔ 进入「群机器人」菜单。' },
       { title: '添加自定义机器人', content: '点击「添加机器人」按钮 ➔ 在机器人列表中选择「自定义机器人」 ➔ 点击「添加」。' },
       { title: '配置机器人与签名校验', content: '填写机器人名称与描述。安全设置中推荐勾选「签名校验」，复制出提供的密钥（Secret）；若不勾选签名校验，则秘钥留空即可。' },
       { title: '复制 Webhook 地址', content: '点击保存，系统将生成 Webhook 地址（形如 https://open.feishu.cn/open-apis/bot/v2/hook/...），点击复制。' },

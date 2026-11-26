@@ -112,7 +112,7 @@ const recordCountLabel = computed(() => `${props.records.length} 条记录`);
               <span class="text-xs font-bold text-gray-800">
                 {{ contextEventLabel(record.event_type) }}
               </span>
-              <span class="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600">
+              <span class="rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary">
                 {{ contextSourceLabel(record.source) }}
               </span>
               <span class="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600">

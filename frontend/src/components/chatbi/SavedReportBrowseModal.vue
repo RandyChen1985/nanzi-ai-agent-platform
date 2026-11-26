@@ -5,7 +5,7 @@
       <div class="relative w-full max-w-3xl h-[min(92vh,880px)] flex flex-col rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl overflow-hidden">
         <div class="shrink-0 px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3 bg-gray-50/80 dark:bg-gray-900/80">
           <div class="min-w-0">
-            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">浏览固化报表</h3>
+            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">浏览固化报表</h3>
             <p class="text-[11px] text-gray-400 mt-0.5">
               共 {{ reports.length }} 个 · 当前显示 {{ displayedReports.length }} 个
             </p>
@@ -13,7 +13,7 @@
           <div class="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              class="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+              class="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/40 transition-colors"
               title="刷新列表"
               @click="fetchReports()"
             >
@@ -43,7 +43,7 @@
               v-model="searchQuery"
               type="search"
               placeholder="搜索报表名称、描述、标签或原始提问..."
-              class="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 text-xs text-gray-800 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+              class="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 text-xs text-gray-800 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
             />
             <button
               v-if="searchQuery"
@@ -64,7 +64,7 @@
               :key="scope.value"
               type="button"
               class="py-1 rounded-md transition-colors text-center min-h-[1.75rem]"
-              :class="browserScope === scope.value ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-white shadow-sm font-black' : 'hover:text-gray-800 dark:hover:text-gray-200'"
+              :class="browserScope === scope.value ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-sm font-bold' : 'hover:text-gray-800 dark:hover:text-gray-200'"
               @click="setBrowserScope(scope.value)"
             >
               {{ scope.label }}
@@ -77,16 +77,16 @@
               type="button"
               class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-colors border font-bold"
               :class="browserSmartFilter === filter.value
-                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40'
+                ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40'
                 : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
               @click="setBrowserSmartFilter(filter.value)"
             >
               <span class="flex items-center gap-1">
-                <span v-if="filter.value === 'pinned'">📌</span>
-                <span v-else-if="filter.value === 'favorite'">⭐️</span>
-                <span v-else-if="filter.value === 'subscribed'">🔔</span>
-                <span v-else-if="filter.value === 'recent'">🕒</span>
-                <span v-else-if="filter.value === 'frequent'">🔥</span>
+                <BookmarkIcon v-if="filter.value === 'pinned'" class="h-3.5 w-3.5" aria-hidden="true" />
+                <StarIcon v-else-if="filter.value === 'favorite'" class="h-3.5 w-3.5" aria-hidden="true" />
+                <BellIcon v-else-if="filter.value === 'subscribed'" class="h-3.5 w-3.5" aria-hidden="true" />
+                <ClockIcon v-else-if="filter.value === 'recent'" class="h-3.5 w-3.5" aria-hidden="true" />
+                <FireIcon v-else-if="filter.value === 'frequent'" class="h-3.5 w-3.5" aria-hidden="true" />
                 <span>{{ filter.label }}</span>
               </span>
             </button>
@@ -96,11 +96,11 @@
               type="button"
               class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-colors border font-bold"
               :class="browserSelectedTag === ''
-                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40'
+                ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40'
                 : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
               @click="browserSelectedTag = ''"
             >
-              🏷️ 全部标签
+              全部标签
             </button>
             <button
               v-for="tag in allTags"
@@ -108,7 +108,7 @@
               type="button"
               class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-colors border font-bold"
               :class="browserSelectedTag === tag
-                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40'
+                ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40'
                 : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
               @click="browserSelectedTag = tag"
             >
@@ -132,7 +132,7 @@
             class="absolute inset-0 z-10 bg-white/55 dark:bg-gray-950/55 backdrop-blur-[1px] flex items-center justify-center pointer-events-none"
           >
             <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-[11px] text-gray-500 shadow-sm">
-              <svg class="w-3.5 h-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+              <svg class="w-3.5 h-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
@@ -141,7 +141,7 @@
           </div>
 
           <div v-if="loading && !reports.length" class="flex items-center justify-center py-12 text-xs text-gray-400">
-            <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 animate-spin text-primary mr-2" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
@@ -174,6 +174,7 @@
 </template>
 
 <script setup lang="ts">
+import { BookmarkIcon, StarIcon, BellIcon, ClockIcon, FireIcon } from "@heroicons/vue/24/outline";
 import { computed, ref, watch } from "vue";
 import axios from "@/utils/axios";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";

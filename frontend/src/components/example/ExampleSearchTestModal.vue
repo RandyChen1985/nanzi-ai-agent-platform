@@ -278,7 +278,7 @@ const isNeutralLog = (log: string): boolean =>
                       </div>
                       <span
                         class="shrink-0 rounded-md px-2 py-0.5 font-mono text-xs font-bold"
-                        :class="(item.similarity ?? 0) >= 0.8 ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'"
+                        :class="(item.similarity ?? 0) >= 0.8 ? 'bg-green-100 text-green-700' : 'bg-primary/10 text-primary-dark'"
                         :title="`相似度 ${formatSimilarity(item.similarity)}`"
                       >
                         相似度 {{ formatSimilarity(item.similarity) }}
@@ -323,7 +323,7 @@ const isNeutralLog = (log: string): boolean =>
                   class="break-all rounded border p-2 text-xs shadow-sm"
                   :class="
                     isHitLog(log)
-                      ? 'bg-blue-50 border-blue-200 text-blue-900'
+                      ? 'bg-primary/5 border-primary/20 text-primary-dark'
                       : isNeutralLog(log)
                         ? 'bg-amber-50 border-amber-200 text-amber-900'
                         : 'bg-white border-gray-200 text-gray-600'

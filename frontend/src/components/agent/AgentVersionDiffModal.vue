@@ -77,16 +77,16 @@ const formatCreatedAt = (value: string) => {
     @close="emit('close')"
   >
     <div class="space-y-5">
-      <div class="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3">
+      <div class="rounded-xl border border-primary/10 bg-primary/5 px-4 py-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="font-semibold text-gray-900">
             V{{ sourceVersion.version_number }} → 当前线上 V{{ publishedVersion.version_number }}
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700">
+            <span class="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-primary-dark">
               {{ diff.identical ? '配置一致' : `${diff.changedCount} 项变化` }}
             </span>
-            <label class="inline-flex cursor-pointer items-center gap-2 rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
+            <label class="inline-flex cursor-pointer items-center gap-2 rounded-full border border-primary/10 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
               <span>仅显示变化</span>
               <span class="relative inline-flex h-5 w-9 shrink-0">
                 <input
@@ -96,7 +96,7 @@ const formatCreatedAt = (value: string) => {
                   aria-label="仅显示变化"
                   @change="toggleOnlyChanges"
                 />
-                <span class="absolute inset-0 rounded-full bg-gray-200 transition-colors peer-checked:bg-indigo-600 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-500 peer-focus-visible:ring-offset-2"></span>
+                <span class="absolute inset-0 rounded-full bg-gray-200 transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2"></span>
                 <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4"></span>
               </span>
             </label>
@@ -107,10 +107,10 @@ const formatCreatedAt = (value: string) => {
           <span>当前线上发布：{{ formatCreatedAt(publishedVersion.created_at) }}</span>
         </div>
         <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-indigo-100/60">
+          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-primary/10">
             <span class="font-medium text-gray-700">V{{ sourceVersion.version_number }} 备注：</span>{{ sourceVersion.comment || '无备注' }}
           </div>
-          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-indigo-100/60">
+          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-primary/10">
             <span class="font-medium text-gray-700">线上 V{{ publishedVersion.version_number }} 备注：</span>{{ publishedVersion.comment || '无备注' }}
           </div>
         </div>

@@ -35,7 +35,7 @@
           <span class="text-gray-800 font-semibold">已完成 {{ done }} / {{ total }}</span>
         </div>
         <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
-          <div class="h-full bg-blue-500 transition-all duration-300" :style="{ width: `${progress ?? 0}%` }"></div>
+          <div class="h-full bg-primary transition-all duration-300" :style="{ width: `${progress ?? 0}%` }"></div>
         </div>
         <div class="flex justify-between text-[11px] text-gray-400 gap-3">
           <span class="truncate">{{ message }}</span>
@@ -138,7 +138,7 @@ const statusClass = computed(() => {
   if (status.value === 'completed') return 'text-emerald-600'
   if (status.value === 'failed') return 'text-red-600'
   if (status.value === 'disconnected') return 'text-amber-600'
-  return 'text-blue-600'
+  return 'text-primary'
 })
 
 const isFailedEntry = (entry: TaskProgressEntry) => entry.event === 'failed' || !!entry.error_detail
@@ -146,7 +146,7 @@ const isFailedEntry = (entry: TaskProgressEntry) => entry.event === 'failed' || 
 const entryBorderClass = (entry: TaskProgressEntry) => {
   if (isFailedEntry(entry)) return 'border-red-300'
   if (entry.event === 'completed') return 'border-emerald-300'
-  return 'border-blue-200'
+  return 'border-primary/20'
 }
 
 const abortCurrent = () => {

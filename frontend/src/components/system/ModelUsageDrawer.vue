@@ -52,7 +52,7 @@ const statusClass = (status?: string) => {
       <header class="shrink-0 border-b border-slate-200 px-5 py-4">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <p class="text-xs font-medium uppercase tracking-wide text-blue-600">模型使用关系中心</p>
+            <p class="text-xs font-medium uppercase tracking-wide text-primary">模型使用关系中心</p>
             <h2 id="model-usage-title" class="mt-1 truncate text-lg font-semibold text-slate-900">
               {{ model?.name || '模型' }}
             </h2>
@@ -78,9 +78,9 @@ const statusClass = (status?: string) => {
             <p class="text-xs text-slate-500">全部关系</p>
             <p class="mt-1 text-lg font-semibold text-slate-900">{{ visibleReferences.length }}</p>
           </div>
-          <div class="rounded-lg bg-blue-50 px-3 py-2">
-            <p class="text-xs text-blue-600">智能体版本</p>
-            <p class="mt-1 text-lg font-semibold text-blue-800">{{ agentReferences.length }}</p>
+          <div class="rounded-lg bg-primary/5 px-3 py-2">
+            <p class="text-xs text-primary">智能体版本</p>
+            <p class="mt-1 text-lg font-semibold text-primary-dark">{{ agentReferences.length }}</p>
           </div>
           <div class="rounded-lg bg-amber-50 px-3 py-2">
             <p class="text-xs text-amber-700">系统配置</p>
@@ -150,7 +150,7 @@ const statusClass = (status?: string) => {
                   </span>
                 </div>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span class="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">{{ reference.detail }}</span>
+                  <span class="rounded-full bg-primary/5 px-2 py-0.5 text-primary-dark">{{ reference.detail }}</span>
                   <span v-if="reference.agent_enabled === false" class="rounded-full bg-red-50 px-2 py-0.5 text-red-700">智能体已停用</span>
                   <span v-if="reference.version_id" class="font-mono text-slate-400">{{ reference.version_id }}</span>
                 </div>

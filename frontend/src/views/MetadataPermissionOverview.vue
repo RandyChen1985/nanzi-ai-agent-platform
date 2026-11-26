@@ -114,8 +114,8 @@ const refresh = () => {
 const subjectParts = (ds: any) => {
   const parts: { text: string; cls: string }[] = []
   if (ds.has_all) parts.push({ text: '全员基线', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' })
-  if (ds.roles) parts.push({ text: `${ds.roles} 角色`, cls: 'bg-sky-50 text-sky-700 border-sky-200' })
-  if (ds.users) parts.push({ text: `${ds.users} 用户`, cls: 'bg-violet-50 text-violet-700 border-violet-200' })
+  if (ds.roles) parts.push({ text: `${ds.roles} 角色`, cls: 'bg-sky-50 text-primary-dark border-sky-200' })
+  if (ds.users) parts.push({ text: `${ds.users} 用户`, cls: 'bg-primary/5 text-primary-dark border-primary/20' })
   return parts
 }
 
@@ -180,7 +180,7 @@ onMounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
           </svg>
           数据集权限总览
-          <span class="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+          <span class="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-bold text-primary-dark">
             仅管理员 · 只读
           </span>
         </h1>
@@ -338,7 +338,7 @@ onMounted(() => {
                 >
                   <td class="px-4 py-2.5">
                     <div class="flex items-center gap-2">
-                      <span class="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-sky-200 bg-sky-50 text-sky-600">
+                      <span class="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-sky-200 bg-sky-50 text-primary">
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <ellipse cx="12" cy="6" rx="7" ry="3" />
                           <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
@@ -413,7 +413,7 @@ onMounted(() => {
                     <div class="flex flex-wrap gap-1">
                       <span
                         v-if="ds.custom_row"
-                        class="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700"
+                        class="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-primary-dark"
                       >自定义 {{ ds.custom_row }}</span>
                       <span
                         v-if="ds.no_row"
@@ -469,15 +469,15 @@ onMounted(() => {
                       <span
                         class="inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[10px] font-bold"
                         :class="g.subject === 'all' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          : g.subject === 'role' ? 'border-sky-200 bg-sky-50 text-sky-700'
-                          : 'border-violet-200 bg-violet-50 text-violet-700'"
+                          : g.subject === 'role' ? 'border-sky-200 bg-sky-50 text-primary-dark'
+                          : 'border-primary/20 bg-primary/5 text-primary-dark'"
                       >{{ g.subject === 'all' ? '全员基线' : g.subject === 'role' ? '角色' : '用户' }}</span>
                       <span class="min-w-[8rem] text-[11.5px] font-semibold text-gray-800">{{ g.who }}</span>
                       <span class="text-[11px] text-gray-500">表：<b class="font-semibold text-gray-700">{{ grantScopeText(ds, g) }}</b></span>
                       <span class="text-[11px] text-gray-500">字段：<b class="font-semibold text-gray-700">{{ grantColumnText(g) }}</b></span>
                       <span class="text-[11px] text-gray-500">
                         行级：<b class="font-semibold text-gray-700">{{ rowPolicyText(g.row_policy) }}</b>
-                        <code v-if="g.row_policy === 'custom' && g.row_condition" class="ml-1 rounded bg-indigo-50 px-1 py-0.5 font-mono text-[10px] text-indigo-700">
+                        <code v-if="g.row_policy === 'custom' && g.row_condition" class="ml-1 rounded bg-primary/5 px-1 py-0.5 font-mono text-[10px] text-primary-dark">
                           {{ g.row_condition }}
                         </code>
                       </span>

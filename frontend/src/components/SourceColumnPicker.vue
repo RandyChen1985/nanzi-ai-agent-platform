@@ -121,18 +121,18 @@ const MIN_LIST_HEIGHT = 120
 const PREFERRED_LIST_HEIGHT = 224
 
 const accentRingClass = computed(() =>
-  props.accent === 'violet' ? 'focus:ring-2 focus:ring-violet-500' : 'focus:ring-2 focus:ring-indigo-500',
+  props.accent === 'violet' ? 'focus:ring-2 focus:ring-violet-400' : 'focus:ring-2 focus:ring-primary',
 )
 const activeItemClass = computed(() =>
   props.accent === 'violet'
-    ? 'bg-violet-50 text-violet-700'
-    : 'bg-indigo-50 text-indigo-700',
+    ? 'bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+    : 'bg-primary/5 text-primary-dark',
 )
 const activeSubClass = computed(() =>
-  props.accent === 'violet' ? 'text-violet-500/80' : 'text-indigo-500/80',
+  props.accent === 'violet' ? 'text-violet-500/80' : 'text-primary/80',
 )
 const activeSampleClass = computed(() =>
-  props.accent === 'violet' ? 'text-violet-400' : 'text-indigo-400',
+  props.accent === 'violet' ? 'text-violet-500' : 'text-primary',
 )
 
 const columnSubtitle = (col: SourceColumn) => {

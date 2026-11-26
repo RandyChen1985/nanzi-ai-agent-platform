@@ -25,7 +25,7 @@
             <div class="grid grid-cols-3 gap-2">
               <label v-for="option in scheduleOptions" :key="option.value" class="cursor-pointer">
                 <input v-model="schedule_type" class="peer sr-only" type="radio" name="schedule_type" :value="option.value" />
-                <span class="block rounded-lg border border-gray-200 px-3 py-2 text-center text-sm text-gray-600 transition peer-checked:border-indigo-500 peer-checked:bg-indigo-50 peer-checked:text-indigo-700 dark:border-gray-700 dark:text-gray-300 dark:peer-checked:bg-indigo-950/40 dark:peer-checked:text-indigo-300">{{ option.label }}</span>
+                <span class="block rounded-lg border border-gray-200 px-3 py-2 text-center text-sm text-gray-600 transition peer-checked:border-primary peer-checked:bg-primary/5 peer-checked:text-primary-dark dark:border-gray-700 dark:text-gray-300 dark:peer-checked:bg-primary-dark/40 dark:peer-checked:text-primary-hover">{{ option.label }}</span>
               </label>
             </div>
           </fieldset>
@@ -53,14 +53,14 @@
               <span class="block text-sm font-medium text-gray-700 dark:text-gray-200">成功后通知</span>
               <span class="block text-[11px] text-gray-400">每次订阅任务执行成功后发送站内通知</span>
             </span>
-            <input v-model="notify_on_success" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+            <input v-model="notify_on_success" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary" />
           </label>
 
           <p v-if="errorMessage" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{{ errorMessage }}</p>
 
           <footer class="flex justify-end gap-2 pt-1">
             <button type="button" :disabled="submitting" class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800" @click="closeDialog">取消</button>
-            <button type="submit" :disabled="submitting" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">{{ submitting ? "订阅中…" : "确认订阅" }}</button>
+            <button type="submit" :disabled="submitting" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60">{{ submitting ? "订阅中…" : "确认订阅" }}</button>
           </footer>
         </form>
       </section>

@@ -131,7 +131,7 @@ function onChange(event: Event) {
     <template v-else-if="isStructured && hasFields">
       <select
         class="w-full rounded-md border px-2 py-1.5 text-xs focus:outline-none"
-        :class="missing ? 'border-amber-400' : 'border-gray-300 focus:border-blue-500'"
+        :class="missing ? 'border-amber-400' : 'border-gray-300 focus:border-primary'"
         :value="modelValue"
         :disabled="disabled"
         @change="onChange"

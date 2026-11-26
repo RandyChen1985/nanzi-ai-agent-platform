@@ -28,18 +28,18 @@ const getResourceStyle = (key: string) => {
     // 看起来像「出错了」，比没有图标更糟
     case "knowledge":
       return {
-        iconBg: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400",
-        hoverBorder: "hover:border-sky-300 dark:hover:border-sky-600/50",
+        iconBg: "bg-sky-50 text-primary dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-sky-300 dark:hover:border-primary/50",
       }
     case "datasets":
       return {
-        iconBg: "bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400",
-        hoverBorder: "hover:border-teal-300 dark:hover:border-teal-600/50",
+        iconBg: "bg-teal-50 text-teal-700 dark:text-teal-300 dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-teal-300 dark:hover:border-primary/50",
       }
     case "memory":
       return {
-        iconBg: "bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400",
-        hoverBorder: "hover:border-purple-300 dark:hover:border-purple-600/50",
+        iconBg: "bg-primary/5 text-primary dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-primary/25 dark:hover:border-primary/50",
       }
     case "tokens":
       return {
@@ -48,8 +48,8 @@ const getResourceStyle = (key: string) => {
       }
     case "data":
       return {
-        iconBg: "bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400",
-        hoverBorder: "hover:border-blue-300 dark:hover:border-blue-600/50",
+        iconBg: "bg-primary/5 text-primary dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-primary/25 dark:hover:border-primary/50",
       }
     case "skills":
       return {
@@ -58,8 +58,8 @@ const getResourceStyle = (key: string) => {
       }
     case "mcp":
       return {
-        iconBg: "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400",
-        hoverBorder: "hover:border-indigo-300 dark:hover:border-indigo-600/50",
+        iconBg: "bg-primary/5 text-primary dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-primary/25 dark:hover:border-primary/50",
       }
     case "tasks":
       return {
@@ -68,13 +68,13 @@ const getResourceStyle = (key: string) => {
       }
     case "inbox":
       return {
-        iconBg: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400",
-        hoverBorder: "hover:border-sky-300 dark:hover:border-sky-600/50",
+        iconBg: "bg-sky-50 text-primary dark:bg-primary-dark/40 dark:text-primary",
+        hoverBorder: "hover:border-sky-300 dark:hover:border-primary/50",
       }
     default:
       return {
         iconBg: "bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-        hoverBorder: "hover:border-blue-200 dark:hover:border-blue-600/50",
+        hoverBorder: "hover:border-primary/20 dark:hover:border-primary/50",
       }
   }
 }

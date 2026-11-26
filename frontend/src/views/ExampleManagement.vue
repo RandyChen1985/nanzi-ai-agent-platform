@@ -304,7 +304,7 @@ interface BatchActionItem {
 const BATCH_TONE_CLASS: Record<BatchActionItem["tone"], string> = {
   emerald: "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50",
   rose: "border-rose-200 bg-white text-rose-600 hover:bg-rose-50",
-  indigo: "border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50",
+  indigo: "border-primary/20 bg-white text-primary-dark hover:bg-primary/5",
   amber: "border-amber-200 bg-white text-amber-700 hover:bg-amber-50",
   danger: "border-red-300 bg-red-50 text-red-700 hover:bg-red-100",
 };
@@ -550,8 +550,8 @@ const updateExample = async () => {
 
 const getCategoryLabel = (category?: string) => {
   const map: Record<string, { label: string; color: string }> = {
-    data_query: { label: '数据查询', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-    knowledge: { label: '知识库', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+    data_query: { label: '数据查询', color: 'bg-primary/5 text-primary-dark border-primary/20' },
+    knowledge: { label: '知识库', color: 'bg-primary/5 text-primary-dark border-primary/20' },
     general: { label: '通用问答', color: 'bg-gray-50 text-gray-600 border-gray-200' }
   };
   return map[category || 'general'] || { label: '通用问答', color: 'bg-gray-50 text-gray-600 border-gray-200' };
@@ -709,13 +709,13 @@ const exportToMarkdown = () => {
 
   const nowStr = new Date().toLocaleString("zh-CN");
   let mdContent = `# 案例集管理 - 导出记录\n\n`;
-  mdContent += `> 📅 **导出时间**：${nowStr}  \n`;
-  mdContent += `> 🔍 **案例状态**：${getStatusLabel(filterStatus.value).label || '全部'}  \n`;
-  mdContent += `> 🏷 **案例分类**：${getCategoryLabel(filterCategory.value).label || '全部分类'}  \n`;
-  mdContent += `> 📊 **导出数量**：共 ${examples.value.length} 条案例\n\n`;
+  mdContent += `> **导出时间**：${nowStr}  \n`;
+  mdContent += `> **案例状态**：${getStatusLabel(filterStatus.value).label || '全部'}  \n`;
+  mdContent += `> **案例分类**：${getCategoryLabel(filterCategory.value).label || '全部分类'}  \n`;
+  mdContent += `> **导出数量**：共 ${examples.value.length} 条案例\n\n`;
 
   mdContent += `--- \n\n`;
-  mdContent += `## 📋 案例汇总列表\n\n`;
+  mdContent += `## 案例汇总列表\n\n`;
   mdContent += `| ID | 分类 | 问答提问 | AI 回答 / SQL | 状态 | 智能体 | 建立时间 |\n`;
   mdContent += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
@@ -731,7 +731,7 @@ const exportToMarkdown = () => {
   });
 
   mdContent += `\n---\n\n`;
-  mdContent += `## 📝 案例详细记录\n\n`;
+  mdContent += `## 案例详细记录\n\n`;
 
   examples.value.forEach((ex, idx) => {
     const categoryName = getCategoryLabel(ex.category).label;
@@ -746,22 +746,22 @@ const exportToMarkdown = () => {
     mdContent += `- **反馈类型**: ${ex.feedback_type === 'up' ? '👍 点赞' : '👎 点踩'} (历史引用 ${ex.use_count} 次)  \n`;
     mdContent += `- **创建时间**: ${ex.created_at ? new Date(ex.created_at).toLocaleString("zh-CN") : '-'}  \n\n`;
 
-    mdContent += `#### 💬 原始用户提问 (User Query)\n\`\`\`\n${ex.user_query}\n\`\`\`\n\n`;
+    mdContent += `#### 原始用户提问 (User Query)\n\`\`\`\n${ex.user_query}\n\`\`\`\n\n`;
 
     if (ex.refined_query) {
-      mdContent += `#### 🎯 核心独立意图 (Refined Query)\n\`\`\`\n${ex.refined_query}\n\`\`\`\n\n`;
+      mdContent += `#### 核心独立意图 (Refined Query)\n\`\`\`\n${ex.refined_query}\n\`\`\`\n\n`;
     }
 
     if (ex.context_summary) {
-      mdContent += `#### 🌐 上下文摘要 (Context Summary)\n\`\`\`\n${ex.context_summary}\n\`\`\`\n\n`;
+      mdContent += `#### 上下文摘要 (Context Summary)\n\`\`\`\n${ex.context_summary}\n\`\`\`\n\n`;
     }
 
     if (ex.category === 'data_query' && ex.sql_text) {
-      mdContent += `#### 🛠 执行 SQL 文本\n\`\`\`sql\n${ex.sql_text}\n\`\`\`\n\n`;
+      mdContent += `#### 执行 SQL 文本\n\`\`\`sql\n${ex.sql_text}\n\`\`\`\n\n`;
     }
 
     if (ex.ai_answer) {
-      mdContent += `#### 🤖 AI 最终回答摘要\n${ex.ai_answer}\n\n`;
+      mdContent += `#### AI 最终回答摘要\n${ex.ai_answer}\n\n`;
     }
 
     mdContent += `---\n\n`;
@@ -830,7 +830,7 @@ onMounted(async () => {
           <div
             class="flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs border transition-colors shrink-0 group relative cursor-default"
             :class="{
-              'border-blue-200 bg-blue-50/50 text-blue-700': !isLocalMode && engineStatus === 'checking',
+              'border-primary/20 bg-primary/5 text-blue-700': !isLocalMode && engineStatus === 'checking',
               'border-emerald-200 bg-emerald-50/50 text-emerald-700': isLocalMode || engineStatus === 'connected',
               'border-amber-200 bg-amber-50/50 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
             }"
@@ -838,7 +838,7 @@ onMounted(async () => {
             <span
               class="inline-block w-2 h-2 rounded-full"
               :class="{
-                'bg-blue-500 animate-pulse': !isLocalMode && engineStatus === 'checking',
+                'bg-primary animate-pulse': !isLocalMode && engineStatus === 'checking',
                 'bg-emerald-500': isLocalMode || engineStatus === 'connected',
                 'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
               }"
@@ -879,7 +879,7 @@ onMounted(async () => {
             v-model="searchQuery"
             type="search"
             placeholder="搜索提问、ID、Agent、数据集..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
 
@@ -898,7 +898,7 @@ onMounted(async () => {
           <!-- 刷新按钮 -->
           <button
             type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
             aria-label="刷新列表"
             title="刷新列表"
             @click="fetchExamples"
@@ -909,7 +909,7 @@ onMounted(async () => {
           <!-- 导出 Markdown 按钮（纯图标） -->
           <button
             type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
             aria-label="导出为 Markdown 文档"
             title="将当前案例列表格式化导出为 Markdown 文档"
             @click="exportToMarkdown"
@@ -932,13 +932,13 @@ onMounted(async () => {
           <button
             v-if="canSyncExample"
             type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto lg:px-3.5 lg:py-2"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 text-sm font-medium text-primary-dark shadow-sm transition-all hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto lg:px-3.5 lg:py-2"
             :disabled="loading || (!isLocalMode && !isEngineReady)"
             :title="isLocalMode ? '一键同步至本地向量索引' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow')"
             :aria-label="isLocalMode ? '一键同步至本地向量索引' : '一键同步至 RAGFlow'"
             @click="(isLocalMode || isEngineReady) && (showSyncAllConfirm = true)"
           >
-            <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
+            <CloudArrowUpIcon class="h-4 w-4 text-primary" />
             <span class="hidden lg:inline">同步</span>
           </button>
         </div>
@@ -982,7 +982,7 @@ onMounted(async () => {
           :key="tab.value || 'all'"
           type="button"
           class="inline-flex shrink-0 items-center px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-          :class="filterStatus === tab.value ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+          :class="filterStatus === tab.value ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
           @click="selectStatusTab(tab.value)"
         >
           {{ tab.label }}
@@ -993,7 +993,7 @@ onMounted(async () => {
     <!-- 批量操作条：选中案例后才出现，按钮组按所选状态推导 -->
     <div
       v-if="selectedCount > 0"
-      class="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 text-xs text-primary-dark"
     >
       <span class="font-bold">已选 {{ selectedCount }} 条</span>
       <button
@@ -1007,13 +1007,13 @@ onMounted(async () => {
       >
         {{ action.label }}
       </button>
-      <span v-if="mixedSelectionHint" class="text-blue-500/90">{{ mixedSelectionHint }}</span>
-      <span v-else-if="!batchActions.length" class="text-blue-500/90">
+      <span v-if="mixedSelectionHint" class="text-primary/90">{{ mixedSelectionHint }}</span>
+      <span v-else-if="!batchActions.length" class="text-primary/90">
         所选案例没有可执行的批量操作
       </span>
       <button
         type="button"
-        class="ml-auto shrink-0 rounded px-2 py-1 font-medium text-blue-600 hover:underline"
+        class="ml-auto shrink-0 rounded px-2 py-1 font-medium text-primary hover:underline"
         @click="clearSelection"
       >
         取消选择
@@ -1068,7 +1068,7 @@ onMounted(async () => {
                   v-if="hasActiveFilters"
                   type="button"
                   @click="resetFilters"
-                  class="mt-4 inline-flex items-center px-3.5 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                  class="mt-4 inline-flex items-center px-3.5 py-2 text-sm font-medium text-primary-dark bg-primary/5 hover:bg-primary/10 rounded-lg transition-colors"
                 >
                   清除筛选
                 </button>
@@ -1091,9 +1091,9 @@ onMounted(async () => {
                 <div class="space-y-2 max-w-2xl">
                   <!-- 用户提问 (问) -->
                   <div class="flex items-start group">
-                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 mr-1.5 shrink-0 mt-0.5">问</span>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-primary-dark mr-1.5 shrink-0 mt-0.5">问</span>
                     <div class="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 leading-snug">{{ ex.user_query }}</div>
-                    <button @click="copyToClipboard(ex.user_query)" class="ml-1.5 p-0.5 text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all shrink-0" title="复制提问">
+                    <button @click="copyToClipboard(ex.user_query)" class="ml-1.5 p-0.5 text-gray-400 hover:text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0" title="复制提问">
                       <DocumentDuplicateIcon class="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -1110,28 +1110,28 @@ onMounted(async () => {
                   <div class="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
                     <!-- 智能体胶囊 -->
                     <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium border border-slate-200/80" :title="'Agent ID: ' + ex.agent_id">
-                      🤖 {{ ex.agent_display_name || ex.agent_id }}
+                      {{ ex.agent_display_name || ex.agent_id }}
                     </span>
 
                     <!-- 用户胶囊 -->
-                    <span v-if="ex.user_real_name || ex.user_account_name" class="inline-flex items-center px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">
-                      👤 {{ ex.user_real_name || ex.user_account_name }}
+                    <span v-if="ex.user_real_name || ex.user_account_name" class="inline-flex items-center px-2 py-0.5 rounded-full bg-primary/5 text-primary border border-primary/10">
+                      {{ ex.user_real_name || ex.user_account_name }}
                     </span>
 
                     <!-- Dataset 胶囊 -->
-                    <span v-if="ex.dataset_id" class="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                    <span v-if="ex.dataset_id" class="inline-flex items-center px-2 py-0.5 rounded-full bg-primary/5 text-primary border border-primary/10">
                       Dataset #{{ ex.dataset_id }}
                     </span>
 
                     <!-- 时间胶囊 -->
                     <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 font-mono border border-gray-100">
-                      🕒 {{ new Date(ex.created_at).toLocaleString() }}
+                      {{ new Date(ex.created_at).toLocaleString() }}
                     </span>
 
                     <!-- Trace ID 悬浮/交互 -->
                     <button
                       type="button"
-                      class="text-[10px] text-gray-400 font-mono hover:text-blue-600 transition-colors ml-1"
+                      class="text-[10px] text-gray-400 font-mono hover:text-primary transition-colors ml-1"
                       :title="'点击复制完整 Trace: ' + ex.trace_id"
                       @click="copyToClipboard(ex.trace_id)"
                     >
@@ -1172,7 +1172,7 @@ onMounted(async () => {
                   <!-- 高频编辑/详情按钮 -->
                   <button
                     @click="viewDetail(ex)"
-                    class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                    class="p-1.5 rounded-lg text-primary hover:bg-primary/5 transition-colors"
                     title="编辑/查看详情"
                   >
                     <PencilSquareIcon class="w-4 h-4" />
@@ -1245,7 +1245,7 @@ onMounted(async () => {
             <div>
               <div class="flex items-center justify-between mb-1">
                 <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">原始提问 (可根据需要微调)</label>
-                <button @click="copyToClipboard(currentExample.user_query)" class="text-xs text-blue-600 hover:text-blue-800 flex items-center">
+                <button @click="copyToClipboard(currentExample.user_query)" class="text-xs text-primary hover:text-primary-dark flex items-center">
                   <DocumentDuplicateIcon class="w-3 h-3 mr-1" /> 复制
                 </button>
               </div>
@@ -1254,23 +1254,23 @@ onMounted(async () => {
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 rows="3"
                 placeholder="输入原始用户问题..."
-                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
+                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               ></textarea>
             </div>
             <div>
               <div class="flex items-center justify-between mb-1">
-                <label class="block text-xs font-semibold text-blue-600 uppercase tracking-wider">🎯 核心意图 (自动还原/可手动微调)</label>
+                <label class="block text-xs font-semibold text-primary uppercase tracking-wider">核心意图 (自动还原/可手动微调)</label>
                 <div v-if="currentExample.category === 'data_query'" class="flex items-center space-x-2">
                     <span v-if="currentExample.enhance_status === 'pending'" class="text-[10px] text-orange-500 animate-pulse font-medium flex items-center">
-                        <ArrowPathIcon class="w-3 h-3 mr-1 animate-spin" /> ✨ AI 智能增强中...
+                        <ArrowPathIcon class="w-3 h-3 mr-1 animate-spin" /> AI 智能增强中...
                     </span>
-                    <span v-else-if="currentExample.enhance_status === 'failed'" class="text-[10px] text-red-500 font-medium">❌ 自动增强失败</span>
-                    <span v-else-if="currentExample.enhance_status === 'success'" class="text-[10px] text-green-500 font-medium">✅ AI 自动增强已完成</span>
+                    <span v-else-if="currentExample.enhance_status === 'failed'" class="text-[10px] text-red-500 font-medium">自动增强失败</span>
+                    <span v-else-if="currentExample.enhance_status === 'success'" class="text-[10px] text-green-500 font-medium">AI 自动增强已完成</span>
                     
                     <button 
                         v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated' && canEditExample && (currentExample.enhance_status !== 'pending' || isEnhanceTimedOut(currentExample))"
                         @click="manualEnhance" 
-                        class="text-[10px] text-blue-500 hover:text-blue-700 underline decoration-dotted"
+                        class="text-[10px] text-primary hover:text-primary-dark underline decoration-dotted"
                         title="再次调用 AI 重新分析对话历史并提取意图"
                     >
                         {{ currentExample.enhance_status === 'pending' ? '强制重新生成' : '重新智能生成' }}
@@ -1282,24 +1282,24 @@ onMounted(async () => {
                 v-model="currentExample.refined_query" 
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 placeholder="例如：查询2025年全年的销售总额"
-                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-blue-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
+                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-primary/20 focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🌐 业务背景/上下文摘要</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">业务背景/上下文摘要</label>
               <textarea 
                 v-model="currentExample.context_summary" 
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 rows="3"
                 placeholder="简述对话脉络，例如：用户先查了分布，后追问对比。"
-                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
+                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               ></textarea>
             </div>
           </div>
           
           <div v-if="currentExample.category === 'data_query'" class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🛠 提取的 SQL (可微调优化/无 SQL 可留空)</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">提取的 SQL (可微调优化/无 SQL 可留空)</label>
               <textarea 
                 v-model="currentExample.sql_text" 
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
@@ -1334,7 +1334,7 @@ onMounted(async () => {
             leave-to-class="transform scale-95 opacity-0"
           >
             <div v-show="showAnswer" class="p-4 bg-white border-t border-gray-100">
-              <div class="bg-blue-50/30 p-4 rounded-lg border border-blue-100/50">
+              <div class="bg-primary/5 p-4 rounded-lg border border-primary/10">
                 <MessageRenderer v-if="currentExample.ai_answer" :content="currentExample.ai_answer" />
                 <p v-else class="text-xs text-gray-400 italic">无回答记录</p>
               </div>
@@ -1359,7 +1359,7 @@ onMounted(async () => {
             <button @click="showDetailModal = false" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-all">关闭</button>
             
             <template v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated' && canEditExample">
-                <button @click="updateExample" :disabled="isUpdating" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-md flex items-center transition-all active:scale-95">
+                <button @click="updateExample" :disabled="isUpdating" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary-dark shadow-md flex items-center transition-all active:scale-95">
                 <ArrowPathIcon v-if="isUpdating" class="w-4 h-4 mr-2 animate-spin" />
                 保存修改
                 </button>
@@ -1437,11 +1437,11 @@ onMounted(async () => {
         <button
           v-if="openRowMenuExample.status === 'approved' && canSyncExample"
           type="button"
-          class="w-full text-left px-3.5 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50/70 flex items-center gap-2 transition-colors disabled:opacity-50"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-primary hover:bg-primary/5 flex items-center gap-2 transition-colors disabled:opacity-50"
           :disabled="!isLocalMode && !isEngineReady"
           @click="syncToRag(openRowMenuExample.id); closeMenus()"
         >
-          <CloudArrowUpIcon class="w-4 h-4 text-blue-500 shrink-0" />
+          <CloudArrowUpIcon class="w-4 h-4 text-primary shrink-0" />
           {{ isLocalMode ? '同步到本地向量索引' : '同步到 RAGFlow' }}
         </button>
 
@@ -1477,7 +1477,7 @@ onMounted(async () => {
           <!-- Header -->
           <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-cyan-50/30">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center shadow-md shadow-cyan-500/20" style="background-color: #0891b2; color: #ffffff;">
+               <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/20" style="background-color: #0891b2; color: #ffffff;">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                </div>
                <div>
@@ -1490,7 +1490,7 @@ onMounted(async () => {
                 v-if="!showExampleFlowGuide"
                 type="button"
                 @click="restoreExampleFlowGuide"
-                class="inline-flex items-center gap-1 text-xs font-medium text-cyan-700 bg-cyan-100/70 hover:bg-cyan-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 text-xs font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-100/70 hover:bg-cyan-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 <span>恢复顶部流程提示</span>
@@ -1508,7 +1508,7 @@ onMounted(async () => {
                :key="tab"
                @click="activeHelpTab = tab as any"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-               :class="activeHelpTab === tab ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeHelpTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'flow' ? '全流程指引 (Workflow)' :
                   tab === 'dataflow' ? '数据来源与消费机制 (Data Flow)' : '审核规范与最佳实践 (Best Practice)' }}
@@ -1519,9 +1519,9 @@ onMounted(async () => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Workflow Flow -->
              <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-cyan-50 to-blue-50 border-l-4 border-cyan-600 p-4 rounded-r-xl shadow-2xs">
-                   <h3 class="font-bold text-cyan-900 mb-1">案例集 5 步全生命周期标准体系</h3>
-                   <p class="text-xs text-cyan-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-cyan-50 to-primary/5 border-l-4 border-primary p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">案例集 5 步全生命周期标准体系</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       案例集是 Text-to-SQL 与 ChatBI 的核心范例库。真实会话点赞或专家录入 ➔ 审核清洗 ➔ 向量索引同步 ➔ 智能体提问时动态 Top-K 检索注入，全面提升准确率。
                    </p>
                 </div>
@@ -1531,18 +1531,18 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-cyan-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">1</span>
                             <h4 class="font-bold text-gray-900 text-sm">样本沉淀与录入</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
-                            用户在智能对话中对满意 SQL 点击 👍 采纳点赞，系统自动沉淀样本；业务专家亦可在后台直接录入高频复杂业务提问。
+                            用户在智能对话中对满意 SQL 点击 采纳点赞，系统自动沉淀样本；业务专家亦可在后台直接录入高频复杂业务提问。
                          </p>
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/chat')"
-                            class="text-xs text-cyan-600 hover:text-cyan-800 font-bold cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             前往智能对话 &rarr;
                          </button>
@@ -1553,7 +1553,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">专家审核与打标</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -1569,7 +1569,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">3</span>
                             <h4 class="font-bold text-gray-900 text-sm">向量同步与索引</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -1581,7 +1581,7 @@ onMounted(async () => {
                             v-if="canSyncExample"
                             type="button"
                             @click="showHelp = false; showSyncAllConfirm = true"
-                            class="text-xs text-teal-600 hover:text-teal-800 font-bold cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             一键全量同步 &rarr;
                          </button>
@@ -1592,7 +1592,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">动态 Few-Shot 召回</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -1603,7 +1603,7 @@ onMounted(async () => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/agent-management')"
-                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往智能体中心 &rarr;
                          </button>
@@ -1630,19 +1630,19 @@ onMounted(async () => {
 
              <!-- Tab 2: Data Flow -->
              <div v-else-if="activeHelpTab === 'dataflow'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">数据从哪里来？在哪里被大模型消费？</h4>
                    <div class="space-y-3">
                       <div class="p-4 bg-cyan-50/60 rounded-xl border border-cyan-100 space-y-1 text-xs">
-                         <span class="font-bold text-cyan-900 text-sm">📥 数据来源（Where it comes from）</span>
+                         <span class="font-bold text-primary-dark text-sm">数据来源（Where it comes from）</span>
                          <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
-                            <li><strong>真实会话采纳点赞</strong>：用户在对话中对生成的 SQL 或回答点击 👍，系统自动捕获提问、SQL 与上下文沉淀为样本；</li>
+                            <li><strong>真实会话采纳点赞</strong>：用户在对话中对生成的 SQL 或回答点击 ，系统自动捕获提问、SQL 与上下文沉淀为样本；</li>
                             <li><strong>业务专家手工录入</strong>：数据分析师在后台录入高频复杂报表查询、特殊业务口径的标准 SQL；</li>
                             <li><strong>历史评测集回流</strong>：将回归评测集中的金标准用例导入案例库。</li>
                          </ul>
                       </div>
-                      <div class="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1 text-xs">
-                         <span class="font-bold text-indigo-900 text-sm">🚀 生产消费（Where and How it is used）</span>
+                      <div class="p-4 bg-primary/5 rounded-xl border border-primary/10 space-y-1 text-xs">
+                         <span class="font-bold text-primary-dark text-sm">生产消费（Where and How it is used）</span>
                          <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
                             <li><strong>向量动态匹配</strong>：用户提出新问题时，系统进行向量相似度检索，毫秒级召回 Top-1~3 相似案例；</li>
                             <li><strong>Few-Shot Prompt 注入</strong>：系统将召回的黄金 SQL 案例组装进大模型 System Prompt；</li>
@@ -1655,18 +1655,18 @@ onMounted(async () => {
 
              <!-- Tab 3: Best Practice -->
              <div v-else-if="activeHelpTab === 'practice'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">高质量案例审核与维护最佳实践</h4>
                    <div class="space-y-3 text-xs">
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">1. 精炼意图（Refined Query）</span>
                          <p class="text-gray-600 leading-relaxed">将口语化、含代词的多轮提问（如“那上个月的呢？”）精炼为自包含的明确语义（如“查询2026年7月份各部门总能耗”）。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">2. 规范 SQL 编写</span>
                          <p class="text-gray-600 leading-relaxed">保证 SQL 格式工整、表名加别名、时间字段过滤明确，避免使用 <code>SELECT *</code>。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">3. 及时全量同步</span>
                          <p class="text-gray-600 leading-relaxed">批量审核通过后，务必点击右上角「一键全量同步」，确保向量索引最新生效。</p>
                       </div>

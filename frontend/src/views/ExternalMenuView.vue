@@ -27,7 +27,7 @@
             :href="node.url || '#'"
             target="_blank"
             rel="noopener noreferrer"
-            class="rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-blue-700"
+            class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:bg-primary-dark"
           >新标签打开</a>
         </div>
       </div>
@@ -68,7 +68,7 @@
                 :href="node.url || '#'"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
+                class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark"
               >在新标签页打开</a>
               <button
                 type="button"

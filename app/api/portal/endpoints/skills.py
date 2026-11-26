@@ -147,8 +147,10 @@ def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
     except SkillRenameError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    skills_dir_abs = os.path.abspath(settings.SKILLS_DIR)
-    skill_base_dir = os.path.abspath(os.path.join(skills_dir_abs, skill_id))
+    # 用 realpath 而不是 abspath：abspath 不解析软链，技能目录里一条指向库外的
+    # 软链就能让「只读接口对全部登录用户开放」变成任意文件读取。
+    skills_dir_abs = os.path.realpath(settings.SKILLS_DIR)
+    skill_base_dir = os.path.realpath(os.path.join(skills_dir_abs, skill_id))
 
     # 白名单已排除 "."/".."，这里再显式要求严格位于技能库之下（纵深防御）
     if skill_base_dir == skills_dir_abs or os.path.commonpath(
@@ -159,7 +161,7 @@ def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
     if not relative_path:
         return skill_base_dir
         
-    target_path = os.path.abspath(os.path.join(skill_base_dir, relative_path.lstrip("/")))
+    target_path = os.path.realpath(os.path.join(skill_base_dir, relative_path.lstrip("/")))
     if os.path.commonpath([skill_base_dir, target_path]) != skill_base_dir:
          raise HTTPException(status_code=403, detail="安全拦截：文件子路径越界")
          
@@ -480,10 +482,13 @@ async def revoke_skill_publication(
 @router.get("/{skill_id}/preview", response_model=Dict[str, Any])
 async def preview_skill_md(
     skill_id: str,
-    user: Dict = Depends(skill_platform_admin),
+    user: Dict = Depends(require_api_key),
 ):
     """
-    只读预览 SKILL.md，供聊天页技能抽屉使用；仅需 API Key，不要求技能管理菜单权限。
+    只读预览 SKILL.md，供聊天页技能抽屉与只读模式下的技能详情使用。
+
+    仅需登录：平台技能是公共资产，普通用户可以挂载与查看；创建/编辑/删除等
+    管理动作仍由 ``element:skills:admin`` 单独保护。
     """
     try:
         skill_dir = validate_secure_skill_path(skill_id)
@@ -578,10 +583,13 @@ async def update_skill_group(
 @router.get("/{skill_id}", response_model=Dict[str, Any])
 async def get_skill_detail(
     skill_id: str,
-    user: Dict = Depends(skill_platform_admin)
+    user: Dict = Depends(require_api_key)
 ):
     """
-    获取指定技能的详情，包括 SKILL.md 文本和物理目录树
+    获取指定技能的详情，包括 SKILL.md 文本和物理目录树。
+
+    只读接口：登录用户即可查看（技能工作台的平台技能页签对所有人可见，
+    无 ``element:skills:admin`` 时以只读模式浏览）。
     """
     try:
         skill_dir = validate_secure_skill_path(skill_id)
@@ -617,10 +625,14 @@ async def get_skill_detail(
 async def get_skill_file_content(
     skill_id: str,
     path: str,
-    user: Dict = Depends(skill_platform_admin)
+    user: Dict = Depends(require_api_key)
 ):
     """
-    在线读取指定技能目录下的文本文件内容 (如脚本文件)
+    在线读取指定技能目录下的文本文件内容 (如脚本文件)。
+
+    只读接口：登录用户即可查看；仍受 ``EDITABLE_TEXT_EXTENSIONS`` 白名单限制，
+    二进制与非文本文件（含无扩展名文件）不可读。写入走 PUT 同路径，仍需
+    ``element:skills:admin``。
     """
     try:
         file_path = validate_secure_skill_path(skill_id, path)

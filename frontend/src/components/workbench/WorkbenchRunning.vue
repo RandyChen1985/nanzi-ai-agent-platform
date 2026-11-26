@@ -7,11 +7,11 @@
         v-for="item in items"
         :key="item.id"
         type="button"
-        class="flex w-full items-center gap-3 border-b border-gray-50 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-blue-50/40 dark:border-gray-800/60 dark:hover:bg-blue-950/20"
+        class="flex w-full items-center gap-3 border-b border-gray-50 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-primary/5 dark:border-gray-800/60 dark:hover:bg-primary-dark/20"
         @click="$emit('open-item', item)"
       >
         <span
-          class="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+          class="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px] bg-primary/5 text-primary dark:bg-primary-dark/50 dark:text-primary"
           aria-hidden="true"
         >
           <svg class="h-[14px] w-[14px] animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">

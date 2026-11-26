@@ -45,7 +45,7 @@ const configuration = computed(() => ({
       token: apiKey.value
     }
   },
-  theme: 'purple',
+  theme: 'default',
   hideDownloadButton: true
 } as const))
 
@@ -98,20 +98,18 @@ const goToLogin = () => {
 
 /* "Test Request" Button Styling */
 :deep(.show-api-client-button) {
-  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%) !important;
+  background: var(--color-primary, #1677ff) !important;
   color: white !important;
-  border-radius: 12px !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 15px -3px rgba(99, 102, 241, 0.3) !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08) !important;
   border: none !important;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  padding: 10px 20px !important;
+  transition: background-color 0.15s ease !important;
+  padding: 8px 16px !important;
 }
 
 :deep(.show-api-client-button:hover) {
-  background: linear-gradient(135deg, #4f46e5 0%, #9333ea 100%) !important;
-  transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.4) !important;
+  background: var(--color-primary-dark, #0958d9) !important;
 }
 
 :deep(.show-api-client-button span) {

@@ -103,12 +103,11 @@
   font-size: 85%;
 }
 
-/* 围栏代码块：与 EmbedChat 一致（浅色底 + 顶部三点装饰），
+/* 围栏代码块：与 EmbedChat 一致（浅色底，无顶部装饰），
    深色底会与全局 github.css 的浅色 token 配色打架，这里统一走浅色。 */
 .message-host .markdown-body pre {
-  position: relative;
   margin: 1em 0;
-  padding: 1.25em 1em 1em 1em;
+  padding: 0.875em 1em;
   max-width: 100%;
   overflow: auto;
   white-space: pre !important;
@@ -119,19 +118,6 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.6;
   -webkit-overflow-scrolling: touch;
-}
-
-.message-host .markdown-body pre::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 12px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: #ff5f56;
-  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
-  z-index: 1;
 }
 
 .message-host .markdown-body pre code {

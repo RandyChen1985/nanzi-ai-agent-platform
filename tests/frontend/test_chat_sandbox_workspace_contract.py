@@ -97,7 +97,7 @@ def test_docker_terminal_modal_renders_structured_welcome_card_each_open():
     assert "能力越大，责任越大" in source
     assert "text-emerald-" in source
     assert "text-sky-" in source
-    assert "text-violet-" in source
+    assert "text-primary" in source
     assert "text-amber-" in source
     assert "text-rose-" in source
 

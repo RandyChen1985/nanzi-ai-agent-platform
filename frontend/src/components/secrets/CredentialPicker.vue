@@ -317,7 +317,7 @@ defineExpose({ reload: load })
       aria-haspopup="listbox"
       :aria-expanded="open"
       :disabled="disabled"
-      class="flex w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-700 hover:border-blue-400 focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-50"
+      class="flex w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-700 hover:border-primary focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-50"
       @click="toggle"
       @keydown="onTriggerKeydown"
     >
@@ -327,7 +327,7 @@ defineExpose({ reload: load })
         <!-- 选中后紧跟着的下一步就是选字段，这里先把「这是结构化凭据」摆出来 -->
         <span
           v-if="selected.value_format === 'json'"
-          class="shrink-0 rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700"
+          class="shrink-0 rounded bg-primary/5 px-1 py-0.5 text-[10px] font-medium text-primary-dark"
         >结构化{{ selected.value_template ? ` · ${selected.value_template}` : '' }}</span>
       </span>
       <span v-else class="text-gray-400">{{ placeholder }}</span>
@@ -360,7 +360,7 @@ defineExpose({ reload: load })
               autocomplete="off"
               placeholder="搜索名称、标识或分类"
               aria-label="搜索凭据"
-              class="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              class="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
               @keydown="onSearchKeydown"
             />
           </div>
@@ -388,10 +388,10 @@ defineExpose({ reload: load })
                 :class="
                   row.index === activeIndex
                     ? group.tint === 'mine'
-                      ? 'bg-blue-50'
+                      ? 'bg-primary/5'
                       : 'bg-emerald-50'
                     : group.tint === 'mine'
-                      ? 'hover:bg-blue-50'
+                      ? 'hover:bg-primary/5'
                       : 'hover:bg-emerald-50'
                 "
                 @mouseenter="activeIndex = row.index"
@@ -399,7 +399,7 @@ defineExpose({ reload: load })
               >
                 <span
                   class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md text-[10px] font-bold"
-                  :class="group.tint === 'mine' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'"
+                  :class="group.tint === 'mine' ? 'bg-primary/10 text-primary-dark' : 'bg-emerald-100 text-emerald-700'"
                 >
                   {{ row.item.secret_type === 'variable' ? '变' : '凭' }}
                 </span>
@@ -423,7 +423,7 @@ defineExpose({ reload: load })
                          否则用户点保存才被后端拦下，不知道差哪一步 -->
                     <span
                       v-if="row.item.value_format === 'json'"
-                      class="shrink-0 rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700"
+                      class="shrink-0 rounded bg-primary/5 px-1 py-0.5 text-[10px] font-medium text-primary-dark"
                       :title="`结构化凭据，绑定时需要选定具体字段`"
                     >结构化{{ row.item.value_template ? ` · ${row.item.value_template}` : '' }}</span>
                     <span v-else class="shrink-0 text-[10px] text-gray-400">单值</span>
@@ -432,7 +432,7 @@ defineExpose({ reload: load })
                 <svg
                   v-if="row.item.id === modelValue"
                   class="mt-0.5 h-4 w-4 shrink-0"
-                  :class="group.tint === 'mine' ? 'text-blue-600' : 'text-emerald-600'"
+                  :class="group.tint === 'mine' ? 'text-primary' : 'text-emerald-600'"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"

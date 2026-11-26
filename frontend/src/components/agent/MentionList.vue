@@ -347,11 +347,11 @@ defineExpose({ handleKeydown });
                 >{{ row.agent.display_name }}</span>
                 <span
                   v-if="row.agent.is_system"
-                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover uppercase"
                 >SYS</span>
                 <span
                   v-if="row.agent.metadata_dataset_count"
-                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover"
                   :title="`已绑定 ${row.agent.metadata_dataset_count} 个数据集，查询范围不会超出这些数据集`"
                 >{{ row.agent.metadata_dataset_count }} 数据集</span>
               </div>
@@ -403,11 +403,5 @@ defineExpose({ handleKeydown });
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.2s ease-out;
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+
 </style>

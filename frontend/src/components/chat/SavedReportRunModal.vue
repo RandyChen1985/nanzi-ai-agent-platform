@@ -57,7 +57,7 @@ const emit = defineEmits<{
       <div class="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
         <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
           <div>
-            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行固化报表</h3>
+            <h3 class="text-base font-bold text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行固化报表</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ pendingReport?.title }}</p>
           </div>
           <button @click="emit('close')" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
@@ -73,7 +73,7 @@ const emit = defineEmits<{
             <p class="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-gray-600 dark:text-gray-300">{{ pendingReport?.description }}</p>
           </div>
           <div v-if="usesDateRange(pendingReport)">
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
+            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
             <select
               v-model="form.dateRange"
               class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
@@ -88,16 +88,16 @@ const emit = defineEmits<{
           </div>
           <div v-if="form.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始日期</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始日期</label>
               <input v-model="form.startDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
             <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束日期</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束日期</label>
               <input v-model="form.endDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
           </div>
           <div v-if="usesMonthRange(pendingReport)">
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">月份范围</label>
+            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">月份范围</label>
             <select
               v-model="form.monthRange"
               class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
@@ -109,11 +109,11 @@ const emit = defineEmits<{
           </div>
           <div v-if="usesMonthRange(pendingReport) && form.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始月份</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始月份</label>
               <input v-model="form.startMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
             <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束月份</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束月份</label>
               <input v-model="form.endMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
           </div>
@@ -122,7 +122,7 @@ const emit = defineEmits<{
             :key="item.name"
             class="space-y-1.5"
           >
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               {{ item.label || item.name }}
               <span v-if="item.required" class="text-red-500">*</span>
             </label>
@@ -144,19 +144,19 @@ const emit = defineEmits<{
           <p v-if="(pendingReport?.params_schema || []).some((item: any) => !['date_range', 'month_range'].includes(String(item?.type || '')) && !['date_range', 'month_range'].includes(String(item?.name || '')))" class="text-[11px] text-gray-400">
             参数配置会参与权限预检；请确认填写值属于业务允许范围。
           </p>
-          <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20">
+          <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-primary/10 dark:border-primary-dark/40 bg-primary/5 dark:bg-primary-dark/20">
             <span>
               <span class="block text-sm font-bold text-gray-800 dark:text-gray-100">执行报表</span>
               <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">执行完成后可生成业务解读，查询和解读状态分开显示</span>
             </span>
           </div>
-          <div class="rounded-xl border border-blue-100 bg-blue-50/50 px-3 py-2.5 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-200">
+          <div class="rounded-xl border border-primary/10 bg-primary/5 px-3 py-2.5 text-xs text-primary-dark dark:border-primary-dark/40 dark:bg-primary-dark/20 dark:text-primary-hover">
             <span class="font-bold">本次查询范围：</span>{{ scopeSummary }}
           </div>
           <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-950/40 overflow-hidden min-h-[10.5rem]">
             <div class="px-3 py-2 flex items-center justify-between border-b border-gray-100 dark:border-gray-800">
               <div class="flex items-center gap-2">
-                <span class="text-xs font-black text-gray-600 dark:text-gray-300">实际执行 SQL</span>
+                <span class="text-xs font-bold text-gray-600 dark:text-gray-300">实际执行 SQL</span>
                 <span class="text-[10px] text-gray-400">权限预检</span>
               </div>
               <div class="flex items-center gap-2">
@@ -166,7 +166,7 @@ const emit = defineEmits<{
                 >
                   {{ previewing ? '预检中' : preview?.permission_status === 'denied' ? '无权限' : preview?.permission_status === 'allowed' ? '可运行' : '待校验' }}
                 </span>
-                <button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-700" @click="showSqlPreview = !showSqlPreview">
+                <button type="button" class="text-[10px] font-bold text-primary hover:text-primary-dark" @click="showSqlPreview = !showSqlPreview">
                   {{ showSqlPreview ? '收起 SQL' : '查看 SQL' }}
                 </button>
               </div>

@@ -68,7 +68,7 @@
             class="rounded-lg px-3 py-1.5 text-sm font-bold transition-colors"
             :class="
               activeTab === tab.id
-                ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300'
+                ? 'bg-primary/5 text-primary-dark dark:bg-primary/10 dark:text-primary-hover'
                 : 'text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800'
             "
             @click="activeTab = tab.id"
@@ -132,7 +132,7 @@
               type="text"
               required
               placeholder="例如：上海分公司"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             />
           </label>
           <label class="block">
@@ -146,7 +146,7 @@
                 'w-full rounded-lg border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 dark:bg-gray-800 dark:text-gray-100',
                 createCodeAvailable === false
                   ? 'border-red-400 focus:ring-red-500 dark:border-red-500/60'
-                  : 'border-gray-300 focus:ring-blue-500 dark:border-gray-700'
+                  : 'border-gray-300 focus:ring-primary dark:border-gray-700'
               ]"
             />
             <span v-if="createCodeChecking" class="mt-1 block text-[11px] text-gray-400">正在检查编码…</span>
@@ -168,7 +168,7 @@
             >取消</button>
             <button
               type="submit"
-              class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+              class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-50"
               :disabled="creating"
             >{{ creating ? '创建中…' : '创建' }}</button>
           </div>

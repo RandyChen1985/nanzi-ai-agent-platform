@@ -174,7 +174,7 @@
             </div>
 
             <div class="mt-3.5 flex gap-2 rounded-[10px] border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11.5px] leading-5 text-amber-700">
-              <span aria-hidden="true">⚠️</span>
+              <span aria-hidden="true">⚠</span>
               <span>
                 分享的是<b>此刻的文件副本</b>：之后你再编辑、重命名或删除，链接里的内容不会变。
                 <template v-if="isSensitiveName">文件名看着像业务数据，请确认对方可以拿到这份内容。</template>

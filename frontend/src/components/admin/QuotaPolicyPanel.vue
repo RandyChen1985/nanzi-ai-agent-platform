@@ -2,39 +2,39 @@
   <div class="space-y-5">
     <div
       v-if="effective"
-      class="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-sm"
+      class="rounded-xl border border-primary/10 bg-primary/5 p-4 text-sm"
     >
-      <p class="font-semibold text-blue-900 mb-2">本月生效额度</p>
+      <p class="font-semibold text-primary-dark mb-2">本月生效额度</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div>
-          <p class="text-blue-600/80">已用</p>
+          <p class="text-primary/80">已用</p>
           <TokenAmount
             :value="effective.used_tokens"
-            main-class="text-lg font-bold text-blue-950 tabular-nums"
+            main-class="text-lg font-bold text-primary-dark tabular-nums"
           />
         </div>
         <div>
-          <p class="text-blue-600/80">上限</p>
+          <p class="text-primary/80">上限</p>
           <TokenAmount
             :value="effective.limit_tokens"
             :is-unlimited="effective.limit_tokens == null"
-            main-class="text-lg font-bold text-blue-950 tabular-nums"
+            main-class="text-lg font-bold text-primary-dark tabular-nums"
           />
         </div>
         <div>
-          <p class="text-blue-600/80">剩余</p>
+          <p class="text-primary/80">剩余</p>
           <TokenAmount
             :value="effective.remaining_tokens || 0"
             :is-unlimited="effective.limit_tokens == null"
-            main-class="text-lg font-bold text-blue-950 tabular-nums"
+            main-class="text-lg font-bold text-primary-dark tabular-nums"
           />
         </div>
         <div>
-          <p class="text-blue-600/80">来源</p>
-          <p class="font-medium text-blue-900 mt-1">{{ effective.source_label || sourceText(effective.source) }}</p>
+          <p class="text-primary/80">来源</p>
+          <p class="font-medium text-primary-dark mt-1">{{ effective.source_label || sourceText(effective.source) }}</p>
         </div>
       </div>
-      <p class="text-[11px] text-blue-700/70 mt-2">
+      <p class="text-[11px] text-primary-dark/70 mt-2">
         统计周期：{{ effective.period_start }} ~ {{ effective.period_end }}
       </p>
     </div>
@@ -49,7 +49,7 @@
           <input
             v-model="form.enabled"
             type="checkbox"
-            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            class="rounded border-gray-300 text-primary focus:ring-primary"
           />
           启用
         </label>
@@ -63,7 +63,7 @@
               v-model="unlimited"
               type="radio"
               :value="true"
-              class="text-blue-600 focus:ring-blue-500"
+              class="text-primary focus:ring-primary"
               :disabled="!form.enabled"
             />
             不限额
@@ -73,7 +73,7 @@
               v-model="unlimited"
               type="radio"
               :value="false"
-              class="text-blue-600 focus:ring-blue-500"
+              class="text-primary focus:ring-primary"
               :disabled="!form.enabled"
             />
             自定义
@@ -84,7 +84,7 @@
               step="1000"
               :disabled="!form.enabled || unlimited"
               placeholder="例如 500000"
-              class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
+              class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100"
             />
           </label>
         </div>
@@ -103,7 +103,7 @@
       <div class="flex flex-wrap items-center gap-2 pt-1">
         <button
           type="button"
-          class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+          class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-dark disabled:opacity-50"
           :disabled="saving"
           @click="savePolicy"
         >

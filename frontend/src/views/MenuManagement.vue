@@ -105,7 +105,7 @@
                 type="button"
                 class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-bold transition-colors"
                 :class="selectedCode === group.code
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+                  ? 'bg-primary/5 text-primary-dark dark:bg-primary/15 dark:text-primary-hover'
                   : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'"
                 @click="selectNode(group)"
                 @contextmenu="onNodeContextMenu($event, group)"
@@ -144,7 +144,7 @@
                     type="button"
                     class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors"
                     :class="selectedCode === item.code
-                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+                      ? 'bg-primary/5 text-primary-dark dark:bg-primary/15 dark:text-primary-hover'
                       : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'"
                     @click="selectNode(item)"
                     @contextmenu="onNodeContextMenu($event, item)"
@@ -159,7 +159,7 @@
                     </span>
                     <span
                       v-if="item.node_type === 'external'"
-                      class="rounded bg-violet-50 px-1 text-[10px] font-bold text-violet-600 dark:bg-violet-500/15 dark:text-violet-300"
+                      class="rounded bg-primary/5 px-1 text-[10px] font-bold text-primary dark:bg-primary/15 dark:text-primary-hover"
                     >{{ item.open_mode === 'embed' ? '内嵌' : '外链' }}</span>
                     <span v-if="!item.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
                   </button>
@@ -210,7 +210,7 @@
         <div v-else class="space-y-4 p-4">
           <div
             v-if="draft.node_type === 'element'"
-            class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300"
+            class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary-dark dark:border-primary/30 dark:bg-primary/10 dark:text-primary-hover"
           >
             功能点权限由代码里的 <code>require_permission("element", ...)</code> 决定，后台只能查看，
             不能在菜单管理里增删或改名。
@@ -365,7 +365,7 @@
             <template v-if="canEdit">
               <button
                 type="button"
-                class="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                class="rounded-lg bg-primary px-3.5 py-1.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-50"
                 :disabled="busy || draft.node_type === 'element'"
                 @click="save"
               >{{ isCreating ? '创建' : '保存' }}</button>

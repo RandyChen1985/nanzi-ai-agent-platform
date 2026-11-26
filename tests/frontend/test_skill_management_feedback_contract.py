@@ -171,39 +171,47 @@ def test_banner_action_handler_guards_platform_tabs():
     # 结束 marker 只写到 `const confirmState = ref`：后来给 ref 加了显式类型参数
     # （`ref<{...}>`），写死花括号会让这条契约随之脆断。
     handler = _function_body("handleSkillBannerAction", "const confirmState = ref")
+    # 「平台技能」对登录用户可见（无写权限时只读），因此只受个人技能页限制
+    personal_guard = handler.index("if (props.personalOnly) {")
+    global_tab = handler.index("activeWorkspaceTab.value = 'global'")
+    assert personal_guard < global_tab
+    assert "showToast(" in handler[personal_guard:global_tab]
+    # 「待审核」仍是平台管理分区：无权限时给出可见反馈而不是静默失效
     guard = handler.index("if (!canAccessPlatformWorkspace.value) {")
     review_tab = handler.index("activeWorkspaceTab.value = 'review'")
-    global_tab = handler.index("activeWorkspaceTab.value = 'global'")
-    # 守卫必须排在两次切 tab 之前，并且给出可见反馈而不是静默失效
-    assert guard < review_tab and guard < global_tab
+    assert guard < review_tab
     assert "showToast(" in handler[guard:review_tab]
-    # 只有 create（新建）在个人技能页是合法的
+    # 只有 create（新建）在个人技能页是合法的，且不受平台管理闸限制
     assert handler.index("if (type === 'create')") < guard
 
 
 def test_platform_workspace_gate_is_single_source_of_truth():
     source = _skills_source()
     assert "const canAccessPlatformWorkspace = computed(() => !props.personalOnly && canManagePlatformSkills.value)" in source
-    # 首屏落点与可见性兜底都走同一判据
+    # 首屏落点已与「平台管理分区」解耦：平台技能对登录用户可读
     assert "const resolveInitialWorkspaceTab = (): 'global' | 'personal' =>" in source
-    assert "canAccessPlatformWorkspace.value ? 'global' : 'personal'" in source
+    assert "!props.personalOnly ? 'global' : 'personal'" in source
     assert "watch(canAccessPlatformWorkspace, (available) => {" in source
     watcher = source[
         source.index("watch(canAccessPlatformWorkspace, (available) => {") : source.index("/** 列表类请求的并发计数")
     ]
-    assert "activeWorkspaceTab.value = 'personal'" in watcher
-    assert "activeScope.value = 'personal'" in watcher
+    # 不可用时只把管理分区回落到「平台技能」，不能把用户踢回「我的技能」
+    assert "activeWorkspaceTab.value === 'review' || activeWorkspaceTab.value === 'publications'" in watcher
+    assert "activeWorkspaceTab.value = 'global'" in watcher
+    assert "activeScope.value = 'personal'" not in watcher
+    assert "activeWorkspaceTab.value = 'personal'" not in watcher
     # 平台视图渲染、列表渲染都挂在这道闸上
     assert "const showSkillList = computed(() => activeWorkspaceTab.value === 'global' || activeWorkspaceTab.value === 'personal')" in source
     assert 'activeWorkspaceTab === \'review\' && canAccessPlatformWorkspace' in source
     assert "<template v-if=\"showSkillList\">" in source
     assert "v-if=\"activeWorkspaceTab !== 'review'\"" not in source
-    # 其他平台视图入口同样加闸
+    # 其他平台管理入口同样加闸
     review_open = _function_body("openPublicationReview", "const closePublicationReview = () => {")
     assert "if (!canAccessPlatformWorkspace.value) return" in review_open
     assert "const openPublicationReview" in source
-    # 审核队列只在能进平台视图时预取
+    # 绑定反查 / 审核队列 / 已发布列表只在有写权限时预取；平台技能列表按 personalOnly 加载
     assert "if (!props.personalOnly && canManagePlatformSkills.value)" in source
+    assert "if (!props.personalOnly) {" in source
 
 
 def test_banner_receives_gate_and_hides_admin_steps():
@@ -214,11 +222,16 @@ def test_banner_receives_gate_and_hides_admin_steps():
     # 组件声明该 prop，并在按钮渲染与事件派发两处生效
     assert "platformWorkspaceAvailable?: boolean" in banner
     assert "const isAdminOnlyStep = (item: { requiresPlatformAdmin?: boolean }) =>" in banner
-    assert "v-if=\"item.actionType && !isAdminOnlyStep(item)\"" in banner
+    # 横幅已抽取共享外壳 FlowGuideStrip：不可用入口由 visibleSteps 统一降级为「无动作 + 说明文案」，
+    # 外壳只在 item.actionType 存在时渲染按钮，因此这里同时校验降级逻辑与外壳的渲染条件。
+    assert "const visibleSteps = computed(() =>" in banner
+    assert "{ ...item, actionType: null, hintText: '仅平台技能管理员可用' }" in banner
+    strip = (ROOT / "frontend/src/components/common/FlowGuideStrip.vue").read_text(encoding="utf-8")
+    assert 'v-if="item.actionType"' in strip
     assert "'仅平台技能管理员可用'" in banner
-    # 第 3/4/5 步（待审核 / 平台技能 / 智能体中心）都标记为平台管理入口
-    assert banner.count("requiresPlatformAdmin: true") == 3
-    assert "if (type !== 'create' && !props.platformWorkspaceAvailable) return" in banner
+    # 第 3/5 步（待审核 / 智能体中心）标记为平台管理入口；第 4 步「平台技能」对登录用户可见
+    assert banner.count("requiresPlatformAdmin: true") == 2
+    assert "if (type !== 'create' && type !== 'global' && !props.platformWorkspaceAvailable) return" in banner
     # 原有文案与路由不变（既有流程指引契约仍要成立）
     assert "前往待审核" in banner and "前往智能体中心" in banner
     assert "/dashboard/agent-management" in banner
@@ -231,10 +244,10 @@ def test_help_modal_admin_entries_are_guarded():
     assert "showHelpModal = false; handleSkillBannerAction('global')" in source
     assert "showHelpModal = false; activeWorkspaceTab = 'review'" not in source
     assert "showHelpModal = false; activeWorkspaceTab = 'global'; activeScope = 'global'" not in source
-    # 三个越界入口都要有 v-if 守卫（个人技能页不显示，改为说明文案）
-    assert source.count('v-if="canAccessPlatformWorkspace"') >= 3
+    # 两个仍然受限的入口（待审核 / 智能体中心）要有 v-if 守卫；「平台技能」已对登录用户开放
+    assert source.count('v-if="canAccessPlatformWorkspace"') >= 2
     help_block = source[source.index('v-if="showHelpModal"') : source.index('<!-- 新建技能 Modal -->')]
-    assert help_block.count('v-if="canAccessPlatformWorkspace"') >= 3
+    assert help_block.count('v-if="canAccessPlatformWorkspace"') >= 2
     assert "仅平台技能管理员可访问「待审核」" in help_block
-    assert "仅平台技能管理员可访问「平台技能」" in help_block
+    assert "个人技能页不提供该入口" in help_block
     assert "智能体中心需要平台管理权限" in help_block

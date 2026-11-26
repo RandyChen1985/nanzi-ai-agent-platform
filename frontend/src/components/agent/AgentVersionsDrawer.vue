@@ -205,22 +205,22 @@ watch(() => props.isOpen, (newVal) => {
               <!-- Content -->
               <div class="relative flex-1 px-4 py-6 sm:px-6">
                   <!-- RAGFlow Managed Mode Warning -->
-                  <div v-if="agent?.engine_type === 'RAGFLOW'" class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-6">
+                  <div v-if="agent?.engine_type === 'RAGFLOW'" class="bg-primary/5 border border-primary/10 rounded-lg p-4 mb-6">
                       <div class="flex">
                           <div class="flex-shrink-0">
-                              <svg class="h-5 w-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <svg class="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
                           </div>
                           <div class="ml-3">
-                              <h3 class="text-sm font-bold text-indigo-800">托管模式 (Managed Mode)</h3>
-                              <div class="mt-1 text-xs text-indigo-700 leading-relaxed">
+                              <h3 class="text-sm font-bold text-primary-dark">托管模式 (Managed Mode)</h3>
+                              <div class="mt-1 text-xs text-primary-dark leading-relaxed">
                                   此智能体由 RAGFlow 引擎驱动。其 Prompt、模型及知识库配置均在 RAGFlow 侧管理。本地版本仅用于历史记录，不影响实际对话。
                               </div>
                               <div class="mt-3">
                                   <button 
                                       @click="emit('close')"
-                                      class="text-xs font-bold text-indigo-600 hover:text-indigo-500"
+                                      class="text-xs font-bold text-primary hover:text-primary-dark"
                                   >
                                       返回智能体设置 &rarr;
                                   </button>
@@ -289,14 +289,14 @@ watch(() => props.isOpen, (newVal) => {
                                        v-if="publishedVersion && v.status !== 'PUBLISHED'"
                                        type="button"
                                        @click="openDiff(v)"
-                                       class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                       class="text-xs text-primary hover:text-primary-dark font-medium"
                                        title="与当前线上版本对比"
                                    >
                                        Diff
                                    </button>
                                    <button
                                        @click="goDebug(v)"
-                                       class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                       class="text-xs text-primary hover:text-primary-dark font-medium"
                                        title="在调试模块中加载此版本"
                                    >
                                        去调试
@@ -304,7 +304,7 @@ watch(() => props.isOpen, (newVal) => {
                                    <button 
                                        v-if="agent?.can_edit_versions !== false"
                                        @click="emit('create-version', v)"
-                                       class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                       class="text-xs text-primary hover:text-primary-dark font-medium"
                                        title="基于此版本新建"
                                    >
                                        克隆
@@ -363,7 +363,7 @@ watch(() => props.isOpen, (newVal) => {
                                           v-if="publishedVersion && v.status !== 'PUBLISHED'"
                                           type="button"
                                           @click="openDiff(v)"
-                                          class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                          class="text-xs text-primary hover:text-primary-dark font-medium"
                                           title="与当前线上版本对比"
                                       >
                                           Diff
@@ -371,7 +371,7 @@ watch(() => props.isOpen, (newVal) => {
                                       <button
                                           v-if="agent?.can_edit_versions !== false"
                                           @click="emit('create-version', v)"
-                                          class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                          class="text-xs text-primary hover:text-primary-dark font-medium"
                                           title="基于此版本新建"
                                       >
                                           克隆

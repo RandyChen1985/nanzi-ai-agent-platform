@@ -10,7 +10,7 @@
       class="group flex cursor-pointer items-center gap-1 rounded-lg py-1.5 pr-1 text-sm transition-colors"
       :class="
         row.node.id === selectedId
-          ? 'bg-blue-50 font-bold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300'
+          ? 'bg-primary/5 font-bold text-primary-dark dark:bg-primary/10 dark:text-primary-hover'
           : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'
       "
       :style="{ paddingLeft: `${6 + row.depth * 14}px` }"
@@ -54,7 +54,7 @@
       >
         <button
           type="button"
-          class="rounded px-1 text-sm text-gray-400 hover:bg-white hover:text-blue-600 dark:hover:bg-gray-900"
+          class="rounded px-1 text-sm text-gray-400 hover:bg-white hover:text-primary dark:hover:bg-gray-900"
           title="新建子部门"
           @click.stop="emit('action', { type: 'create-child', node: row.node })"
         >+</button>

@@ -26,7 +26,7 @@ def test_dataset_mount_composable_exposes_turn_selection_controls():
 def test_chat_input_renders_metadata_dataset_chip():
     source = _source("frontend/src/components/embed/ChatInput.vue")
     assert "metadata_dataset" in source
-    assert "📊" in source
+    assert "ChartBarIcon" in source
     assert "数据集" in source
 
 

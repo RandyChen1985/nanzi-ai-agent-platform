@@ -2,7 +2,7 @@
   <section class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
     <button
       type="button"
-      class="flex w-full items-center justify-between gap-3 bg-gray-50 px-4 py-2.5 text-left transition-colors hover:bg-gray-100/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
+      class="flex w-full items-center justify-between gap-3 bg-gray-50 px-4 py-2.5 text-left transition-colors hover:bg-gray-100/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
       :class="collapsed ? '' : 'border-b border-gray-200'"
       :aria-expanded="!collapsed"
       :aria-controls="bodyId"

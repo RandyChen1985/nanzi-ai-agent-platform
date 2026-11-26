@@ -729,11 +729,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 </script>
 
 <template>
-  <div class="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3">
+  <div class="rounded-lg border border-primary/20 bg-primary/5 p-3">
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <p class="text-xs font-semibold text-indigo-900">系统级参数（模型不可见）</p>
-        <p class="mt-1 text-[11px] leading-relaxed text-indigo-700">
+        <p class="text-xs font-semibold text-primary-dark">系统级参数（模型不可见）</p>
+        <p class="mt-1 text-[11px] leading-relaxed text-primary-dark">
           这些参数不会出现在<strong>模型可见</strong>的工具定义里，调用时由平台填值。
           「来自凭据」的参数按当前用户从凭据中心取值；固定值可以插
           <code class="font-mono">{user.user_name}</code> 这类变量。取不到时本次调用会明确失败。
@@ -755,13 +755,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         <button
           v-if="paramTab === 'single'"
           type="button"
-          class="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+          class="rounded-md border border-primary/25 bg-white px-2.5 py-1 text-xs font-medium text-primary-dark hover:bg-primary/5"
           @click="addParam"
         >+ 添加系统级参数</button>
         <!-- 一条凭据供多个参数时，单值页这几行是只读的：说清为什么改不了 -->
         <span
           v-if="paramTab === 'single' && multiManagedCount"
-          class="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+          class="inline-flex items-center rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark"
           :title="`${multiManagedCount} 个参数由多值凭据统一管理（一条凭据供多个参数各取一个字段）。要改其中某个参数，请到「多值凭据」页整组修改；在这一页单独改会把组拆散。`"
         >多值管理 {{ multiManagedCount }}</span>
         <!-- 配错时逐个改回「固定值」要 N 次操作，还容易漏掉某个参数 -->
@@ -776,22 +776,22 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
     </div>
 
     <!-- 两种配法：单值凭据逐参数配，多值凭据一条供一组 -->
-    <div class="mt-2.5 flex gap-1 border-b border-indigo-100">
+    <div class="mt-2.5 flex gap-1 border-b border-primary/10">
       <button
         v-for="tab in (['single', 'multi'] as const)"
         :key="tab"
         type="button"
         class="-mb-px border-b-2 px-3 py-1.5 text-xs transition-colors"
         :class="paramTab === tab
-          ? 'border-indigo-600 font-semibold text-indigo-700'
-          : 'border-transparent text-indigo-500 hover:text-indigo-700'"
+          ? 'border-primary font-semibold text-primary-dark'
+          : 'border-transparent text-primary hover:text-primary-dark'"
         @click="switchParamTab(tab)"
       >{{ tab === 'single' ? '单值凭据' : '多值凭据' }}</button>
     </div>
 
     <!-- ══ 单值凭据：一个参数配一条 ══ -->
     <template v-if="paramTab === 'single'">
-    <p v-if="modelValue.length === 0" class="mt-2 text-[11px] italic text-indigo-400">
+    <p v-if="modelValue.length === 0" class="mt-2 text-[11px] italic text-primary">
       暂无系统级参数。申请人、操作人等不能由模型决定的值可以加在这里。
     </p>
 
@@ -808,12 +808,12 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         :title="isMultiManaged(String(p.name || '').trim())
           ? '这个参数由「多值凭据」统一管理，参数名不能在这里单独改。要调整请到多值凭据页整组处理。'
           : ''"
-        class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+        class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400"
         placeholder="参数名"
       />
       <select
         v-model="p.type"
-        class="w-24 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        class="w-24 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-primary focus:ring-primary"
       >
         <option v-for="option in SYSTEM_PARAM_TYPES" :key="option" :value="option">{{ option }}</option>
       </select>
@@ -822,7 +822,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       <select
         v-model="p.source"
         :disabled="isMultiManaged(String(p.name || '').trim())"
-        class="w-28 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+        class="w-28 rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400"
         :title="isMultiManaged(String(p.name || '').trim())
           ? '这个参数由「多值凭据」统一管理，来源不能在这里单独改。要调整请到多值凭据页整组修改。'
           : '值的来源：固定值，或按当前用户从凭据中心解析'"
@@ -838,7 +838,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
              组里其余参数还指向原凭据，组标识还在但语义已经散了 -->
         <span
           v-if="multiManagedFixedOf(p.name)"
-          class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700"
+          class="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[11px] font-medium text-primary-dark"
           title="这条凭据由「多值凭据」一次性选好、供组内多个参数各取一个字段。要换请到多值凭据页整组换，在这里单独换会把它拆散。"
         >由多值凭据统一管理（{{ multiManagedFixedOf(p.name)?.size }} 个参数）</span>
         <button
@@ -846,8 +846,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           type="button"
           class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
           :class="fixedBindingOf(p.name)
-            ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
-            : 'bg-violet-600 text-white hover:bg-violet-700'"
+            ? 'border border-primary/25 bg-white text-primary-dark hover:bg-primary/5'
+            : 'bg-primary text-white hover:bg-primary-dark'"
           @click.stop="openPicker(p.name)"
         >
           <KeyIcon class="h-3 w-3" />
@@ -890,12 +890,12 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
              组里其余参数还是旧规则，多值结构被悄悄拆散，而这一页看不出来 -->
         <template v-if="multiManagedRuleOf(p.name)">
           <span
-            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700"
+            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[11px] font-medium text-primary-dark"
             title="这条规则由「多值凭据」一次性配置，组内所有参数共用同一条规则、各取不同字段。要改请到多值凭据页整组修改，在这里单独改会把它拆散。"
           >由多值凭据统一管理{{ multiManagedRuleOf(p.name)?.size ? `（${multiManagedRuleOf(p.name)?.size} 个参数）` : '' }}</span>
           <span
             v-if="ruleDrafts[p.name.trim()]"
-            class="max-w-[16rem] truncate text-[11px] text-indigo-600"
+            class="max-w-[16rem] truncate text-[11px] text-primary"
             :title="ruleDrafts[p.name.trim()]?.key_source"
           >{{ ruleSummary(ruleDrafts[p.name.trim()]) }}</span>
         </template>
@@ -927,7 +927,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 <div v-else class="relative flex items-center gap-1">
         <input
           v-model="p.value"
-          class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+          class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-primary focus:ring-primary"
           placeholder="{user.user_name}"
         />
         <button
@@ -950,13 +950,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
       <input
         v-model="p.description"
-        class="min-w-[10rem] flex-1 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        class="min-w-[10rem] flex-1 rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
         placeholder="描述（仅编辑和试跑提示）"
       />
       <button
         type="button"
         :disabled="isMultiManaged(String(p.name || '').trim())"
-        class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-gray-400"
+        class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-gray-400"
         :title="isMultiManaged(String(p.name || '').trim())
           ? '这个参数由「多值凭据」统一管理，删掉会在库里留下孤儿绑定。要调整请到多值凭据页整组处理。'
           : `删除系统级参数 ${p.name || index + 1}`"
@@ -1037,7 +1037,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           <button
             type="button"
             :disabled="pickerBusy"
-            class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-60"
             @click="confirmPick"
           >{{ pickerBusy ? '保存中…' : '确定' }}</button>
         </div>

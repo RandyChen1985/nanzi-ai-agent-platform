@@ -88,8 +88,8 @@ function onTitleClick() {
         class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
         :class="
           kind === 'kb'
-            ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-            : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400'
+            ? 'bg-primary/5 text-primary dark:bg-primary-dark/30 dark:text-primary'
+            : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
         "
       >
         <svg
@@ -184,7 +184,7 @@ function onTitleClick() {
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           <span
             v-if="visibilityLabel"
-            class="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+            class="rounded-md bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary dark:bg-primary-dark/30 dark:text-primary"
           >
             {{ visibilityLabel }}
           </span>

@@ -433,7 +433,7 @@ defineExpose({ refresh })
           <span>字段画像 <strong>{{ profileStats.field_count ?? 0 }}</strong></span>
           <span
             v-if="profilingTask?.status === 1"
-            class="text-blue-600 font-bold"
+            class="text-primary font-bold"
           >
             · 摸排中 {{ profilingTask.processed_tables }}/{{ profilingTask.total_tables }}
             <span v-if="profilingTask.current_table" class="font-mono font-normal">({{ profilingTask.current_table }})</span>
@@ -577,8 +577,8 @@ defineExpose({ refresh })
                       <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                         <span class="text-sm font-mono font-bold text-gray-800 break-all">{{ profile.table_name }}</span>
                         <span
-                          class="text-[9px] px-1 py-0.5 rounded font-black shrink-0"
-                          :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'"
+                          class="text-[9px] px-1 py-0.5 rounded font-bold shrink-0"
+                          :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary-dark'"
                         >{{ profile.table_type === 'view' ? 'VIEW' : 'TABLE' }}</span>
                         <span
                           v-if="profile.confidence_score != null && profile.status === 2"
@@ -586,7 +586,7 @@ defineExpose({ refresh })
                           :class="confidenceClass(profile.confidence_score)"
                         >{{ profile.confidence_score }}分</span>
                         <span v-if="profile.status === 3" class="text-[9px] px-1 py-0.5 rounded bg-red-50 text-red-500 font-bold">失败</span>
-                        <span v-else-if="profile.status === 1" class="text-[9px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">分析中</span>
+                        <span v-else-if="profile.status === 1" class="text-[9px] px-1 py-0.5 rounded bg-primary/5 text-primary font-bold">分析中</span>
                         <span v-else-if="profile.status === 0" class="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500 font-bold">待处理</span>
                         <span v-if="profile.is_ignored === 1" class="text-[9px] text-red-500 font-bold">已忽略</span>
                       </div>

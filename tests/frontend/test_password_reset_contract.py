@@ -60,7 +60,7 @@ def test_login_aux_entries_share_one_row_and_degrade_gracefully():
     assert "justify-center" in container
     assert "justify-between" not in container
 
-    sep = container.index("h-3 w-px bg-slate-200")
+    sep = container.index("h-3 w-px bg-slate-300")
     assert "registrationEnabled && passwordResetAvailable" in container[max(0, sep - 250) : sep]
 
 

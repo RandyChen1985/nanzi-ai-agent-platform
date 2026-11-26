@@ -210,7 +210,7 @@ def test_transfer_buttons_are_the_only_way_to_move():
     # 用 \s+ 而不是写死缩进：弹层外层再包一层（如 <Teleport>）会整体改变缩进，
     # 按固定空格匹配会让与本次改动无关的契约假红。
     assert re.search(
-        r"candidateCheckedCount > 0\s+\? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700'",
+        r"candidateCheckedCount > 0\s+\? 'bg-primary text-white shadow-sm hover:bg-primary-dark'",
         template,
     )
     assert "bg-gray-100 text-gray-300 cursor-not-allowed" in template
@@ -378,4 +378,4 @@ def test_dialog_is_wide_and_compact_with_non_wrapping_headers():
     assert 'space-y-1" role="list"' in template
     assert "p-2 rounded-lg border" in template
     assert "rounded-xl border border-gray-100 p-2.5" in template
-    assert "rounded-xl border border-blue-100/50 p-2.5" in template
+    assert "rounded-xl border border-primary/10 p-2.5" in template

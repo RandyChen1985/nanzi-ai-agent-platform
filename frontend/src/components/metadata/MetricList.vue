@@ -245,9 +245,9 @@ defineExpose({ fetchMetrics })
         <template v-if="hasPermission('element:metadata:edit')">
           <button 
             @click="emit('show-smart-discovery')"
-            class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
+            class="bg-primary/5 hover:bg-primary/10 text-primary-dark border border-primary/20 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
           >
-            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             <SparklesIcon class="w-4 h-4" /> 智能发现指标
           </button>
           <button 
@@ -283,7 +283,7 @@ defineExpose({ fetchMetrics })
        <div v-for="m in metrics" :key="m.id" :class="['bg-white p-5 rounded-xl border transition-all group relative', m.id && selectedMetricIds.includes(m.id) ? 'border-amber-400 ring-2 ring-amber-100/80 shadow-md' : 'border-gray-200 shadow-sm hover:shadow-md']">
           <div class="absolute top-4 right-4 flex items-center gap-2">
              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit')">
-                <button @click="openEdit(m)" class="text-gray-400 hover:text-blue-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>
+                <button @click="openEdit(m)" class="text-gray-400 hover:text-primary"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>
                 <button @click="handleDelete(m.id!)" class="text-gray-400 hover:text-red-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
              </div>
              <div v-if="hasPermission('element:metadata:edit') && m.id" class="ml-1" @click.stop>
@@ -313,7 +313,7 @@ defineExpose({ fetchMetrics })
                 <span>Unit:</span> <span class="bg-gray-100 px-1 rounded text-gray-600">{{ m.unit }}</span>
              </div>
              <div v-if="m.tags && m.tags.length" class="flex flex-wrap gap-1 pt-1">
-                <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full border border-blue-100">{{ tag }}</span>
+                <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-primary/5 text-primary-dark text-[10px] rounded-full border border-primary/10">{{ tag }}</span>
              </div>
           </div>
        </div>
@@ -380,13 +380,13 @@ defineExpose({ fetchMetrics })
               </td>
               <td class="px-4 py-3">
                 <div v-if="m.tags && m.tags.length" class="flex flex-wrap gap-1 max-w-xs">
-                  <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full border border-blue-100">{{ tag }}</span>
+                  <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-primary/5 text-primary-dark text-[10px] rounded-full border border-primary/10">{{ tag }}</span>
                 </div>
                 <span v-else class="text-gray-300">-</span>
               </td>
               <td v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                  <button @click="openEdit(m)" class="text-gray-400 hover:text-blue-600 p-1.5 hover:bg-white rounded-md transition-colors" title="编辑指标">
+                  <button @click="openEdit(m)" class="text-gray-400 hover:text-primary p-1.5 hover:bg-white rounded-md transition-colors" title="编辑指标">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
                   </button>
                   <button @click="handleDelete(m.id!)" class="text-gray-400 hover:text-red-600 p-1.5 hover:bg-white rounded-md transition-colors" title="删除指标">
@@ -443,9 +443,9 @@ defineExpose({ fetchMetrics })
                   <label class="block text-sm font-medium text-gray-700 mb-1">标签 <span class="text-gray-400 font-normal">(用于业务归类与检索，可选)</span></label>
                   <input v-model="tagInput" @keyup.enter="addTag(form)" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="输入标签后回车">
                   <div class="flex flex-wrap gap-2 mt-2">
-                    <span v-for="(tag, i) in form.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                    <span v-for="(tag, i) in form.tags" :key="i" class="px-2 py-1 bg-primary/5 text-primary-dark text-xs rounded-full flex items-center gap-1 border border-primary/10">
                       {{ tag }}
-                      <button type="button" @click="removeTag(form, i as number)" class="text-blue-400 hover:text-red-500 ml-1" title="移除标签">&times;</button>
+                      <button type="button" @click="removeTag(form, i as number)" class="text-primary hover:text-red-500 ml-1" title="移除标签">&times;</button>
                     </span>
                     <span v-if="!form.tags || form.tags.length === 0" class="text-xs text-gray-400">暂无标签</span>
                   </div>
@@ -505,11 +505,5 @@ defineExpose({ fetchMetrics })
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out;
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+
 </style>

@@ -68,7 +68,7 @@ onMounted(() => {
       </div>
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-blue-300 hover:text-blue-600 cursor-pointer"
+        class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-primary/25 hover:text-primary cursor-pointer"
         @click="openFullPreview(loginTheme)"
       >
         <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -94,10 +94,10 @@ onMounted(() => {
           role="button"
           tabindex="0"
           :data-login-theme-option="item.id"
-          class="group relative flex flex-col overflow-hidden rounded-xl border text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          class="group relative flex flex-col overflow-hidden rounded-xl border text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary"
           :class="
             loginTheme === item.id
-              ? 'border-blue-500 bg-blue-50/35 shadow-[0_0_0_3px_rgba(37,99,235,0.10)]'
+              ? 'border-primary bg-primary/5 shadow-[0_0_0_3px_rgba(37,99,235,0.10)]'
               : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
           "
           @click="handleSelectTheme(item)"
@@ -224,7 +224,7 @@ onMounted(() => {
               </span>
               <span
                 v-if="item.id === DEFAULT_LOGIN_THEME"
-                class="rounded-md bg-blue-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm"
+                class="rounded-md bg-primary/90 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm"
               >
                 默认
               </span>
@@ -248,13 +248,13 @@ onMounted(() => {
                 <span class="text-sm font-semibold text-gray-900">{{ item.name }}</span>
                 <span
                   v-if="savingThemeId === item.id"
-                  class="text-[11px] text-blue-600"
+                  class="text-[11px] text-primary"
                 >
                   保存中...
                 </span>
                 <span
                   v-else-if="loginTheme === item.id"
-                  class="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+                  class="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark"
                 >
                   当前使用
                 </span>

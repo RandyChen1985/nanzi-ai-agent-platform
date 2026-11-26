@@ -225,9 +225,9 @@ onUnmounted(() => {
         :style="arrowStyle"
       />
 
-      <div class="flex items-start justify-between gap-2 px-3 py-2.5 border-b border-gray-100 dark:border-gray-700/60 bg-blue-50/40 dark:bg-blue-900/10 flex-shrink-0">
+      <div class="flex items-start justify-between gap-2 px-3 py-2.5 border-b border-gray-100 dark:border-gray-700/60 bg-primary/5 dark:bg-primary-dark/10 flex-shrink-0">
         <div class="flex items-start gap-2 min-w-0">
-          <div class="p-1.5 bg-blue-100/80 dark:bg-blue-900/30 rounded-lg text-blue-600 flex-shrink-0">
+          <div class="p-1.5 bg-primary/10 dark:bg-primary-dark/30 rounded-lg text-primary flex-shrink-0">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -273,7 +273,7 @@ onUnmounted(() => {
           <button
             v-if="citation.doc_id || citation.link"
             @click="emit('view-original', citation)"
-            class="hidden sm:flex px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors text-primary hover:bg-blue-50 dark:hover:bg-blue-900/20 items-center gap-1"
+            class="hidden sm:flex px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors text-primary hover:bg-primary/5 dark:hover:bg-primary-dark/20 items-center gap-1"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />

@@ -364,7 +364,7 @@ const curlCommand = computed(() => {
 
                 <p
                   v-if="systemParams.length > 0"
-                  class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-[11px] leading-relaxed text-indigo-700"
+                  class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary-dark"
                 >
                   系统级参数：{{ systemParams.map((param) => param.name).join('、') }}
                   （平台自动注入，无需填写）

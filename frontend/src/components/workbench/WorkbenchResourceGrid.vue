@@ -11,7 +11,7 @@
         v-for="item in items"
         :key="item.key"
         type="button"
-        class="group flex basis-[calc(50%-0.5px)] items-center gap-2 bg-white px-3.5 py-2.5 text-left transition-colors hover:bg-blue-50/40 dark:bg-gray-900/40 dark:hover:bg-blue-950/20"
+        class="group flex basis-[calc(50%-0.5px)] items-center gap-2 bg-white px-3.5 py-2.5 text-left transition-colors hover:bg-primary/5 dark:bg-gray-900/40 dark:hover:bg-primary-dark/20"
         @click="$emit('select', item)"
       >
         <span

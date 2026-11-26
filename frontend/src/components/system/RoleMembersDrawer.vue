@@ -15,7 +15,7 @@
         <header class="px-4 sm:px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 shrink-0">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <h2 id="role-members-title" class="text-lg font-black text-gray-900 truncate">
+              <h2 id="role-members-title" class="text-lg font-bold text-gray-900 truncate">
                 {{ role?.name || '角色成员' }}
               </h2>
               <span
@@ -55,7 +55,7 @@
                 type="search"
                 placeholder="搜索姓名或账号…"
                 aria-label="搜索角色成员"
-                class="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                class="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
               />
               <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -65,7 +65,7 @@
               v-if="canEditRole"
               type="button"
               @click="emit('add-members', role)"
-              class="shrink-0 px-3 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors"
+              class="shrink-0 px-3 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-colors"
             >+ 添加成员</button>
           </div>
           <div v-if="canEditRole && selectedIds.length > 0" class="flex items-center justify-between gap-2">
@@ -104,7 +104,7 @@
               v-if="canEditRole && !search.trim()"
               type="button"
               @click="emit('add-members', role)"
-              class="mt-3 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700"
+              class="mt-3 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-dark"
             >+ 添加成员</button>
           </div>
 
@@ -121,11 +121,11 @@
                   v-model="selectedIds"
                   :disabled="isRemovalLocked"
                   :aria-label="`选择成员 ${member.user_name}`"
-                  class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+                  class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary disabled:opacity-40"
                 />
               </label>
 
-              <div class="w-8 h-8 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold text-[11px] shrink-0">
+              <div class="w-8 h-8 rounded-full bg-primary/5 text-primary border border-primary/10 flex items-center justify-center font-bold text-[11px] shrink-0">
                 {{ (member.real_name || member.user_name || '?').slice(0, 1) }}
               </div>
 
@@ -153,7 +153,7 @@
                     <span
                       v-for="name in otherRoleNames(member).slice(0, 2)"
                       :key="name"
-                      class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-semibold"
+                      class="px-1.5 py-0.5 rounded bg-primary/5 text-primary font-semibold"
                     >{{ name }}</span>
                     <span
                       v-if="otherRoleNames(member).length > 2"
@@ -263,14 +263,14 @@
             type="password"
             autocomplete="new-password"
             placeholder="新密码（8-32 位，含大小写/数字/符号中的三类）"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />
           <input
             v-model="passwordForm.confirm"
             type="password"
             autocomplete="new-password"
             placeholder="再次输入新密码"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
         <div class="mt-5 flex justify-end gap-2">
@@ -282,7 +282,7 @@
           <button
             type="submit"
             :disabled="submittingPassword"
-            class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50"
+            class="px-3 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-dark disabled:opacity-50"
           >{{ submittingPassword ? '提交中…' : '确认重置' }}</button>
         </div>
       </form>

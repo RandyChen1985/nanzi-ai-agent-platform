@@ -48,7 +48,7 @@ const appendOpenLinkToPath = (rawPathVal: string): string => {
   if (!pathVal) return rawPathVal;
   if (INTERNAL_PATH_PATTERN.test(pathVal)) return rawPathVal;
   const canvasUrl = `canvas://file?path=${encodeURIComponent(pathVal)}`;
-  return `${pathVal}<a href="${canvasUrl}" class="inline-flex items-center text-blue-600 dark:text-blue-400 hover:underline font-bold ml-1.5 text-[10.5px]" title="点击在画布中打开文件" style="cursor: pointer;">[打开]</a>`;
+  return `${pathVal}<a href="${canvasUrl}" class="inline-flex items-center text-primary dark:text-primary hover:underline font-bold ml-1.5 text-[10.5px]" title="点击在画布中打开文件" style="cursor: pointer;">[打开]</a>`;
 };
 
 /**

@@ -5,7 +5,7 @@
       <span class="flex-1" />
       <button
         type="button"
-        class="text-[11.5px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+        class="text-[11.5px] font-medium text-primary hover:text-primary-dark dark:text-primary dark:hover:text-primary-hover"
         @click="$emit('view-all')"
       >
         全部 →
@@ -18,7 +18,7 @@
       :key="agent.id"
       role="button"
       tabindex="0"
-      class="group flex cursor-pointer items-center gap-2.5 border-t border-gray-100 px-3.5 py-2.5 transition-colors hover:bg-blue-50/40 focus:outline-none focus-visible:bg-blue-50/60 dark:border-gray-800/70 dark:hover:bg-blue-950/20"
+      class="group flex cursor-pointer items-center gap-2.5 border-t border-gray-100 px-3.5 py-2.5 transition-colors hover:bg-primary/5 focus:outline-none focus-visible:bg-primary/5 dark:border-gray-800/70 dark:hover:bg-primary-dark/20"
       @click="$emit('open-agent', agent)"
       @keydown.enter.prevent="$emit('open-agent', agent)"
       @keydown.space.prevent="$emit('open-agent', agent)"

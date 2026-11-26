@@ -3,17 +3,17 @@
     <!-- 三级图例：菜单 → 页面（子菜单）→ 功能点 -->
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[10px] text-gray-500">
       <span class="inline-flex items-center gap-1">
-        <svg class="h-3.5 w-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="h-3.5 w-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
         </svg>
-        <b class="font-bold text-blue-600">菜单权限</b>
+        <b class="font-bold text-primary">菜单权限</b>
         <span>侧栏入口</span>
       </span>
       <span class="inline-flex items-center gap-1">
-        <svg class="h-3.5 w-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="h-3.5 w-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 4h7l4 4v12a1 1 0 01-1 1H7a1 1 0 01-1-1V5a1 1 0 011-1zM13 4v5h5" />
         </svg>
-        <b class="font-bold text-indigo-500">页面</b>
+        <b class="font-bold text-primary">页面</b>
         <span>能点进去的子菜单</span>
       </span>
       <span class="inline-flex items-center gap-1">
@@ -41,7 +41,7 @@
         <button
           v-if="hasChildren(menu)"
           type="button"
-          class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           :aria-expanded="!isCollapsed(menu.id)"
           :aria-label="isCollapsed(menu.id) ? `展开「${menu.label}」` : `折叠「${menu.label}」`"
           @click.stop="toggleCollapse(menu.id)"
@@ -78,8 +78,8 @@
           <input
             v-else
             type="checkbox"
-            class="pointer-events-none h-4 w-4 shrink-0 rounded border-gray-300 focus:ring-blue-500"
-            :class="isSelfInherited(menu) ? 'accent-slate-400' : 'accent-blue-600'"
+            class="pointer-events-none h-4 w-4 shrink-0 rounded border-gray-300 focus:ring-primary"
+            :class="isSelfInherited(menu) ? 'accent-slate-400' : 'accent-primary'"
             :checked="isSelfGranted(menu)"
             :indeterminate="isPartial(menu)"
             :disabled="disabled"
@@ -89,7 +89,7 @@
           <svg
             v-if="!isGroupNode(menu)"
             class="h-4 w-4 shrink-0"
-            :class="isSelfInherited(menu) ? 'text-slate-400' : 'text-blue-600'"
+            :class="isSelfInherited(menu) ? 'text-slate-400' : 'text-primary'"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -98,7 +98,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
           </svg>
           <span
-            class="min-w-0 truncate text-xs font-black sm:text-sm"
+            class="min-w-0 truncate text-xs font-bold sm:text-sm"
             :class="isSelfInherited(menu) ? 'text-slate-600' : 'text-gray-800'"
           >{{ menu.label }}</span>
           <span
@@ -119,7 +119,7 @@
           </span>
           <button
             type="button"
-            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 transition-colors hover:bg-blue-100 disabled:opacity-40"
+            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"
             :disabled="disabled"
             :title="isFullyGranted(menu) ? `清空「${menu.label}」下的全部功能点` : `授予「${menu.label}」下的全部功能点`"
             @click.stop="onMenuCascade(menu)"

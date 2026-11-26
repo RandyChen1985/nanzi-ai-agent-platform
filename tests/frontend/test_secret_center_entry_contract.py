@@ -338,8 +338,8 @@ class TestMcpWizardPendingBindings:
     def test_authorization_credential_tab_shown_while_creating(self):
         """二选一不能只在编辑态出现。"""
         source = _read(self.REGISTRY)
-        assert 'v-if="isEditing" class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100"' not in source
-        assert 'class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100"' in source
+        assert 'v-if="isEditing" class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-primary/10"' not in source
+        assert 'class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-primary/10"' in source
 
     def test_header_bind_does_not_require_saved_server(self):
         """每行 Header 的钥匙按钮以前只有已保存的行才有。"""
@@ -1058,7 +1058,7 @@ class TestBindingsGroupedByType:
     def test_each_type_has_its_own_colour(self):
         source = _read(ROOT / self.ADMIN)
         assert "BINDING_TYPE_STYLE" in source
-        for cls in ("bg-violet-50", "bg-sky-50", "bg-amber-50"):
+        for cls in ("bg-primary/5", "bg-sky-50", "bg-amber-50"):
             assert cls in source, cls
 
     def test_script_tool_label_is_correct(self):

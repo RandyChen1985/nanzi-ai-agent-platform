@@ -484,6 +484,18 @@ def _ensure_server_control_access(server: McpServer, user: Dict) -> None:
         raise HTTPException(status_code=403, detail="无法管理其他用户的私有 MCP 服务")
 
 
+def _ensure_server_read_access(server: McpServer, user: Dict) -> None:
+    """**只读**访问判定：平台服务对登录用户开放，个人服务仍限本人或管理员。
+
+    刻意与 :func:`_ensure_server_control_access` 分开：后者同时守着执行、发布、
+    凭据、同步、清理与日志，直接放开它会把写能力一起放出去。平台 MCP 页签现在
+    对所有登录用户可见（只读模式），因此「看服务与工具清单」需要一道更松的闸门。
+    """
+    is_admin = user.get("role") == "admin"
+    if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
+        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 服务")
+
+
 async def _find_server_with_name(
     db: AsyncSession,
     server_name: str,
@@ -931,9 +943,15 @@ async def list_mcp_servers(
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key)
 ):
-    """List MCP servers filtered by scope (global / personal). Personal servers are strictly isolated by current user."""
-    if scope != "personal" and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="只有系统管理员才能查看平台公共 MCP 服务")
+    """List MCP servers filtered by scope (global / personal). Personal servers are strictly isolated by current user.
+
+    平台服务清单对所有登录用户开放（只读模式），非管理员看到的是**脱敏**视图：
+    地址、鉴权 Header、创建人与探测错误原文不下发。写操作仍由
+    ``element:mcp_management:*`` 与管理员身份共同约束。
+    """
+    if scope not in ("global", "personal"):
+        raise HTTPException(status_code=400, detail="scope 只能是 global 或 personal")
+    is_admin = user.get("role") == "admin"
     if scope == "personal":
         user_id = _get_user_id(user)
         stmt = select(McpServer).where(McpServer.scope == "personal", McpServer.user_id == user_id)
@@ -1015,8 +1033,35 @@ async def list_mcp_servers(
         owner_name, owner_display = owner_profiles.get(int(s.user_id), (None, None)) if s.user_id else (None, None)
         item.owner_user_name = owner_name
         item.owner_display_name = owner_display
+        if not is_admin:
+            _mask_platform_server_for_read_only(item)
         res.append(item)
     return res
+
+
+def _mask_platform_server_for_read_only(item: McpServerResponse) -> None:
+    """非管理员读平台 MCP 时的字段脱敏（只读模式）。
+
+    平台服务清单现在对全部登录用户可见，但下面这些字段属于「运维/归属信息」：
+    服务地址可能带内网拓扑甚至 URL 里的临时 token，鉴权 Header 名与创建人属于
+    同事信息，探测错误原文是被截断的远端异常（可能含主机名）。只读用户只需要
+    「平台上有哪些能力、哪些在跑」，这些一律不下发。
+
+    保留布尔量（``auth_headers_configured`` / ``authorization_configured`` /
+    ``user_assertion_enabled`` / ``credential_mode``）：它们只说明「怎么调」，
+    不含机密，前端徽标与排查都要用。
+    """
+    item.sse_url = ""
+    item.masked_auth_headers = {}
+    item.owner_user_name = None
+    item.owner_display_name = None
+    item.last_probe_error = None
+    # 用户身份断言的 header 名/受众/公钥标识/签发者属于配置细节；置空串而不是 None，
+    # 与基础模型的必填 str 类型保持一致（赋值不触发校验，序列化也不会报错）。
+    item.user_assertion_header = ""
+    item.user_assertion_audience = None
+    item.user_assertion_key_id = None
+    item.user_assertion_issuer = None
 
 
 async def _mcp_owner_profiles(
@@ -1999,8 +2044,9 @@ async def list_mcp_server_tools(
     server = (await db.execute(server_stmt)).scalar_one_or_none()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    # 工具清单（含未发布工具与 Schema）只对服务控制者开放，避免任意登录用户枚举。
-    _ensure_server_control_access(server, user)
+    # 工具清单含参数 Schema 与发布状态：平台服务对登录用户只读开放（平台 MCP 页签
+    # 对所有人可见），个人服务仍只给本人/管理员。执行与发布另有 element 码约束。
+    _ensure_server_read_access(server, user)
 
     stmt = select(McpToolCache).where(McpToolCache.server_id == server_id)
     tools = (await db.execute(stmt)).scalars().all()

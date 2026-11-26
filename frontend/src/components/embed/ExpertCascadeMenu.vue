@@ -71,7 +71,7 @@ const customAgents = computed(() => {
  * 专家团：团主专家单独成一类。
  *
  * 它们的用法和普通专家不同——选中之后背后是一整团在调度，会先看团介绍再派人。
- * 混在「自定义专家」里只能靠一枚 👥 TEAM 徽标区分，团多了就很难挑。系统级的团主
+ * 混在「自定义专家」里只能靠一枚 TEAM 徽标区分，团多了就很难挑。系统级的团主
  * 同样归到这里（分类按「是不是团主」而不是「归谁所有」）。
  */
 const expertTeams = computed(() => {
@@ -80,7 +80,7 @@ const expertTeams = computed(() => {
     .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
 })
 
-/** 团主专家的副标题：只有 👥 TEAM 徽标的话，用户不知道是哪个团、有几个子专家 */
+/** 团主专家的副标题：只有 TEAM 徽标的话，用户不知道是哪个团、有几个子专家 */
 const teamSubtitle = (agent: any): string => {
   const name = String(agent.team_name || '').trim()
   if (!name) return ''
@@ -215,7 +215,7 @@ const handleSelectExpert = (agentId: string) => {
           class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
           :class="
             expertTab === 'system'
-              ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
+              ? 'bg-white dark:bg-gray-800 text-primary dark:text-primary shadow-sm'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
           "
           @click.stop="switchTab('system')"
@@ -226,7 +226,7 @@ const handleSelectExpert = (agentId: string) => {
           <span class="whitespace-nowrap">系统专家</span>
           <span
             class="rounded px-1 text-[9px] font-normal"
-            :class="expertTab === 'system' ? 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
+            :class="expertTab === 'system' ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
           >{{ expertSearchQuery ? `${filteredSystemAgents.length}/${systemAgents.length}` : systemAgents.length }}</span>
         </button>
 
@@ -255,7 +255,7 @@ const handleSelectExpert = (agentId: string) => {
           class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
           :class="
             expertTab === 'team'
-              ? 'bg-white dark:bg-gray-800 text-teal-600 dark:text-teal-400 shadow-sm'
+              ? 'bg-white dark:bg-gray-800 text-primary dark:text-primary shadow-sm'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
           "
           title="只看专家团：选中后由团主专家调度整团"
@@ -267,7 +267,7 @@ const handleSelectExpert = (agentId: string) => {
           <span class="whitespace-nowrap">专家团</span>
           <span
             class="rounded px-1 text-[9px] font-normal"
-            :class="expertTab === 'team' ? 'bg-teal-50 dark:bg-teal-900/40 text-teal-600 dark:text-teal-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
+            :class="expertTab === 'team' ? 'bg-teal-50 dark:bg-primary-dark/40 text-teal-700 dark:text-teal-300 dark:text-teal-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
           >{{ expertSearchQuery ? `${filteredExpertTeams.length}/${expertTeams.length}` : expertTeams.length }}</span>
         </button>
       </div>
@@ -388,16 +388,16 @@ const handleSelectExpert = (agentId: string) => {
                 >MAIN</span>
                 <span
                   v-else-if="agent.is_system"
-                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-primary/10 text-primary-dark dark:bg-primary-dark/40 dark:text-primary-hover uppercase"
                 >SYS</span>
                 <!-- 专家团与 MAIN/SYS 正交：一个系统级智能体可以既是 SYS 又是团主专家，
                      所以必须独立判断，不能并进上面的 v-else-if 链。 -->
                 <!-- 专家团 tab 里整列都是团，这枚徽标只在「自定义专家」中才起区分作用 -->
                 <span
                   v-if="agent.is_expert_team_lead && !isTeamTab"
-                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:text-teal-300 dark:border-primary-dark dark:bg-primary-dark/40 dark:text-teal-300"
                   :title="`专家团主专家：${agent.team_name || agent.display_name}`"
-                >👥 TEAM</span>
+                >TEAM</span>
               </div>
               <svg
                 v-if="isExpertMode(routingMode, expertAgentId) && expertAgentId === agent.id"
@@ -459,9 +459,9 @@ const handleSelectExpert = (agentId: string) => {
                      漏了这里，用户只能在系统 tab 看到 TEAM。 -->
                 <span
                   v-if="agent.is_expert_team_lead"
-                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:text-teal-300 dark:border-primary-dark dark:bg-primary-dark/40 dark:text-teal-300"
                   :title="`专家团主专家：${agent.team_name || agent.display_name}`"
-                >👥 TEAM</span>
+                >TEAM</span>
               </div>
               <svg
                 v-if="isExpertMode(routingMode, expertAgentId) && expertAgentId === agent.id"

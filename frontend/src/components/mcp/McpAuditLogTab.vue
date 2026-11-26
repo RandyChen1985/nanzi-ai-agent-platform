@@ -200,10 +200,10 @@ onMounted(() => {
       <div class="rounded-xl border border-gray-200 bg-white p-3.5 shadow-2xs">
         <div class="flex items-center justify-between">
           <span class="text-xs font-medium text-gray-500">周期调用总量</span>
-          <CpuChipIcon class="h-4 w-4 text-indigo-500" />
+          <CpuChipIcon class="h-4 w-4 text-primary" />
         </div>
         <div class="mt-1 flex items-baseline gap-1">
-          <span class="text-2xl font-black text-gray-900">{{ metrics.total_calls.toLocaleString() }}</span>
+          <span class="text-2xl font-bold text-gray-900">{{ metrics.total_calls.toLocaleString() }}</span>
           <span class="text-[11px] text-gray-400">次</span>
         </div>
       </div>
@@ -218,7 +218,7 @@ onMounted(() => {
         </div>
         <div class="mt-1 flex items-baseline gap-1">
           <span
-            class="text-2xl font-black"
+            class="text-2xl font-bold"
             :class="metrics.success_rate >= 95 ? 'text-emerald-600' : metrics.success_rate >= 80 ? 'text-amber-600' : 'text-rose-600'"
           >
             {{ metrics.success_rate }}%
@@ -230,10 +230,10 @@ onMounted(() => {
       <div class="rounded-xl border border-gray-200 bg-white p-3.5 shadow-2xs">
         <div class="flex items-center justify-between">
           <span class="text-xs font-medium text-gray-500">平均响应耗时</span>
-          <ClockIcon class="h-4 w-4 text-indigo-500" />
+          <ClockIcon class="h-4 w-4 text-primary" />
         </div>
         <div class="mt-1 flex items-baseline gap-1">
-          <span class="text-2xl font-black text-indigo-600">{{ metrics.avg_latency_ms }}</span>
+          <span class="text-2xl font-bold text-primary">{{ metrics.avg_latency_ms }}</span>
           <span class="text-[11px] text-gray-400">ms</span>
         </div>
       </div>
@@ -245,7 +245,7 @@ onMounted(() => {
         </div>
         <div class="mt-1 flex items-baseline gap-1">
           <span
-            class="text-2xl font-black"
+            class="text-2xl font-bold"
             :class="metrics.failed_calls > 0 ? 'text-rose-600' : 'text-gray-700'"
           >
             {{ metrics.failed_calls }}
@@ -267,20 +267,20 @@ onMounted(() => {
             @keyup.enter="handleFilterChange"
             type="text"
             placeholder="按工具名称过滤..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
         <button
           type="button"
           class="inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
-          :class="activeFilterCount > 0 ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-gray-50 text-gray-700'"
+          :class="activeFilterCount > 0 ? 'border-primary/25 bg-primary/5 text-primary-dark' : 'border-gray-200 bg-gray-50 text-gray-700'"
           :aria-expanded="mobileFiltersOpen"
           @click="mobileFiltersOpen = !mobileFiltersOpen"
         >
           筛选
           <span
             v-if="activeFilterCount > 0"
-            class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white"
+            class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
           >{{ activeFilterCount }}</span>
           <svg class="h-3.5 w-3.5 transition-transform" :class="mobileFiltersOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -293,7 +293,7 @@ onMounted(() => {
           class="inline-flex shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white p-1.5 text-gray-700 shadow-2xs transition-colors hover:bg-gray-50 disabled:opacity-50"
           title="刷新数据"
         >
-          <ArrowPathIcon class="h-4 w-4" :class="loading ? 'animate-spin text-indigo-600' : 'text-gray-500'" />
+          <ArrowPathIcon class="h-4 w-4" :class="loading ? 'animate-spin text-primary' : 'text-gray-500'" />
         </button>
       </div>
 
@@ -308,7 +308,7 @@ onMounted(() => {
             <select
               v-model="selectedServerId"
               @change="handleFilterChange"
-              class="w-full rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 sm:w-52"
+              class="w-full rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary sm:w-52"
             >
               <option value="">全部 MCP 服务 (全量)</option>
               <option v-for="srv in serverOptions" :key="srv.id" :value="srv.id">
@@ -353,7 +353,7 @@ onMounted(() => {
               @keyup.enter="handleFilterChange"
               type="text"
               placeholder="按工具名称过滤..."
-              class="w-44 rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="w-44 rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
 
@@ -361,7 +361,7 @@ onMounted(() => {
           <select
             v-model="statusFilter"
             @change="handleFilterChange"
-            class="rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            class="rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           >
             <option value="all">全部状态</option>
             <option value="success">仅成功 (Success)</option>
@@ -383,7 +383,7 @@ onMounted(() => {
             v-if="selectedServerId || toolNameFilter || statusFilter !== 'all' || timeRangeFilter !== '7d'"
             type="button"
             @click="resetFilters"
-            class="text-xs text-gray-500 hover:text-indigo-600 transition-colors underline"
+            class="text-xs text-gray-500 hover:text-primary transition-colors underline"
           >
             重置
           </button>
@@ -395,7 +395,7 @@ onMounted(() => {
           :disabled="loading"
           class="hidden items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition-colors disabled:opacity-50 sm:inline-flex"
         >
-          <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-indigo-600' : 'text-gray-500'" />
+          <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-primary' : 'text-gray-500'" />
           刷新数据
         </button>
       </div>
@@ -404,7 +404,7 @@ onMounted(() => {
     <!-- 流水列表区（可滚动） -->
     <div class="flex-1 overflow-y-auto bg-slate-50/50 p-4">
       <div v-if="loading && logs.length === 0" class="flex flex-col items-center justify-center h-64 text-gray-400">
-        <ArrowPathIcon class="h-8 w-8 animate-spin text-indigo-500 mb-2" />
+        <ArrowPathIcon class="h-8 w-8 animate-spin text-primary mb-2" />
         <p class="text-xs">正在查询 MCP 出站审计记录...</p>
       </div>
 
@@ -453,7 +453,7 @@ onMounted(() => {
               <!-- 服务徽标与工具名 -->
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-700/10">
+                  <span class="inline-flex items-center rounded-md bg-primary/5 px-2 py-0.5 text-[11px] font-semibold text-primary-dark ring-1 ring-inset ring-primary-dark/10">
                     {{ item.server_name || 'MCP 服务' }}
                   </span>
                   <span class="font-mono text-xs font-bold text-gray-900">{{ item.tool_name }}</span>
@@ -557,7 +557,7 @@ onMounted(() => {
                   <button
                     type="button"
                     @click="copyContent('req_' + item.id, item.tool_input)"
-                    class="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-indigo-600 transition-colors"
+                    class="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-primary transition-colors"
                   >
                     <CheckIcon v-if="copiedKeys['req_' + item.id]" class="h-3.5 w-3.5 text-emerald-600" />
                     <ClipboardDocumentIcon v-else class="h-3.5 w-3.5" />
@@ -574,7 +574,7 @@ onMounted(() => {
                   <button
                     type="button"
                     @click="copyContent('res_' + item.id, item.tool_output)"
-                    class="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-indigo-600 transition-colors"
+                    class="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-primary transition-colors"
                   >
                     <CheckIcon v-if="copiedKeys['res_' + item.id]" class="h-3.5 w-3.5 text-emerald-600" />
                     <ClipboardDocumentIcon v-else class="h-3.5 w-3.5" />

@@ -93,4 +93,4 @@ def test_agent_center_card_marks_dataset_scope_as_limited():
     assert page.count("仅限数据集") >= 2
     assert "仅限查询这 ${agent.metadata_dataset_count} 个数据集" in page
     # 知识库徽章保持中性灰，两类绑定在视觉上要能区分
-    assert 'bg-blue-50 text-blue-700' in page
+    assert 'bg-primary/5 text-primary-dark' in page

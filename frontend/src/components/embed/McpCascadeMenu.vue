@@ -335,7 +335,7 @@ void loadTools()
             </span>
             <div
               class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5"
-              :class="tool.scope === 'personal' ? 'bg-emerald-500 text-white' : 'bg-indigo-500 text-white'"
+              :class="tool.scope === 'personal' ? 'bg-emerald-500 text-white' : 'bg-primary text-white'"
             >
               {{ toolInitial(tool, group.serverName) }}
             </div>

@@ -14,10 +14,10 @@
       @click="emit('select', v.value)"
     >
       <span class="text-[10px] font-medium text-gray-800">{{ v.label }}</span>
-      <span class="block text-[9px] text-blue-600 font-mono mt-0.5">{{ v.value }}</span>
+      <span class="block text-[9px] text-primary font-mono mt-0.5">{{ v.value }}</span>
     </button>
 
-    <div class="px-2.5 py-1.5 text-[9px] font-bold text-violet-700 uppercase tracking-wide bg-violet-50 border-y border-violet-100">
+    <div class="px-2.5 py-1.5 text-[9px] font-bold text-primary-dark uppercase tracking-wide bg-primary/5 border-y border-primary/10">
       extra_data 扩展字段
     </div>
     <template v-if="extraDataVariables.length">
@@ -25,14 +25,14 @@
         v-for="v in extraDataVariables"
         :key="v.value"
         type="button"
-        class="w-full text-left px-3 py-2 border-b border-violet-50/80 transition-colors hover:bg-violet-50"
+        class="w-full text-left px-3 py-2 border-b border-primary/5 transition-colors hover:bg-primary/5"
         @click="emit('select', v.value)"
       >
         <div class="flex items-center gap-1.5">
-          <span class="text-[10px] font-medium text-violet-900">{{ v.label }}</span>
-          <span class="text-[8px] px-1 py-0.5 rounded bg-violet-100 text-violet-600 font-bold">扩展</span>
+          <span class="text-[10px] font-medium text-primary-dark">{{ v.label }}</span>
+          <span class="text-[8px] px-1 py-0.5 rounded bg-primary/10 text-primary font-bold">扩展</span>
         </div>
-        <span class="block text-[9px] text-violet-600 font-mono mt-0.5">{{ v.value }}</span>
+        <span class="block text-[9px] text-primary font-mono mt-0.5">{{ v.value }}</span>
         <span v-if="v.sample" class="block text-[8px] text-gray-400 truncate mt-0.5">示例：{{ v.sample }}</span>
       </button>
     </template>

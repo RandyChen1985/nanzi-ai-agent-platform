@@ -28,7 +28,7 @@ const props = withDefaults(defineProps<{
 
 const router = useRouter()
 const route = useRoute()
-const { isAdmin } = useUser()
+const { isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
 
 // 「我的 MCP」里的二级菜单：我的 MCP / 收到的分享 / 我的分享
@@ -64,11 +64,26 @@ watch(personalMenuCollapsed, (collapsed) => {
 })
 const shareDialogServer = ref<{ id: string; server_name: string; sse_url: string } | null>(null)
 const mcpShareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
-// 平台 MCP 列表/工具/日志已收紧为 admin；非管理员直接落到「我的 MCP」，不显示会 403 的平台页签。
+// 默认落点仍是「我的 MCP」：平台 MCP 页签对所有登录用户开放，但只读。
+// 非管理员进页面先看到自己的服务，想去浏览平台服务再点页签。
 const activeScope = ref<'global' | 'personal' | 'audit' | 'changes'>(
   props.personalOnly || !isAdmin.value ? 'personal' : 'global',
 )
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
+
+/**
+ * 兜底：非管理员不能停在「审计日志」「定义变更」上。
+ *
+ * 这两个页签本来就是 admin-only（面板里也带 isAdmin 守卫）；用户信息是异步注入的，
+ * 角色也可能在别的标签页被改掉，少了这道兜底，页面会停在一个既不渲染面板、
+ * 也不渲染服务列表的空白区域上。
+ */
+watch(isAdmin, (admin) => {
+  if (admin) return
+  if (activeScope.value === 'audit' || activeScope.value === 'changes') {
+    activeScope.value = 'global'
+  }
+}, { immediate: true })
 
 // 平台 MCP 与我的 MCP 数量计数
 const serverCounts = ref<{
@@ -81,11 +96,9 @@ const serverCounts = ref<{
 
 const fetchServerCounts = async () => {
   try {
-    const globalRequest = isAdmin.value
-      ? axios.get('/api/portal/mcp/servers', { params: { scope: 'global' } })
-      : Promise.resolve({ data: [] })
+    // 平台 MCP 列表对登录用户开放（后端按登录身份脱敏），两个页签的角标都直接取真实数量。
     const [globalRes, personalRes] = await Promise.allSettled([
-      globalRequest,
+      axios.get('/api/portal/mcp/servers', { params: { scope: 'global' } }),
       axios.get('/api/portal/mcp/servers', { params: { scope: 'personal' } }),
     ])
     if (globalRes.status === 'fulfilled' && Array.isArray(globalRes.value.data)) {
@@ -175,6 +188,12 @@ const showHelp = ref(false)
 const activeHelpTab = ref<'flow' | 'protocols' | 'security'>('flow')
 
 const handleBannerAction = (action: 'add' | 'marketplace') => {
+  // 只读用户被引导进新建向导只会白填一遍表单，最后在 POST /servers 上撞 403：
+  // 直接在入口把权限缺口说清楚，与注册表里 canCreateMcp 收敛「添加」按钮同一口径。
+  if (!hasPermission('element:mcp_management:create')) {
+    showToast('没有创建 MCP 服务的权限', 'warning')
+    return
+  }
   if (action === 'add') {
     registryRef.value?.openAddModal('manual')
   } else if (action === 'marketplace') {
@@ -223,7 +242,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
 
         <span
           v-if="!personalOnly"
-          class="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+          class="inline-flex items-center rounded-full bg-primary/5 px-2.5 py-0.5 text-xs font-semibold text-primary-dark dark:bg-primary-dark/30 dark:text-primary-hover"
         >
           Model Context Protocol
         </span>
@@ -245,26 +264,25 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       />
     </div>
 
-    <!-- Scope Tab：个人中心模式下隐藏平台/个人切换；普通用户只有一个「我的 MCP」，那行没有意义 -->
+    <!-- Scope Tab：个人中心模式下隐藏平台/个人切换；平台页签对登录用户开放（无写权限时只读） -->
     <div
-      v-if="!personalOnly && isAdmin"
+      v-if="!personalOnly"
       class="flex flex-shrink-0 items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] dark:border-gray-800 [&::-webkit-scrollbar]:hidden"
     >
       <button
-        v-if="isAdmin"
         id="tab-global-mcp"
         type="button"
         @click="activeScope = 'global'"
         class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
-        :class="activeScope === 'global' ? 'border-blue-600 font-bold text-blue-600 dark:border-blue-400 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+        :class="activeScope === 'global' ? 'border-primary font-semibold text-primary dark:border-primary dark:text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
         </svg>
         <span>平台 MCP</span>
         <span
           class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums transition-colors"
-          :class="activeScope === 'global' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
+          :class="activeScope === 'global' ? 'bg-primary/10 text-primary dark:bg-primary-dark/50 dark:text-primary-hover' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
         >
           {{ serverCounts.global }}
         </span>
@@ -274,7 +292,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         type="button"
         @click="activeScope = 'personal'"
         class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
-        :class="activeScope === 'personal' ? 'border-emerald-600 font-bold text-emerald-600 dark:border-emerald-400 dark:text-emerald-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+        :class="activeScope === 'personal' ? 'border-primary font-semibold text-primary dark:border-primary dark:text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -282,7 +300,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         <span>我的 MCP</span>
         <span
           class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums transition-colors"
-          :class="activeScope === 'personal' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
+          :class="activeScope === 'personal' ? 'bg-primary/10 text-primary dark:bg-primary-dark/50 dark:text-primary-hover' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
         >
           {{ serverCounts.personal }}
         </span>
@@ -293,7 +311,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         type="button"
         @click="activeScope = 'audit'"
         class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
-        :class="activeScope === 'audit' ? 'border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+        :class="activeScope === 'audit' ? 'border-primary font-semibold text-primary dark:border-primary dark:text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -307,13 +325,28 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         type="button"
         @click="activeScope = 'changes'"
         class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
-        :class="activeScope === 'changes' ? 'border-violet-600 font-bold text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+        :class="activeScope === 'changes' ? 'border-violet-600 font-semibold text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <span>定义变更</span>
       </button>
+    </div>
+
+    <!-- 只读提示条：非管理员能看平台 MCP 但不能改（维护平台服务需要管理员角色） -->
+    <div
+      v-if="!personalOnly && !isAdmin && activeScope === 'global'"
+      class="flex flex-shrink-0 items-center gap-2 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10"
+    >
+      <span
+        class="inline-flex shrink-0 items-center rounded border border-amber-300/70 bg-white/70 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+      >
+        只读
+      </span>
+      <p class="min-w-0 text-[11px] leading-snug text-amber-800 dark:text-amber-200">
+        平台 MCP 为只读，维护请联系管理员。可以浏览服务与工具清单，新建 / 编辑 / 启停 / 同步 / 发布等入口已隐藏。
+      </p>
     </div>
 
     <!-- 普通用户只有一个「我的 MCP」：把二级视图提到顶部，内容区全宽 -->
@@ -385,8 +418,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         </div>
       </div>
 
+      <!-- 平台 MCP：登录即可查看；写权限由注册表内部 canSave（平台服务需 admin）继续收口 -->
       <McpServerRegistry
-        v-else-if="isAdmin"
+        v-else
         ref="registryRef"
         :key="activeScope"
         scope="global"
@@ -407,9 +441,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20" style="background-color: #4f46e5; color: #ffffff;">
+               <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30" style="background-color: #4f46e5; color: #ffffff;">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
                </div>
                <div>
@@ -422,7 +456,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                 v-if="!showMcpFlowGuide"
                 type="button"
                 @click="restoreMcpFlowGuide"
-                class="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 bg-indigo-100/70 hover:bg-indigo-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 text-xs font-medium text-primary-dark bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 <span>恢复顶部流程提示</span>
@@ -440,7 +474,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                :key="tab"
                @click="activeHelpTab = tab as any"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-               :class="activeHelpTab === tab ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeHelpTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'flow' ? '全流程指引 (Workflow)' :
                   tab === 'protocols' ? '连接协议与生态规范 (Protocols)' : '安全隔离与作用域 (Scope & Security)' }}
@@ -451,9 +485,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Workflow Flow -->
              <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-indigo-50 to-blue-50 border-l-4 border-indigo-600 p-4 rounded-r-xl shadow-2xs">
-                   <h3 class="font-bold text-indigo-900 mb-1">MCP 5 步全生命周期接入体系</h3>
-                   <p class="text-xs text-indigo-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-primary/5 to-primary/5 border-l-4 border-primary p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">MCP 5 步全生命周期接入体系</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       Model Context Protocol (MCP) 是标准化的外部工具开放协议。接入服务后平台自动发起 tools/list 自发现，可在线沙箱调试并在智能体中心一键挂载。
                    </p>
                 </div>
@@ -463,7 +497,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">1</span>
                             <h4 class="font-bold text-gray-900 text-sm">服务登记与生态安装</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -474,7 +508,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                          <button
                             type="button"
                             @click="showHelp = false; registryRef?.openAddModal('manual')"
-                            class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             新增服务 &rarr;
                          </button>
@@ -485,7 +519,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">探活发现与工具同步</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -501,7 +535,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">3</span>
                             <h4 class="font-bold text-gray-900 text-sm">在线测试与参数调试</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -517,7 +551,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">4</span>
                             <h4 class="font-bold text-gray-900 text-sm">范围隔离与权限分配</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -528,7 +562,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                          <button
                             type="button"
                             @click="showHelp = false; router.push('/dashboard/roles')"
-                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium cursor-pointer"
                          >
                             前往角色管理 &rarr;
                          </button>
@@ -561,19 +595,19 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
 
              <!-- Tab 2: Protocols -->
              <div v-else-if="activeHelpTab === 'protocols'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">MCP 协议连接模式与生态规范</h4>
                    <div class="space-y-3 text-xs">
-                      <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1">
-                         <span class="font-bold text-indigo-900 text-sm">1. SSE 远程服务传输（Server-Sent Events）</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/10 space-y-1">
+                         <span class="font-bold text-primary-dark text-sm">1. SSE 远程服务传输（Server-Sent Events）</span>
                          <p class="text-gray-600 leading-relaxed">适用于部署在独立 Docker 容器或云服务上的 MCP Server（例如 <code>http://mcp-server:8000/sse</code>）。支持自定义 Header 鉴权与长连接流式响应。</p>
                       </div>
-                      <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
-                         <span class="font-bold text-blue-900 text-sm">2. Streamable HTTP 远程服务传输</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/10 space-y-1">
+                         <span class="font-bold text-primary-dark text-sm">2. Streamable HTTP 远程服务传输</span>
                          <p class="text-gray-600 leading-relaxed">适用于提供 MCP HTTP 端点的云服务或网关（例如 <code>https://example.com/mcp</code>）。系统会自动探测协议，并通过 HTTP 请求完成初始化、工具发现和调用；支持自定义 Header 鉴权。</p>
                       </div>
-                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
-                         <span class="font-bold text-purple-900 text-sm">3. JSON 配置粘贴</span>
+                      <div class="p-3.5 bg-primary/5 rounded-xl border border-primary/10 space-y-1">
+                         <span class="font-bold text-primary-dark text-sm">3. JSON 配置粘贴</span>
                          <p class="text-gray-600 leading-relaxed">支持粘贴 Claude Desktop / VSCode 的标准 <code>mcpServers</code> JSON 配置，提取其中第一个包含 URL 的服务地址与请求头；纯 Stdio 配置（仅 command/args）暂不支持。</p>
                       </div>
                    </div>
@@ -582,18 +616,18 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
 
              <!-- Tab 3: Security & Scope -->
              <div v-else-if="activeHelpTab === 'security'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">安全隔离与作用域（Scope）规则</h4>
                    <div class="space-y-3 text-xs">
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">平台 MCP（Global Scope）</span>
                          <p class="text-gray-600">全局公共服务，由系统管理员统一维护。所有获得智能体使用权限的用户均可基于智能体调用该服务中的已发布工具。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">我的 MCP（Personal Scope）</span>
                          <p class="text-gray-600">个人私有专属服务，服务名称带专属前缀隔离，仅限本人在个人会话与私有智能体中挂载，确保私密密钥不外泄。</p>
                       </div>
-                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                          <span class="font-bold text-gray-900">工具级发布状态（Publish Status）</span>
                          <p class="text-gray-600">服务端探测到的工具默认需处于「已发布」状态方可在对话中被大模型检索和调用；支持一键下线特定高危工具。</p>
                       </div>

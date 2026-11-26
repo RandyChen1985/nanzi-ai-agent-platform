@@ -116,8 +116,8 @@ function isQuickIntroLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
   return (
-    /^(?:#{2,6}\s*)?(?:💬\s*)?(?:确认完成后[，,]?\s*)?(?:您)?还可以继续\s*[:：]?$/u.test(trimmed) ||
-    /^(?:#{2,6}\s*)?(?:💬\s*)?(?:您可能还想了解|您可以这样继续|一键继续)\s*[:：]?$/u.test(trimmed) ||
+    /^(?:#{2,6}\s*)?(?:\p{Extended_Pictographic}\uFE0F?\s*)?(?:确认完成后[，,]?\s*)?(?:您)?还可以继续\s*[:：]?$/u.test(trimmed) ||
+    /^(?:#{2,6}\s*)?(?:\p{Extended_Pictographic}\uFE0F?\s*)?(?:您可能还想了解|您可以这样继续|一键继续)\s*[:：]?$/u.test(trimmed) ||
     /^(?:您可能还想了解|您可以这样继续|接下来您可以|您还可以继续)\s*[:：]?$/u.test(trimmed)
   );
 }

@@ -929,7 +929,7 @@ onBeforeUnmount(() => {
         <!-- 头部 -->
         <header class="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
           <div class="flex items-center gap-2.5">
-            <div class="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-600">
+            <div class="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/10 bg-primary/5 text-primary">
               <DocumentDuplicateIcon class="h-4 w-4" />
             </div>
             <div>
@@ -963,7 +963,7 @@ onBeforeUnmount(() => {
               type="button"
               class="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors"
               :class="[
-                phase === 'form' && step === item.n ? 'bg-blue-50' : 'hover:bg-gray-100/70',
+                phase === 'form' && step === item.n ? 'bg-primary/5' : 'hover:bg-gray-100/70',
                 item.n > maxStep && phase === 'form' ? 'cursor-not-allowed opacity-55' : 'cursor-pointer',
               ]"
               @click="goStep(item.n)"
@@ -974,7 +974,7 @@ onBeforeUnmount(() => {
                   stepState(item.n) === 'done'
                     ? 'border-green-200 bg-green-50 text-green-600'
                     : stepState(item.n) === 'active'
-                      ? 'border-blue-600 bg-blue-600 text-white'
+                      ? 'border-primary bg-primary text-white'
                       : 'border-gray-300 bg-white text-gray-400'
                 "
               >
@@ -1013,7 +1013,7 @@ onBeforeUnmount(() => {
                       index < saveIndex
                         ? 'border-gray-100 bg-white text-gray-500'
                         : index === saveIndex
-                          ? 'border-blue-200 bg-blue-50/60 text-gray-800'
+                          ? 'border-primary/20 bg-primary/5 text-gray-800'
                           : 'border-gray-100 bg-white text-gray-300'
                     "
                   >
@@ -1023,7 +1023,7 @@ onBeforeUnmount(() => {
                         index < saveIndex
                           ? 'border-green-500 bg-green-500 text-white'
                           : index === saveIndex
-                            ? 'border-blue-500 text-blue-500'
+                            ? 'border-primary text-primary'
                             : 'border-gray-200 text-gray-300'
                       "
                     >
@@ -1049,7 +1049,7 @@ onBeforeUnmount(() => {
                 <div class="mt-5 inline-flex flex-col gap-1 rounded-xl border border-gray-100 bg-gray-50/60 px-5 py-3 text-left">
                   <div class="text-xs text-gray-500">新数据集：<b class="text-gray-900">{{ created?.display_name }}</b></div>
                   <div class="text-xs text-gray-500">
-                    元数据 ID：<code class="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-600">{{ created?.name }}</code>
+                    元数据 ID：<code class="rounded bg-primary/5 px-1.5 py-0.5 font-mono text-[11px] text-primary">{{ created?.name }}</code>
                   </div>
                   <div v-if="createdSummary" class="text-[11px] text-gray-500">
                     已写入 {{ createdSummary.tables }} 张表 · {{ createdSummary.columns }} 个字段 ·
@@ -1069,7 +1069,7 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     type="button"
-                    class="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-blue-700"
+                    class="rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
                     @click="openCreatedDataset('dataset')"
                   >
                     打开数据集
@@ -1084,8 +1084,8 @@ onBeforeUnmount(() => {
                   <p class="mt-1 text-[11px] text-gray-400">给新数据集起一个不重复的 ID 和名称。改名只影响副本，源数据集保持原样。</p>
                 </div>
 
-                <div class="mb-4 flex items-center gap-2.5 rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2.5">
-                  <DocumentDuplicateIcon class="h-4 w-4 shrink-0 text-blue-500" />
+                <div class="mb-4 flex items-center gap-2.5 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2.5">
+                  <DocumentDuplicateIcon class="h-4 w-4 shrink-0 text-primary" />
                   <div class="min-w-0 text-xs">
                     <b class="text-gray-800">正在复制「{{ source?.display_name }}」</b>
                     <span class="ml-2 text-[11px] text-gray-400">
@@ -1107,11 +1107,11 @@ onBeforeUnmount(() => {
                         type="text"
                         autocomplete="off"
                         spellcheck="false"
-                        class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-2 font-mono text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                        class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-2 font-mono text-xs outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
                       />
                       <button
                         type="button"
-                        class="shrink-0 rounded-lg border border-gray-200 px-2.5 text-[11px] font-semibold text-gray-500 hover:border-blue-400 hover:text-blue-600"
+                        class="shrink-0 rounded-lg border border-gray-200 px-2.5 text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary"
                         @click="draft.name = `${source?.name}_copy`; runCheck()"
                       >
                         重置
@@ -1148,7 +1148,7 @@ onBeforeUnmount(() => {
                       v-model="draft.display_name"
                       type="text"
                       autocomplete="off"
-                      class="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                      class="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-xs outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
                     />
                     <div
                       class="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
@@ -1198,7 +1198,7 @@ onBeforeUnmount(() => {
                         :key="item.id"
                         type="button"
                         class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-gray-50"
-                        :class="item.name === draft.data_source ? 'bg-blue-50' : ''"
+                        :class="item.name === draft.data_source ? 'bg-primary/5' : ''"
                         @click="pickDataSource(item.name)"
                       >
                         <span class="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">
@@ -1210,7 +1210,7 @@ onBeforeUnmount(() => {
                             {{ item.description || item.database_name }}
                           </span>
                         </span>
-                        <CheckIcon v-if="item.name === draft.data_source" class="h-3.5 w-3.5 text-blue-600" />
+                        <CheckIcon v-if="item.name === draft.data_source" class="h-3.5 w-3.5 text-primary" />
                       </button>
                       <div v-if="!dataSources.length" class="px-2 py-2 text-[11px] text-gray-400">
                         暂无已配置的数据源，仅可沿用当前连接
@@ -1236,10 +1236,10 @@ onBeforeUnmount(() => {
                       <span
                         v-for="(tag, index) in draft.tags"
                         :key="tag"
-                        class="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
+                        class="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[11px] text-primary-dark"
                       >
                         {{ tag }}
-                        <button type="button" class="text-blue-400 hover:text-red-500" @click="removeTag(index)">✕</button>
+                        <button type="button" class="text-primary hover:text-red-500" @click="removeTag(index)">✕</button>
                       </span>
                       <span v-if="!draft.tags.length" class="text-[11px] text-gray-300">暂无业务标签</span>
                     </div>
@@ -1248,12 +1248,12 @@ onBeforeUnmount(() => {
                         v-model="tagInput"
                         type="text"
                         placeholder="输入业务标签后回车"
-                        class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
+                        class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
                         @keyup.enter="addTag"
                       />
                       <button
                         type="button"
-                        class="shrink-0 rounded-lg border border-gray-200 px-2.5 text-[11px] font-semibold text-gray-500 hover:border-blue-400 hover:text-blue-600"
+                        class="shrink-0 rounded-lg border border-gray-200 px-2.5 text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary"
                         @click="addTag"
                       >
                         添加
@@ -1267,7 +1267,7 @@ onBeforeUnmount(() => {
                     <textarea
                       v-model="draft.description"
                       rows="3"
-                      class="w-full resize-y rounded-lg border border-gray-200 px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                      class="w-full resize-y rounded-lg border border-gray-200 px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                     />
                   </div>
                 </div>
@@ -1296,21 +1296,21 @@ onBeforeUnmount(() => {
                   </div>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100"
+                    class="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10"
                     @click="openNewTable"
                   >
                     <PlusIcon class="h-3.5 w-3.5" /> 新增表
                   </button>
                   <button
                     type="button"
-                    class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 hover:border-blue-400 hover:text-blue-600"
+                    class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary"
                     @click="draft.tables.forEach((t) => (expanded[t.physical_name] = true))"
                   >
                     展开全部字段
                   </button>
                   <button
                     type="button"
-                    class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 hover:border-blue-400 hover:text-blue-600"
+                    class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary"
                     @click="expanded = {}"
                   >
                     收起
@@ -1318,7 +1318,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="removedTables.length"
                     type="button"
-                    class="rounded-lg border border-blue-200 px-2.5 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-50"
+                    class="rounded-lg border border-primary/20 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/5"
                     @click="restoreTables"
                   >
                     恢复已移除的 {{ removedTables.length }} 张表
@@ -1326,7 +1326,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="removedColumns.length"
                     type="button"
-                    class="rounded-lg border border-blue-200 px-2.5 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-50"
+                    class="rounded-lg border border-primary/20 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/5"
                     @click="restoreColumns"
                   >
                     恢复已移除的 {{ removedColumns.length }} 个字段
@@ -1353,7 +1353,7 @@ onBeforeUnmount(() => {
                   v-for="row in filteredTables"
                   :key="row.table.physical_name"
                   class="mb-2 overflow-hidden rounded-xl border"
-                  :class="editingTableIndex === row.index ? 'border-blue-200' : 'border-gray-100'"
+                  :class="editingTableIndex === row.index ? 'border-primary/20' : 'border-gray-100'"
                 >
                   <div class="flex items-center gap-2 px-3 py-2">
                     <button
@@ -1379,14 +1379,14 @@ onBeforeUnmount(() => {
                     <div class="ml-auto flex items-center gap-1">
                       <button
                         type="button"
-                        class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-blue-50 hover:text-blue-600"
+                        class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-primary/5 hover:text-primary"
                         @click="openColumn(row.index, null)"
                       >
                         + 字段
                       </button>
                       <button
                         type="button"
-                        class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50 hover:text-blue-600"
+                        class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50 hover:text-primary"
                         @click="editingTableIndex === row.index ? (editingTableIndex = null) : startEditTable(row.index)"
                       >
                         {{ editingTableIndex === row.index ? '取消编辑' : '编辑' }}
@@ -1407,17 +1407,17 @@ onBeforeUnmount(() => {
                   >
                     <div>
                       <label class="mb-0.5 block text-[10px] font-semibold text-gray-400">业务术语</label>
-                      <input v-model="editBuf.term" type="text" class="w-full rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500" />
+                      <input v-model="editBuf.term" type="text" class="w-full rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-primary" />
                     </div>
                     <div>
                       <label class="mb-0.5 block text-[10px] font-semibold text-gray-400">表描述</label>
-                      <input v-model="editBuf.description" type="text" class="w-full rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500" />
+                      <input v-model="editBuf.description" type="text" class="w-full rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-primary" />
                     </div>
                     <div class="col-span-2 flex justify-end gap-1.5">
                       <button type="button" class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] text-gray-500" @click="editingTableIndex = null">
                         取消
                       </button>
-                      <button type="button" class="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-600" @click="saveEditTable">
+                      <button type="button" class="rounded-md border border-primary/25 bg-primary/5 px-2.5 py-1 text-[11px] font-semibold text-primary" @click="saveEditTable">
                         保存修改
                       </button>
                     </div>
@@ -1457,7 +1457,7 @@ onBeforeUnmount(() => {
                           <div class="flex items-center gap-0.5">
                             <button
                               type="button"
-                              class="rounded px-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-blue-600"
+                              class="rounded px-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-primary"
                               @click="openColumn(row.index, columnIndex)"
                             >
                               编辑
@@ -1528,7 +1528,7 @@ onBeforeUnmount(() => {
                     <span class="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
                       {{ relation.target_table }}
                     </span>
-                    <span class="rounded bg-purple-50 px-1.5 py-0.5 text-[10px] font-bold text-purple-600">
+                    <span class="rounded bg-primary/5 px-1.5 py-0.5 text-[10px] font-bold text-primary">
                       {{ relation.join_type }} JOIN
                     </span>
                     <span
@@ -1549,7 +1549,7 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                   <div class="mt-2 grid grid-cols-[110px_1fr_auto] items-center gap-2">
-                    <select v-model="relation.join_type" class="rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-blue-500">
+                    <select v-model="relation.join_type" class="rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-primary">
                       <option value="LEFT">LEFT JOIN</option>
                       <option value="INNER">INNER JOIN</option>
                       <option value="RIGHT">RIGHT JOIN</option>
@@ -1558,7 +1558,7 @@ onBeforeUnmount(() => {
                       v-model="relation.description"
                       type="text"
                       placeholder="关系说明，如：按客户 ID 关联主档"
-                      class="rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-blue-500"
+                      class="rounded-md border border-gray-200 px-2 py-1 text-[11px] outline-none focus:border-primary"
                     />
                     <span class="text-[10px] text-gray-400">
                       {{ tableNameSet.has(relation.source_table) && tableNameSet.has(relation.target_table) ? '保存时重映射' : '将被跳过' }}
@@ -1580,7 +1580,7 @@ onBeforeUnmount(() => {
                 <div class="mb-3 flex items-center gap-2">
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:border-blue-400 hover:text-blue-600"
+                    class="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:border-primary hover:text-primary"
                     @click="openMetric(null)"
                   >
                     <PlusIcon class="h-3.5 w-3.5" /> 新增指标
@@ -1593,7 +1593,7 @@ onBeforeUnmount(() => {
                     <span class="font-mono text-xs font-semibold text-gray-800">{{ metric.name }}</span>
                     <span class="text-[11px] text-gray-500">{{ metric.display_name }}</span>
                     <div class="ml-auto flex gap-1">
-                      <button type="button" class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50 hover:text-blue-600" @click="openMetric(index)">
+                      <button type="button" class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50 hover:text-primary" @click="openMetric(index)">
                         编辑
                       </button>
                       <button type="button" class="rounded px-1.5 py-1 text-[11px] text-gray-500 hover:bg-red-50 hover:text-red-600" @click="removeMetric(index)">
@@ -1734,7 +1734,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         class="rounded-lg border px-2.5 py-1 text-[11px]"
-                        :class="opts.logMode === 'detail' ? 'border-blue-300 bg-blue-50 font-semibold text-blue-600' : 'border-gray-200 text-gray-500'"
+                        :class="opts.logMode === 'detail' ? 'border-primary/25 bg-primary/5 font-semibold text-primary' : 'border-gray-200 text-gray-500'"
                         @click="opts.logMode = 'detail'"
                       >
                         汇总 1 条 + 明细 {{ draft.tables.length + validRelationships.length + draft.metrics.length }} 条
@@ -1742,7 +1742,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         class="rounded-lg border px-2.5 py-1 text-[11px]"
-                        :class="opts.logMode === 'summary' ? 'border-blue-300 bg-blue-50 font-semibold text-blue-600' : 'border-gray-200 text-gray-500'"
+                        :class="opts.logMode === 'summary' ? 'border-primary/25 bg-primary/5 font-semibold text-primary' : 'border-gray-200 text-gray-500'"
                         @click="opts.logMode = 'summary'"
                       >
                         仅 1 条汇总
@@ -1757,7 +1757,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="max-h-52 overflow-y-auto px-3 py-1.5">
                     <div v-for="(log, index) in logPreview" :key="index" class="flex items-start gap-2 border-b border-dashed border-gray-50 py-1 last:border-0">
-                      <span class="shrink-0 rounded bg-blue-50 px-1 py-0.5 font-mono text-[9px] font-bold text-blue-600">{{ log.op }}</span>
+                      <span class="shrink-0 rounded bg-primary/5 px-1 py-0.5 font-mono text-[9px] font-bold text-primary">{{ log.op }}</span>
                       <span class="shrink-0 font-mono text-[10px] text-gray-700">{{ log.resource }}</span>
                       <span class="min-w-0 flex-1 truncate text-[10px] text-gray-400">{{ log.text }}</span>
                     </div>
@@ -1826,7 +1826,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="max-h-48 overflow-y-auto px-3 py-1.5">
                     <div v-for="(log, index) in logPreview" :key="index" class="flex items-start gap-2 border-b border-dashed border-gray-50 py-1 last:border-0">
-                      <span class="shrink-0 rounded bg-blue-50 px-1 py-0.5 font-mono text-[9px] font-bold text-blue-600">{{ log.op }}</span>
+                      <span class="shrink-0 rounded bg-primary/5 px-1 py-0.5 font-mono text-[9px] font-bold text-primary">{{ log.op }}</span>
                       <span class="shrink-0 font-mono text-[10px] text-gray-700">{{ log.resource }}</span>
                       <span class="min-w-0 flex-1 truncate text-[10px] text-gray-400">{{ log.text }}</span>
                     </div>
@@ -1866,7 +1866,7 @@ onBeforeUnmount(() => {
                     :class="
                       drawer.columnIndex >= 0
                         ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-500'
-                        : 'border-gray-200 focus:border-blue-500'
+                        : 'border-gray-200 focus:border-primary'
                     "
                   />
                   <p v-if="drawer.columnIndex >= 0" class="mt-0.5 text-[10px] text-gray-400">
@@ -1875,19 +1875,19 @@ onBeforeUnmount(() => {
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">业务术语 <span class="text-red-500">*</span></label>
-                  <input v-model="columnBuf.term" type="text" placeholder="如 资源ID" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <input v-model="columnBuf.term" type="text" placeholder="如 资源ID" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">字段类型</label>
-                  <input v-model="columnBuf.type" type="text" placeholder="String / Int64 / DateTime" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-blue-500" />
+                  <input v-model="columnBuf.type" type="text" placeholder="String / Int64 / DateTime" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">描述</label>
-                  <textarea v-model="columnBuf.description" rows="3" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <textarea v-model="columnBuf.description" rows="3" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">维度角色</label>
-                  <select v-model="columnBuf.dimension_role" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500">
+                  <select v-model="columnBuf.dimension_role" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary">
                     <option value="none">无（none）</option>
                     <option value="time">时间（time）</option>
                     <option value="geo">地理（geo）</option>
@@ -1905,18 +1905,18 @@ onBeforeUnmount(() => {
               <template v-else-if="drawer.type === 'table'">
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">物理表名 <span class="text-red-500">*</span></label>
-                  <input v-model="tableBuf.physical_name" type="text" placeholder="如 dim_channel" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-blue-500" />
+                  <input v-model="tableBuf.physical_name" type="text" placeholder="如 dim_channel" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary" />
                   <p class="mt-0.5 text-[10px] text-gray-400">表名要和物理库一致，否则 ChatBI 查数会找不到表。</p>
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">业务术语</label>
-                  <input v-model="tableBuf.term" type="text" placeholder="如 渠道维表" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <input v-model="tableBuf.term" type="text" placeholder="如 渠道维表" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">表描述</label>
-                  <textarea v-model="tableBuf.description" rows="3" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <textarea v-model="tableBuf.description" rows="3" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
-                <p class="rounded-md border border-blue-100 bg-blue-50/60 px-2 py-1.5 text-[10px] leading-relaxed text-blue-700">
+                <p class="rounded-md border border-primary/10 bg-primary/5 px-2 py-1.5 text-[10px] leading-relaxed text-primary-dark">
                   新表先建出表结构，保存后可以在数据集详情里继续补字段；也可以回到本页点「+ 字段」直接加。
                 </p>
               </template>
@@ -1925,30 +1925,30 @@ onBeforeUnmount(() => {
               <template v-else>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">指标标识 <span class="text-red-500">*</span></label>
-                  <input v-model="metricBuf.name" type="text" placeholder="如 resource_pv" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-xs outline-none focus:border-blue-500" />
+                  <input v-model="metricBuf.name" type="text" placeholder="如 resource_pv" class="w-full rounded-md border border-gray-200 px-2 py-1.5 font-mono text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">显示名称 <span class="text-red-500">*</span></label>
-                  <input v-model="metricBuf.display_name" type="text" placeholder="如 资源访问量" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <input v-model="metricBuf.display_name" type="text" placeholder="如 资源访问量" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">业务描述</label>
-                  <textarea v-model="metricBuf.description" rows="2" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <textarea v-model="metricBuf.description" rows="2" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">计算逻辑 <span class="text-red-500">*</span></label>
-                  <textarea v-model="metricBuf.calculation_logic" rows="3" placeholder="SUM(fact_resource_usage.usage_count)" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-blue-500" />
+                  <textarea v-model="metricBuf.calculation_logic" rows="3" placeholder="SUM(fact_resource_usage.usage_count)" class="w-full resize-y rounded-md border border-gray-200 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">单位</label>
-                  <input v-model="metricBuf.unit" type="text" placeholder="次 / 人 / 秒" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
+                  <input v-model="metricBuf.unit" type="text" placeholder="次 / 人 / 秒" class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary" />
                 </div>
                 <div>
                   <label class="mb-0.5 block text-[11px] font-semibold text-gray-500">标签（逗号分隔）</label>
                   <input
                     :value="(metricBuf.tags || []).join(', ')"
                     type="text"
-                    class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+                    class="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-primary"
                     @input="setMetricTags(($event.target as HTMLInputElement).value)"
                   />
                 </div>
@@ -1969,7 +1969,7 @@ onBeforeUnmount(() => {
                 <button
                   v-if="drawer.type === 'column'"
                   type="button"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
                   @click="saveColumn"
                 >
                   {{ drawer.columnIndex >= 0 ? '保存' : '添加' }}
@@ -1977,7 +1977,7 @@ onBeforeUnmount(() => {
                 <button
                   v-else-if="drawer.type === 'table'"
                   type="button"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
                   @click="saveTable"
                 >
                   添加
@@ -1985,7 +1985,7 @@ onBeforeUnmount(() => {
                 <button
                   v-else
                   type="button"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
                   @click="saveMetric"
                 >
                   {{ drawer.index >= 0 ? '保存' : '添加' }}
@@ -2012,7 +2012,7 @@ onBeforeUnmount(() => {
           <div class="ml-auto flex items-center gap-2">
             <template v-if="phase === 'done'">
               <button type="button" class="rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-600" @click="close">关闭</button>
-              <button type="button" class="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-blue-700" @click="openCreatedDataset('dataset')">
+              <button type="button" class="rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white hover:bg-primary-dark" @click="openCreatedDataset('dataset')">
                 打开新数据集
               </button>
             </template>
@@ -2028,7 +2028,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="step < 6"
                 type="button"
-                class="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-45"
+                class="inline-flex items-center gap-1 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-45"
                 :disabled="!canProceed || checking"
                 @click="nextStep"
               >

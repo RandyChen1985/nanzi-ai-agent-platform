@@ -47,7 +47,7 @@ const openEdgeDownload = () => {
       <!-- Modal Card -->
       <div class="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-fade-slide-up">
         <!-- Top Decorative Accent Strip -->
-        <div class="h-1.5 w-full bg-gradient-to-r from-amber-500 via-orange-500 to-blue-600"></div>
+        <div class="h-1.5 w-full bg-gradient-to-r from-amber-500 via-orange-500 to-primary"></div>
 
         <!-- Close Button (only when not strictly blocking) -->
         <button
@@ -114,7 +114,7 @@ const openEdgeDownload = () => {
                 <div class="min-w-0">
                   <div class="flex items-center gap-1.5">
                     <span class="text-sm font-bold text-slate-900">Google Chrome</span>
-                    <span class="px-1.5 py-0.2 bg-blue-100 text-blue-700 text-[10px] font-medium rounded">推荐</span>
+                    <span class="px-1.5 py-px bg-blue-100 text-primary-dark text-[10px] font-medium rounded">推荐</span>
                   </div>
                   <p class="text-[11px] text-slate-500 truncate mt-0.5">极速稳定，全面兼容平台所有 AI 协作与可视化能力</p>
                 </div>
@@ -122,7 +122,7 @@ const openEdgeDownload = () => {
               <button
                 type="button"
                 @click="openChromeDownload"
-                class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
+                class="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-semibold shadow-sm transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
               >
                 <span>前往下载</span>
                 <ArrowTopRightOnSquareIcon class="w-3.5 h-3.5" />
@@ -133,7 +133,7 @@ const openEdgeDownload = () => {
             <div class="p-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all flex items-center justify-between gap-3">
               <div class="flex items-center gap-3 min-w-0">
                 <div class="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0 text-slate-600">
-                  <ShieldCheckIcon class="w-5 h-5 text-teal-600" />
+                  <ShieldCheckIcon class="w-5 h-5 text-primary" />
                 </div>
                 <div class="min-w-0">
                   <div class="text-xs font-bold text-slate-800">Microsoft Edge</div>
@@ -164,7 +164,7 @@ const openEdgeDownload = () => {
             <button
               type="button"
               @click="openChromeDownload"
-              class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-600/15 transition-all flex items-center gap-1.5 active:scale-98"
+              class="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-bold shadow-md shadow-primary/15 transition-all flex items-center gap-1.5 active:scale-95"
             >
               <span>立即下载 Chrome</span>
               <ArrowTopRightOnSquareIcon class="w-3.5 h-3.5" />
@@ -189,17 +189,4 @@ const openEdgeDownload = () => {
   }
 }
 
-.animate-fade-slide-up {
-  animation: fadeSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadeSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
 </style>

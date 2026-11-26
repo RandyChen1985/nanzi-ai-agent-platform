@@ -499,11 +499,11 @@ onBeforeUnmount(() => {
     <div
       v-if="capabilities"
       class="flex items-start gap-2 border-b px-4 py-2.5 text-xs"
-      :class="capabilities.script_tool_supported ? 'border-blue-100 bg-blue-50/70 text-blue-900' : 'border-amber-200 bg-amber-50 text-amber-900'"
+      :class="capabilities.script_tool_supported ? 'border-primary/10 bg-primary/5 text-primary-dark' : 'border-amber-200 bg-amber-50 text-amber-900'"
     >
       <span
         class="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-        :class="capabilities.script_tool_supported ? 'bg-blue-600' : 'bg-amber-600'"
+        :class="capabilities.script_tool_supported ? 'bg-primary' : 'bg-amber-600'"
       >{{ capabilities.script_tool_supported ? 'i' : '!' }}</span>
       <span class="leading-relaxed">
         <strong>{{ capabilities.sandbox_label }}</strong> · {{ capabilities.notice }}
@@ -621,7 +621,7 @@ onBeforeUnmount(() => {
 
       <button
         type="button"
-        class="flex h-[34px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-sm font-bold text-gray-500 shadow-sm hover:border-primary hover:bg-blue-50 hover:text-primary"
+        class="flex h-[34px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-sm font-bold text-gray-500 shadow-sm hover:border-primary hover:bg-primary/5 hover:text-primary"
         title="查看脚本工具编写指南"
         @click="helpVisible = true"
       >?</button>
@@ -743,7 +743,7 @@ onBeforeUnmount(() => {
         <tr
           v-for="tool in filteredTools"
           :key="tool.id || tool.name"
-          class="border-b border-gray-100 align-middle hover:bg-blue-50/30"
+          class="border-b border-gray-100 align-middle hover:bg-primary/5"
           :class="{ 'bg-primary/5': tool.id && selectedIds.has(String(tool.id)) }"
         >
           <td class="px-3 py-3.5">
@@ -775,7 +775,7 @@ onBeforeUnmount(() => {
           <td class="px-3 py-3.5">
             <span
               class="rounded px-1.5 py-0.5 text-[10px] font-bold"
-              :class="tool.source === 'builtin' ? 'bg-violet-50 text-violet-700' : 'bg-orange-50 text-orange-700'"
+              :class="tool.source === 'builtin' ? 'bg-primary/5 text-primary-dark' : 'bg-orange-50 text-orange-700'"
             >{{ tool.source === 'builtin' ? '内置' : '自定义' }}</span>
             <span
               v-if="tool.is_overridden"
@@ -960,7 +960,7 @@ onBeforeUnmount(() => {
                   :key="option"
                   class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
                   :class="Array.isArray(previewValues[field.name]) && previewValues[field.name].includes(option)
-                    ? 'border-primary bg-blue-50 text-primary'
+                    ? 'border-primary bg-primary/5 text-primary'
                     : 'border-gray-300 text-gray-600'"
                 >
                   <input

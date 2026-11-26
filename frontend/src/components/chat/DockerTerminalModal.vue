@@ -328,7 +328,7 @@ onUnmounted(() => {
             v-for="item in QUICK_COMMANDS"
             :key="item.cmd"
             type="button"
-            class="shrink-0 px-2 py-0.5 rounded bg-gray-800/80 hover:bg-indigo-900/40 hover:text-indigo-200 border border-gray-700/60 hover:border-indigo-600/50 text-gray-300 transition-colors font-mono"
+            class="shrink-0 px-2 py-0.5 rounded bg-gray-800/80 hover:bg-primary-dark/40 hover:text-primary-bright border border-gray-700/60 hover:border-primary/50 text-gray-300 transition-colors font-mono"
             :disabled="isExecuting"
             @click="runCommand(item.cmd)"
           >
@@ -360,9 +360,9 @@ onUnmounted(() => {
                 <div class="mb-1 font-semibold text-slate-200">文件与同步</div>
                 <div><span class="text-emerald-300">✓ 可写 / 会保留</span><span class="text-slate-400">　/workspace</span></div>
                 <div class="pl-4 text-slate-400">这里的代码和文件会同步到宿主机用户工作区</div>
-                <div class="mt-1"><span class="text-violet-300">◆ 运行资源</span><span class="text-slate-400">　/workspace/skills</span></div>
+                <div class="mt-1"><span class="text-primary-bright">◆ 运行资源</span><span class="text-slate-400">　/workspace/skills</span></div>
                 <div class="pl-4 text-slate-400">平台技能运行快照，不建议手动修改</div>
-                <div class="mt-1"><span class="text-slate-300">🔒 只读</span><span class="text-slate-400">　/workspace/public/docs</span></div>
+                <div class="mt-1"><span class="text-slate-300">只读</span><span class="text-slate-400">　/workspace/public/docs</span></div>
                 <div class="pl-4 text-slate-400">平台公共文档，只能读取</div>
                 <div class="mt-1"><span class="text-rose-300">× 临时内容</span><span class="text-slate-400">　/tmp、运行中的进程、非挂载路径文件</span></div>
                 <div class="pl-4 text-slate-400">容器停止、回收或重建后不保证保留</div>
@@ -380,7 +380,7 @@ onUnmounted(() => {
                 <div class="text-slate-300">重启 / 销毁：删除旧容器，<span class="text-emerald-300">/workspace 文件保留</span>；临时进程和容器内临时数据消失</div>
               </div>
               <div class="mt-3 rounded-md border border-rose-500/30 bg-rose-950/20 p-2 text-rose-200">
-                <div class="font-semibold">⚠ 安全提示</div>
+                <div class="font-semibold">安全提示</div>
                 <div class="text-rose-200/80">能力越大，责任越大。删除文件、安装依赖、联网或启动后台进程前，请先确认路径和影响范围。</div>
               </div>
             </div>
@@ -390,7 +390,7 @@ onUnmounted(() => {
                 <div class="flex items-center gap-2">
                   <span class="text-emerald-400 font-semibold">root@nanzi-sandbox</span>
                   <span class="text-gray-500">:</span>
-                  <span class="text-sky-400 font-medium">{{ rec.workdir }}</span>
+                  <span class="text-primary font-medium">{{ rec.workdir }}</span>
                   <span class="text-gray-400">$</span>
                   <span class="text-gray-100 font-mono font-medium">{{ rec.command }}</span>
                 </div>
@@ -400,7 +400,7 @@ onUnmounted(() => {
                   </span>
                   <span
                     v-if="!rec.loading && rec.exitCode !== 0"
-                    class="px-1 py-0.2 rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
+                    class="px-1 py-px rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
                   >
                     code {{ rec.exitCode }}
                   </span>
@@ -417,7 +417,7 @@ onUnmounted(() => {
               </div>
 
               <!-- 执行中 Spinner -->
-              <div v-if="rec.loading" class="flex items-center gap-2 text-indigo-400 py-1 text-xs">
+              <div v-if="rec.loading" class="flex items-center gap-2 text-primary py-1 text-xs">
                 <ArrowPathIcon class="w-3.5 h-3.5 animate-spin" />
                 <span>执行中...</span>
               </div>
@@ -437,7 +437,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-2 pt-2 text-[12px] font-mono">
             <span class="text-emerald-400 font-semibold shrink-0">root@nanzi-sandbox</span>
             <span class="text-gray-500 shrink-0">:</span>
-            <span class="text-sky-400 font-medium shrink-0">{{ currentWorkdir }}</span>
+            <span class="text-primary font-medium shrink-0">{{ currentWorkdir }}</span>
             <span class="text-gray-400 shrink-0">$</span>
             <input
               ref="commandInputRef"
@@ -479,17 +479,5 @@ onUnmounted(() => {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-.animate-fade-in {
-  animation: fadeIn 0.15s ease-out forwards;
-}
+
 </style>

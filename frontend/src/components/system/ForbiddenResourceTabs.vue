@@ -67,7 +67,7 @@
       :id="'forbidden-resource-panel-commands'"
       role="tabpanel"
       aria-labelledby="forbidden-resource-tab-commands"
-      class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col"
+      class="border border-gray-200 rounded-xl p-3 bg-white flex flex-col"
     >
       <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
         <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>

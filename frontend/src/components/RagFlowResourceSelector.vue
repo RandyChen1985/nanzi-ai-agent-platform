@@ -62,8 +62,8 @@ const SCOPE_BADGE: Record<
   "public" | "team" | "private",
   { label: string; cls: string }
 > = {
-  public: { label: "授权可见", cls: "bg-blue-50 text-blue-600 border-blue-100" },
-  team: { label: "TEAM 级", cls: "bg-violet-50 text-violet-600 border-violet-100" },
+  public: { label: "授权可见", cls: "bg-primary/5 text-primary border-primary/10" },
+  team: { label: "TEAM 级", cls: "bg-primary/5 text-primary border-primary/10" },
   private: { label: "个人私有", cls: "bg-amber-50 text-amber-600 border-amber-100" },
 };
 
@@ -398,7 +398,7 @@ const removeSelected = (id: string) => {
         v-else
         class="mb-3 flex-shrink-0 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs"
         :class="{
-          'border-blue-200 bg-blue-50 text-blue-700': engineStatus === 'checking',
+          'border-primary/20 bg-primary/5 text-blue-700': engineStatus === 'checking',
           'border-emerald-200 bg-emerald-50 text-emerald-700': engineStatus === 'connected',
           'border-amber-200 bg-amber-50 text-amber-700': engineStatus === 'disconnected'
         }"
@@ -406,7 +406,7 @@ const removeSelected = (id: string) => {
         <div class="flex items-center gap-2 min-w-0">
           <span
             class="inline-block w-3 h-3 rounded-full border-2 shrink-0"
-            :class="engineStatus === 'checking' ? 'border-blue-500 border-t-transparent animate-spin' : engineStatus === 'connected' ? 'bg-emerald-500 border-emerald-500' : 'bg-amber-500 border-amber-500'"
+            :class="engineStatus === 'checking' ? 'border-primary border-t-transparent animate-spin' : engineStatus === 'connected' ? 'bg-emerald-500 border-emerald-500' : 'bg-amber-500 border-amber-500'"
           ></span>
           <span class="font-medium whitespace-nowrap">{{ engineStatusText }}</span>
           <span class="text-gray-400 hidden sm:inline">|</span>
@@ -493,15 +493,15 @@ const removeSelected = (id: string) => {
             v-for="agent in agents"
             :key="agent.id"
             @click="toggleSelection(agent.id)"
-            class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-blue-50 transition-colors group"
+            class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-primary/5 transition-colors group"
             :class="
               selectedIds.includes(agent.id)
-                ? 'border-primary bg-blue-50/50 ring-1 ring-primary'
+                ? 'border-primary bg-primary/5 ring-1 ring-primary'
                 : 'border-gray-200'
             "
           >
             <div
-              class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg mr-3 shadow-sm border border-indigo-200"
+              class="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg mr-3 shadow-sm border border-primary/20"
             >
               {{ agent.title.charAt(0).toUpperCase() }}
             </div>

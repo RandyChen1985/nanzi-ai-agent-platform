@@ -172,7 +172,7 @@
                 </div>
                 
                 <div class="flex items-center gap-1.5 flex-shrink-0">
-                  <!-- 🔍 搜索折叠切换按钮 -->
+                  <!-- 搜索折叠切换按钮 -->
                   <button
                     type="button"
                     class="w-7 h-7 flex items-center justify-center rounded-lg border border-transparent transition-all cursor-pointer active:scale-90"
@@ -296,7 +296,7 @@
                 >
                   <div v-show="showAdvancedConfig" class="space-y-3 pt-1 select-none">
                     <!-- 反幻觉检测胶囊开关 -->
-                    <div class="flex items-center justify-between bg-white dark:bg-gray-800 p-2.5 rounded-lg border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                    <div class="flex items-center justify-between bg-white dark:bg-gray-800 p-2.5 rounded-lg border border-gray-200 dark:border-gray-700/60 shadow-2xs">
                       <div class="flex flex-col min-w-0">
                         <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
                           启用反幻觉检测
@@ -334,7 +334,7 @@
                     </transition>
 
                     <!-- Similarity Threshold -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-2xs">
                       <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           相似度阈值
@@ -374,7 +374,7 @@
                     </div>
 
                     <!-- Vector Weight -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-2xs">
                       <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           语义权重占比
@@ -414,7 +414,7 @@
                     </div>
 
                     <!-- Metadata Top_K -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-2xs">
                       <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           最大召回分块数
@@ -699,7 +699,7 @@
                               @click.stop="toggleDocRecsExpand(ds.id, doc.id)"
                             >
                               <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                                <span class="text-[11px] shrink-0">📄</span>
+                                <DocumentTextIcon class="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
                                 <span class="truncate text-[10px] text-gray-700 dark:text-gray-300 font-medium" :title="doc.name">{{ doc.name }}</span>
                               </div>
                               <div class="flex items-center gap-1.5 shrink-0">
@@ -997,7 +997,7 @@
             <span
               v-for="tag in activeModalTags"
               :key="tag"
-              class="inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-bold bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/20 dark:border-blue-800 dark:text-blue-400 select-none"
+              class="inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-bold bg-primary/5 border-primary/20 text-primary dark:bg-primary-dark/20 dark:border-primary-dark dark:text-primary select-none"
             >
               {{ tag }}
             </span>
@@ -1018,6 +1018,7 @@
 </template>
 
 <script setup lang="ts">
+import { DocumentTextIcon } from "@heroicons/vue/24/outline";
 import { ref, computed, onMounted, onUnmounted } from "vue";
 
 const modelValue = defineModel<boolean>({ default: false });

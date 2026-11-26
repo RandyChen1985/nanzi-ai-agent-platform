@@ -3,7 +3,7 @@
     <button
       type="button"
       class="flex w-full items-center gap-2 rounded-lg border border-gray-200 px-2.5 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800 dark:disabled:bg-gray-800"
-      :class="open ? 'ring-2 ring-blue-500/30' : ''"
+      :class="open ? 'ring-2 ring-primary/30' : ''"
       :disabled="disabled"
       :aria-expanded="open"
       aria-haspopup="listbox"
@@ -33,7 +33,7 @@
           type="button"
           class="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-bold"
           :class="!modelValue
-            ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+            ? 'bg-primary/5 text-primary-dark dark:bg-primary/15 dark:text-primary-hover'
             : 'text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800'"
           @click="pick(null)"
         >
@@ -53,7 +53,7 @@
               :data-current="modelValue === key ? 'true' : 'false'"
               class="flex flex-col items-center gap-1 rounded-lg border px-1 py-2 transition-colors"
               :class="modelValue === key
-                ? 'border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-500/50 dark:bg-blue-500/15 dark:text-blue-300'
+                ? 'border-primary bg-primary/5 text-primary-dark dark:border-primary/50 dark:bg-primary/15 dark:text-primary-hover'
                 : 'border-transparent text-gray-600 hover:border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-gray-800'"
               :title="`${labelOf(key)}（${key}）`"
               @click="pick(key)"

@@ -5,7 +5,7 @@
     <div v-if="!isSearching && collapsibleKeys.length > 1" class="flex items-center justify-end">
       <button
         type="button"
-        class="px-2 py-1 rounded-md text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 whitespace-nowrap"
+        class="px-2 py-1 rounded-md text-[10px] font-bold text-primary hover:bg-primary/5 whitespace-nowrap"
         :title="allGroupsCollapsed ? '展开全部分组' : '折叠全部分组'"
         @click="toggleAllGroups"
       >
@@ -47,7 +47,7 @@
             v-model="searchQuery"
             type="search"
             :placeholder="searchPlaceholder"
-            class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+            class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-primary"
           />
         </div>
       </div>
@@ -180,7 +180,7 @@
                 type="checkbox"
                 :checked="isCandidateSelected(candidate)"
                 :disabled="disabled || isCandidateLocked(candidate)"
-                class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
+                class="h-3.5 w-3.5 rounded text-primary focus:ring-primary"
                 @change="toggleCandidate(candidate, ($event.target as HTMLInputElement).checked)"
               />
               <div class="ml-1.5 min-w-0 flex-1">
@@ -229,7 +229,7 @@
               v-model="searchQuery"
               type="search"
               :placeholder="searchPlaceholder"
-              class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+              class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-primary"
             />
           </div>
         </div>

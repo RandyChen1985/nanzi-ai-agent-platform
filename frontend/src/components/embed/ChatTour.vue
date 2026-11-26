@@ -324,7 +324,7 @@ onBeforeUnmount(() => {
           :style="arrowStyle"
           aria-hidden="true"
         />
-        <h3 class="text-sm font-black text-gray-900 dark:text-gray-100">{{ step.title }}</h3>
+        <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ step.title }}</h3>
         <p class="mt-1.5 text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ step.body }}</p>
 
         <div class="mt-3 flex items-center gap-1.5">

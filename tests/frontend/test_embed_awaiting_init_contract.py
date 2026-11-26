@@ -225,4 +225,4 @@ def test_awaiting_placeholder_is_not_styled_as_an_error(token):
     awaiting = _awaiting_block()
 
     assert token not in awaiting
-    assert "text-blue-500" in awaiting
+    assert "text-primary" in awaiting

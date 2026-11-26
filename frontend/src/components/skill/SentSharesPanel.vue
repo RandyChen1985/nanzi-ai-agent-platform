@@ -135,7 +135,7 @@ onMounted(() => {
           :key="item.key || 'all'"
           type="button"
           class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-          :class="filter === item.key ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          :class="filter === item.key ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
           @click="load(item.key)"
         >
           {{ item.label }}
@@ -188,11 +188,11 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-            <tr v-for="item in items" :key="item.id" class="transition-colors hover:bg-blue-50/20 dark:hover:bg-blue-900/20">
+            <tr v-for="item in items" :key="item.id" class="transition-colors hover:bg-primary/5 dark:hover:bg-primary-dark/20">
               <td class="px-4 py-3">
                 <button
                   type="button"
-                  class="text-left font-semibold text-gray-900 hover:text-blue-600 dark:text-gray-100 dark:hover:text-blue-400"
+                  class="text-left font-semibold text-gray-900 hover:text-primary dark:text-gray-100 dark:hover:text-primary"
                   :title="`定位到我的技能：${item.source_skill_id}`"
                   @click="emit('open-skill', item.source_skill_id)"
                 >

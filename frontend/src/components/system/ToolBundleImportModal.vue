@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CubeIcon } from "@heroicons/vue/24/outline";
 /**
  * 工具包导入弹窗：选文件 → 服务端预检 → 逐条决定 → 单事务落库 → 结果摘要。
  *
@@ -303,7 +304,7 @@ async function copyPrompt() {
                 <td class="px-3 py-1.5 font-mono text-gray-800">{{ item.name }}</td>
               </tr>
               <tr v-for="item in result.updated_items" :key="`u-${item.index}`">
-                <td class="px-3 py-1.5 text-sky-700">覆盖</td>
+                <td class="px-3 py-1.5 text-primary-dark">覆盖</td>
                 <td class="px-3 py-1.5 text-gray-600">{{ bundleKindLabel(item.kind) }}</td>
                 <td class="px-3 py-1.5 font-mono text-gray-800">{{ item.name }}</td>
               </tr>
@@ -372,7 +373,7 @@ async function copyPrompt() {
             @dragleave.prevent="dragActive = false"
             @drop.prevent="onDrop"
           >
-            <div class="text-3xl">📦</div>
+            <div class="text-3xl"><CubeIcon class="h-8 w-8" aria-hidden="true" /></div>
             <p class="mt-2 text-sm font-medium text-gray-700">把导出的工具 JSON 拖到这里，或点击选择文件</p>
             <p class="mt-1 text-xs text-gray-500">
               文件里的凭据是占位符，导入后需要你补自己的值；签名密钥不会随文件传递。

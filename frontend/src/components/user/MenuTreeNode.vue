@@ -9,7 +9,7 @@
       <button
         v-if="hasChildren"
         type="button"
-        class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :aria-expanded="!isCollapsed"
         :aria-label="isCollapsed ? `展开「${node.label}」` : `折叠「${node.label}」`"
         @click.stop="emit('toggle-collapse', node.id)"
@@ -40,8 +40,8 @@
       >
         <input
           type="checkbox"
-          class="pointer-events-none h-3.5 w-3.5 shrink-0 rounded border-gray-300 focus:ring-blue-500"
-          :class="inheritedOnly ? 'accent-slate-400' : 'accent-blue-600'"
+          class="pointer-events-none h-3.5 w-3.5 shrink-0 rounded border-gray-300 focus:ring-primary"
+          :class="inheritedOnly ? 'accent-slate-400' : 'accent-primary'"
           :checked="isSelfGranted"
           :indeterminate="isPartial"
           :disabled="disabled"
@@ -51,7 +51,7 @@
         <svg
           v-if="isMenu"
           class="h-3.5 w-3.5 shrink-0"
-          :class="inheritedOnly ? 'text-slate-400' : 'text-indigo-500'"
+          :class="inheritedOnly ? 'text-slate-400' : 'text-primary'"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -68,7 +68,7 @@
         >{{ node.label }}</span>
         <span
           v-if="isMenu"
-          class="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-500"
+          class="shrink-0 rounded bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary"
           title="可以点进去的页面"
         >页面</span>
         <span
@@ -84,7 +84,7 @@
         </span>
         <button
           type="button"
-          class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 transition-colors hover:bg-blue-100 disabled:opacity-40"
+          class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"
           :disabled="disabled"
           :title="isFullyGranted ? `清空「${node.label}」下的全部功能点` : `授予「${node.label}」下的全部功能点`"
           @click.stop="emit('toggle-menu-descendants', node.id, isFullyGranted ? 'clear' : 'select')"

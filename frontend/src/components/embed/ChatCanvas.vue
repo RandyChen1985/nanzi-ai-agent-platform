@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ExclamationTriangleIcon,
+  LightBulbIcon,
+  BookOpenIcon,
+  ChartBarIcon,
+  DocumentIcon,
+  DocumentTextIcon,
+  GlobeAltIcon,
+  PhotoIcon,
+  TableCellsIcon,
+} from "@heroicons/vue/24/outline";
+import { ref, computed, watch, onMounted, onUnmounted, type Component } from 'vue';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
@@ -558,17 +568,18 @@ const resolveGeneratedImageBlob = async (): Promise<Blob | null> => {
  * 而用户并不会从「紫色 = 文件差异」学到任何东西。颜色应该留给真需要一眼看出的状态
  * （已保存 / 未保存），类型只用一个中性徽标 + 图标区分。
  */
-const canvasTypeMeta = computed<{ glyph: string; label: string }>(() => {
+const canvasTypeMeta = computed<{ icon: Component | null; glyph: string; label: string }>(() => {
   const type = props.data?.type;
-  if (type === 'html') return { glyph: '🌐', label: 'Application' };
-  if (isMarkdownFile.value) return { glyph: '📄', label: 'Markdown' };
-  if (type === 'image') return { glyph: '🖼️', label: 'Image' };
-  if (type === 'pdf') return { glyph: '📕', label: 'PDF' };
-  if (type === 'csv') return { glyph: '📊', label: 'CSV' };
-  if (type === 'mermaid') return { glyph: '📈', label: 'Diagram' };
-  if (type === 'compare') return { glyph: '±', label: 'Diff' };
-  if (type === 'document') return { glyph: '📝', label: 'Office' };
-  return { glyph: '</>', label: 'Code' };
+  if (type === 'html') return { icon: GlobeAltIcon, glyph: '', label: 'Application' };
+  if (isMarkdownFile.value) return { icon: DocumentTextIcon, glyph: '', label: 'Markdown' };
+  if (type === 'image') return { icon: PhotoIcon, glyph: '', label: 'Image' };
+  if (type === 'pdf') return { icon: BookOpenIcon, glyph: '', label: 'PDF' };
+  if (type === 'csv') return { icon: TableCellsIcon, glyph: '', label: 'CSV' };
+  if (type === 'mermaid') return { icon: ChartBarIcon, glyph: '', label: 'Diagram' };
+  // 差异与代码用自带形状的文本标记：± 和 </> 本身就是最省地方的表意符号
+  if (type === 'compare') return { icon: null, glyph: '±', label: 'Diff' };
+  if (type === 'document') return { icon: DocumentIcon, glyph: '', label: 'Office' };
+  return { icon: null, glyph: '</>', label: 'Code' };
 });
 
 /** 已保存徽标点一下就复制路径：路径本身不再占一整行，但「复制路径」这个需求还在。 */
@@ -1280,7 +1291,13 @@ const overlayBackdropClass = computed(() =>
                 class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300"
                 :title="`类型：${canvasTypeMeta.label}`"
               >
-                <span class="text-[10px] leading-none">{{ canvasTypeMeta.glyph }}</span>
+                <component
+                  :is="canvasTypeMeta.icon"
+                  v-if="canvasTypeMeta.icon"
+                  class="h-3 w-3"
+                  aria-hidden="true"
+                />
+                <span v-else class="text-[10px] leading-none">{{ canvasTypeMeta.glyph }}</span>
                 <span class="uppercase tracking-wide">{{ canvasTypeMeta.label }}</span>
               </span>
               <!--
@@ -1403,7 +1420,7 @@ const overlayBackdropClass = computed(() =>
                     @click="analyzeDiff"
                                   class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
-                    <span class="shrink-0">💡</span>
+                    <LightBulbIcon class="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
                     <span>AI 分析差异</span>
                   </button>
                 </template>
@@ -1540,7 +1557,7 @@ const overlayBackdropClass = computed(() =>
             @click="toggleReaderNarrow"
           >↔</button>
         </div>
-        <div class="bg-gray-150/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
+        <div class="bg-gray-100/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
           <button
             @click="activeTab = 'preview'"
             class="flex-1 py-1 text-[11px] font-bold rounded-md transition-all duration-200 flex items-center justify-center space-x-1"
@@ -1686,16 +1703,16 @@ const overlayBackdropClass = computed(() =>
 
         <!-- General Code Block (Not HTML) -->
         <template v-else-if="data?.type === 'code'">
-          <div v-if="data && data.runnable" class="mb-3 flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
-            <div class="flex items-center gap-2 text-[11px] text-blue-700 dark:text-blue-300">
-              <span class="h-2 w-2 rounded-full" :class="isCodeRunning ? 'animate-pulse bg-amber-500' : 'bg-blue-500'" />
+          <div v-if="data && data.runnable" class="mb-3 flex items-center justify-between rounded-xl border border-primary/10 bg-primary/5 px-3 py-2 dark:border-primary-dark/50 dark:bg-primary-dark/20">
+            <div class="flex items-center gap-2 text-[11px] text-primary-dark dark:text-primary-hover">
+              <span class="h-2 w-2 rounded-full" :class="isCodeRunning ? 'animate-pulse bg-amber-500' : 'bg-primary'" />
               <span>{{ isCodeRunning ? '脚本正在执行，可实时查看输出' : (data.sourcePath ? '这是当前工作区的可执行脚本' : '这是当前 AI 生成的可执行脚本') }}</span>
             </div>
             <div class="flex items-center gap-2">
               <button
                 v-if="!isCodeRunning"
                 type="button"
-                class="rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-blue-700"
+                class="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-primary-dark"
                 @click="requestCodeRun"
               >运行</button>
               <button
@@ -1769,7 +1786,7 @@ const overlayBackdropClass = computed(() =>
               </button>
               <button
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded-full border border-blue-500/60 bg-blue-600 text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                class="flex h-7 w-7 items-center justify-center rounded-full border border-primary/60 bg-primary text-white shadow-sm transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
                 title="发送到 AI 分析"
                 aria-label="发送到 AI 分析"
                 :disabled="!hasCodeOutput"
@@ -1821,7 +1838,7 @@ const overlayBackdropClass = computed(() =>
         <template v-else-if="data?.type === 'csv'">
           <!-- CSV View Mode Tabs -->
           <div v-if="!csvLoading && !csvError" class="mb-4 flex justify-center flex-shrink-0">
-            <div class="bg-gray-150/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
+            <div class="bg-gray-100/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
               <button
                 @click="csvViewMode = 'table'"
                 class="flex-1 py-1 text-[11px] font-bold rounded-md transition-all duration-200 flex items-center justify-center space-x-1"
@@ -1829,7 +1846,6 @@ const overlayBackdropClass = computed(() =>
                   ? 'bg-white dark:bg-gray-800 text-gray-800 dark:text-white shadow-xs border border-gray-200/10'
                   : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
               >
-                <span>📊</span>
                 <span>原始表格</span>
               </button>
               <button
@@ -1839,7 +1855,6 @@ const overlayBackdropClass = computed(() =>
                   ? 'bg-white dark:bg-gray-800 text-gray-800 dark:text-white shadow-xs border border-gray-200/10'
                   : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'"
               >
-                <span>💡</span>
                 <span>数据透视</span>
               </button>
             </div>
@@ -1867,7 +1882,7 @@ const overlayBackdropClass = computed(() =>
               <span class="text-xs text-gray-400">正在拉取并解析数据...</span>
             </div>
             <div v-else-if="csvError" class="flex-grow flex flex-col items-center justify-center py-12 px-4 text-center">
-              <span class="text-xl mb-2">⚠️</span>
+              <span class="text-xl mb-2"><ExclamationTriangleIcon class="h-5 w-5" aria-hidden="true" /></span>
               <span class="text-xs text-red-500 font-mono">{{ csvError }}</span>
             </div>
 
@@ -1886,7 +1901,7 @@ const overlayBackdropClass = computed(() =>
                       </th>
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-gray-150 dark:divide-gray-800 text-[11px] text-gray-700 dark:text-gray-300">
+                  <tbody class="divide-y divide-gray-200 dark:divide-gray-800 text-[11px] text-gray-700 dark:text-gray-300">
                     <tr
                       v-for="(row, rIdx) in filteredCsvRows"
                       :key="rIdx"
@@ -1969,7 +1984,7 @@ const overlayBackdropClass = computed(() =>
 
             <!-- 对比行展示区域 -->
             <div class="flex-1 overflow-auto font-mono text-[11px] leading-relaxed custom-scrollbar divide-y divide-gray-100/30 dark:divide-gray-800/30">
-              <div v-for="(seg, idx) in diffSegments" :key="idx" class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-880 min-w-[700px]">
+              <div v-for="(seg, idx) in diffSegments" :key="idx" class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-800 min-w-[700px]">
                 <!-- 左侧行 -->
                 <div
                   class="flex items-stretch min-h-[22px]"

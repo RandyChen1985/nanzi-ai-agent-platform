@@ -15,12 +15,12 @@
     </div>
 
         <!-- 顶部顶层主 Tab 切换条（数据集与场景 / 固化报表） -->
-    <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-gray-150/80 dark:bg-gray-800/60 border border-gray-200/50 dark:border-gray-800 select-none">
+    <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-gray-100/80 dark:bg-gray-800/60 border border-gray-200/50 dark:border-gray-800 select-none">
       <button
         type="button"
         class="py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
         :class="menuActiveTab === 'datasets'
-          ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-300 shadow-sm font-black'
+          ? 'bg-white dark:bg-gray-700 text-primary dark:text-primary-hover shadow-sm font-bold'
           : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
         @click="menuActiveTab = 'datasets'"
       >
@@ -30,15 +30,15 @@
         type="button"
         class="py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
         :class="menuActiveTab === 'reports'
-          ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-300 shadow-sm font-black'
+          ? 'bg-white dark:bg-gray-700 text-primary dark:text-primary-hover shadow-sm font-bold'
           : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
         @click="menuActiveTab = 'reports'; fetchSavedReports();"
       >
         <span>▤ 固化报表</span>
         <span
           v-if="savedReports.length > 0"
-          class="rounded-full px-1.5 py-0.2 text-[10px]"
-          :class="menuActiveTab === 'reports' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 font-bold' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'"
+          class="rounded-full px-1.5 py-px text-[10px]"
+          :class="menuActiveTab === 'reports' ? 'bg-primary/10 text-primary-dark dark:bg-primary-dark dark:text-primary-hover font-bold' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'"
         >
           {{ savedReports.length }}
         </span>
@@ -71,13 +71,13 @@
         </div>
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
-        <!-- 🔍 搜索折叠切换按钮 -->
+        <!-- 搜索折叠切换按钮 -->
         <button
           type="button"
           class="w-8 h-8 flex items-center justify-center rounded-lg border border-transparent transition-all cursor-pointer active:scale-90"
           :class="showSearchBar
-            ? 'bg-blue-55 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 font-bold'
-            : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200'"
+            ? 'bg-primary/5 text-primary dark:bg-primary-dark/40 dark:text-primary font-bold'
+            : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'"
           title="展开/折叠搜索与标签过滤"
           @click="showSearchBar = !showSearchBar"
         >
@@ -92,7 +92,7 @@
           class="w-8 h-8 flex items-center justify-center rounded-lg border border-transparent bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 transition-all"
           :class="refreshDisabled
             ? 'opacity-50 cursor-not-allowed'
-            : 'hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 cursor-pointer'"
+            : 'hover:bg-gray-200/70 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 cursor-pointer'"
           :disabled="refreshDisabled"
           :title="refreshDisabled && props.initialLoading ? '数据门户首次加载中，请稍候' : refreshButtonTitle"
           @click="handleRefreshClick"
@@ -128,7 +128,7 @@
             v-model="searchQuery"
             type="search"
             placeholder="搜索场景、表名或指标..."
-            class="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl border border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-850 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all shadow-xs"
+            class="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all shadow-xs"
           />
           <button
             v-if="searchQuery"
@@ -150,8 +150,8 @@
               type="button"
               class="px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95"
               :class="selectedTag === 'All'
-                ? 'bg-blue-600 border-transparent text-white shadow-xs'
-                : 'bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                ? 'bg-primary border-transparent text-white shadow-xs'
+                : 'bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
               @click="selectedTag = 'All'"
             >
               全部
@@ -187,7 +187,7 @@
         <div class="flex items-center gap-1.5">
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-500 transition-colors hover:border-blue-200 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-500 transition-colors hover:border-primary/20 hover:text-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
             title="切换报表视图"
             aria-label="切换报表视图"
             @click="setSavedReportViewMode(savedReportViewMode === 'card' ? 'list' : 'card')"
@@ -196,7 +196,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
+            class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-primary hover:bg-primary-dark rounded-lg shadow-xs shadow-primary/20 transition-all cursor-pointer"
             @click="showCreateReportModal = true"
           >
             <span class="inline-flex items-center gap-1">
@@ -208,7 +208,7 @@
           </button>
           <button
             type="button"
-            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-blue-600 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
+            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-primary dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
             title="放大浏览"
             @click="openSavedReportBrowser"
           >
@@ -218,7 +218,7 @@
           </button>
           <button
             type="button"
-            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-blue-600 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
+            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-primary dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
             title="刷新固化报表"
             @click="fetchSavedReports"
           >
@@ -240,7 +240,7 @@
           :key="scope.value"
           type="button"
           class="py-1 rounded-md transition-all text-center cursor-pointer"
-          :class="savedReportScope === scope.value ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-white shadow-xs font-black' : 'hover:text-gray-800 dark:hover:text-gray-200'"
+          :class="savedReportScope === scope.value ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-xs font-bold' : 'hover:text-gray-800 dark:hover:text-gray-200'"
           @click.stop="setSavedReportScope(scope.value)"
         >
           {{ scope.label }}
@@ -255,16 +255,16 @@
           type="button"
           class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
           :class="savedReportSmartFilter === filter.value 
-            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40' 
             : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
           @click.stop="setSavedReportSmartFilter(filter.value)"
         >
           <span class="flex items-center gap-1">
-            <span v-if="filter.value === 'pinned'">📌</span>
-            <span v-else-if="filter.value === 'favorite'">⭐️</span>
-            <span v-else-if="filter.value === 'subscribed'">🔔</span>
-            <span v-else-if="filter.value === 'recent'">🕒</span>
-            <span v-else-if="filter.value === 'frequent'">🔥</span>
+            <BookmarkIcon v-if="filter.value === 'pinned'" class="h-3.5 w-3.5" aria-hidden="true" />
+            <StarIcon v-else-if="filter.value === 'favorite'" class="h-3.5 w-3.5" aria-hidden="true" />
+            <BellIcon v-else-if="filter.value === 'subscribed'" class="h-3.5 w-3.5" aria-hidden="true" />
+            <ClockIcon v-else-if="filter.value === 'recent'" class="h-3.5 w-3.5" aria-hidden="true" />
+            <FireIcon v-else-if="filter.value === 'frequent'" class="h-3.5 w-3.5" aria-hidden="true" />
             <span>{{ filter.label }}</span>
           </span>
         </button>
@@ -278,11 +278,11 @@
           type="button"
           class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
           :class="selectedSavedReportTag === '' 
-            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40' 
             : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
           @click.stop="selectedSavedReportTag = ''"
         >
-          🏷️ 全部标签
+          全部标签
         </button>
         <button
           v-for="tag in allSavedReportTags"
@@ -290,7 +290,7 @@
           type="button"
           class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
           :class="selectedSavedReportTag === tag 
-            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            ? 'bg-primary/5 dark:bg-primary-dark/40 text-primary dark:text-primary-hover border-primary/20 dark:border-primary-dark/40' 
             : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
           @click.stop="selectedSavedReportTag = tag"
         >
@@ -308,7 +308,7 @@
 
       <!-- 报表卡片列表 -->
       <div v-if="loadingReports" class="flex items-center justify-center py-8 text-xs text-gray-400 select-none">
-        <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 animate-spin text-primary mr-2" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
@@ -365,13 +365,13 @@
       <aside class="absolute inset-y-0 right-0 w-full max-w-xl bg-white dark:bg-gray-950 border-l border-gray-100 dark:border-gray-800 shadow-2xl overflow-y-auto custom-scrollbar">
         <div class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-gray-100 bg-white/95 px-5 py-4 dark:border-gray-800 dark:bg-gray-950/95">
           <div class="min-w-0">
-            <h3 class="w-full truncate text-sm font-black text-gray-800 dark:text-gray-100">报表概览</h3>
+            <h3 class="w-full truncate text-sm font-bold text-gray-800 dark:text-gray-100">报表概览</h3>
             <p class="mt-1 truncate text-xs font-bold text-gray-700 dark:text-gray-200">{{ selectedSavedReportDetail.title }}</p>
             <p class="mt-1 truncate text-[10px] text-gray-400">{{ selectedSavedReportDetail.dataset_name || selectedSavedReportDetail.data_source || '未标注数据源' }} · 最近运行 {{ formatDate(selectedSavedReportDetail.last_success_at || selectedSavedReportDetail.user_last_run_at) || '暂无' }} · {{ selectedSavedReportDetail.user_run_count || 0 }} 次</p>
           </div>
           <div class="relative flex shrink-0 items-center gap-1">
-            <button type="button" class="min-h-9 rounded-lg bg-blue-600 px-3 text-[11px] font-bold text-white transition hover:bg-blue-700 disabled:opacity-50" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
-            <button type="button" class="min-h-9 rounded-lg border border-gray-200 px-2.5 text-[11px] font-bold text-gray-500 transition hover:border-blue-300 hover:text-blue-600 dark:border-gray-700" :aria-expanded="showSavedReportDetailActions" @click="showSavedReportDetailActions = !showSavedReportDetailActions">更多操作</button>
+            <button type="button" class="min-h-9 rounded-lg bg-primary px-3 text-[11px] font-bold text-white transition hover:bg-primary-dark disabled:opacity-50" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
+            <button type="button" class="min-h-9 rounded-lg border border-gray-200 px-2.5 text-[11px] font-bold text-gray-500 transition hover:border-primary/25 hover:text-primary dark:border-gray-700" :aria-expanded="showSavedReportDetailActions" @click="showSavedReportDetailActions = !showSavedReportDetailActions">更多操作</button>
             <button type="button" class="rounded-full p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" aria-label="关闭报表详情" @click="closeSavedReportDetail">
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
@@ -388,9 +388,9 @@
           </div>
         </div>
         <div class="px-5 pt-4 flex items-center gap-1 border-b border-gray-100 dark:border-gray-800">
-          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'info' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="savedReportDetailTab = 'info'">报表概览</button>
-          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'runs' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('runs')">运行历史</button>
-          <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'subscription' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('subscription')">订阅与共享</button>
+          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'info' ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="savedReportDetailTab = 'info'">报表概览</button>
+          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'runs' ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('runs')">运行历史</button>
+          <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'subscription' ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('subscription')">订阅与共享</button>
         </div>
         <div v-if="savedReportDetailTab === 'info'" class="p-5 space-y-4">
           <section class="space-y-2">
@@ -399,20 +399,20 @@
                 {{ getSavedReportRunPermissionLabel(selectedSavedReportDetail) }}
               </span>
               <span v-if="selectedSavedReportDetail.is_favorite" class="px-2 py-1 rounded-lg bg-amber-50 text-amber-600 text-[10px] font-bold">收藏</span>
-              <span v-if="selectedSavedReportDetail.pinned_at" class="px-2 py-1 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-bold">置顶</span>
+              <span v-if="selectedSavedReportDetail.pinned_at" class="px-2 py-1 rounded-lg bg-primary/5 text-primary text-[10px] font-bold">置顶</span>
             </div>
             <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{{ selectedSavedReportDetail.description || '暂无描述' }}</p>
             <p class="text-[11px] text-gray-400">创建人：{{ selectedSavedReportDetail.owner_name || '未知' }} · 数据源：{{ selectedSavedReportDetail.data_source }}</p>
             <p class="text-[11px] text-gray-400">最近运行：{{ formatDate(selectedSavedReportDetail.last_success_at || selectedSavedReportDetail.user_last_run_at) || '暂无' }} · 常用次数：{{ selectedSavedReportDetail.user_run_count || 0 }}</p>
           </section>
           <section v-if="selectedSavedReportDetail.share_summary" class="space-y-1">
-            <h4 class="text-xs font-black text-gray-600 dark:text-gray-300">共享范围</h4>
+            <h4 class="text-xs font-bold text-gray-600 dark:text-gray-300">共享范围</h4>
             <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ getShareTargetLabel(selectedSavedReportDetail) }}</p>
           </section>
           <section class="space-y-2">
-            <h4 class="text-xs font-black text-gray-600 dark:text-gray-300">参数与 SQL</h4>
+            <h4 class="text-xs font-bold text-gray-600 dark:text-gray-300">参数与 SQL</h4>
             <div v-if="selectedSavedReportDetail.tags?.length" class="flex flex-wrap gap-1">
-              <span v-for="tag in selectedSavedReportDetail.tags" :key="tag" class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-[10px] text-blue-600 dark:text-blue-300">{{ tag }}</span>
+              <span v-for="tag in selectedSavedReportDetail.tags" :key="tag" class="px-1.5 py-0.5 rounded bg-primary/5 dark:bg-primary-dark/30 text-[10px] text-primary dark:text-primary-hover">{{ tag }}</span>
             </div>
             <SqlCodeViewer
               :code="selectedSavedReportDetail.sql_template || selectedSavedReportDetail.sql_content || ''"
@@ -422,7 +422,7 @@
             />
           </section>
           <div class="flex flex-wrap gap-2 pt-2">
-            <button type="button" class="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white disabled:opacity-50" :title="getSavedReportButtonTitle(selectedSavedReportDetail)" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
+            <button type="button" class="px-3 py-2 rounded-lg text-xs font-bold bg-primary text-white disabled:opacity-50" :title="getSavedReportButtonTitle(selectedSavedReportDetail)" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="handleEditReport(selectedSavedReportDetail)">编辑</button>
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="openShareReportModal(selectedSavedReportDetail)">共享</button>
           </div>
@@ -475,9 +475,9 @@
                     <p class="text-[11px] font-bold text-gray-500">推送内容</p>
                     <article v-for="delivery in selectedSavedReportRunDetail.deliveries" :key="delivery.id" class="rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 p-3">
                       <div class="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
-                        <span class="rounded-md bg-blue-50 px-2 py-1 text-blue-600 dark:bg-blue-950/30 dark:text-blue-300">{{ DELIVERY_CHANNEL_LABELS[String(delivery.channel)] || delivery.channel }}</span>
+                        <span class="rounded-md bg-primary/5 px-2 py-1 text-primary dark:bg-primary-dark/30 dark:text-primary-hover">{{ DELIVERY_CHANNEL_LABELS[String(delivery.channel)] || delivery.channel }}</span>
                         <span class="rounded-md px-2 py-1" :class="delivery.status === 'success' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30' : 'bg-red-50 text-red-600 dark:bg-red-950/30'">{{ delivery.status === 'success' ? '发送成功' : '发送失败' }}</span>
-                        <span class="rounded-md bg-violet-50 px-2 py-1 text-violet-600 dark:bg-violet-950/30 dark:text-violet-300">{{ delivery.ai_status === 'success' ? 'AI 分析' : delivery.ai_status === 'fallback' ? '数据摘要' : '未启用 AI' }}</span>
+                        <span class="rounded-md bg-primary/5 px-2 py-1 text-primary dark:bg-primary-dark/30 dark:text-primary-hover">{{ delivery.ai_status === 'success' ? 'AI 分析' : delivery.ai_status === 'fallback' ? '数据摘要' : '未启用 AI' }}</span>
                       </div>
                       <p class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ delivery.title }}</p>
                       <div
@@ -496,7 +496,7 @@
         <div v-else class="p-5 space-y-4">
           <div v-if="savedReportSubscriptionLoading" class="py-12 text-center text-xs text-gray-400">正在加载订阅设置...</div>
           <template v-else>
-            <div v-if="savedReportSubscription" class="rounded-xl bg-blue-50 dark:bg-blue-950/20 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+            <div v-if="savedReportSubscription" class="rounded-xl bg-primary/5 dark:bg-primary-dark/20 px-3 py-2 text-xs text-primary-dark dark:text-primary-hover">
               {{ savedReportSubscription.status === 'active' ? '订阅运行中' : savedReportSubscription.status === 'paused' ? '订阅已暂停' : '订阅异常' }}
               <span class="ml-2 text-[11px] opacity-75">下次运行：{{ formatDate(savedReportSubscription.next_run_at) || '服务重启后同步' }}</span>
             </div>
@@ -512,9 +512,9 @@
               </label>
               <small v-if="!savedReportCronValidation.valid" class="block text-[10px] text-red-500">{{ savedReportCronValidation.message }}</small>
             </div>
-            <div v-if="savedReportCustomParameterSchema.length" class="space-y-2 rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
-              <p class="text-xs font-bold text-violet-800 dark:text-violet-200">定时运行参数</p>
-              <p class="text-[10px] text-violet-700/80 dark:text-violet-300/80">这里的值会覆盖报表默认参数，并在每次订阅运行时复用。</p>
+            <div v-if="savedReportCustomParameterSchema.length" class="space-y-2 rounded-xl border border-primary/10 bg-primary/5 p-3 dark:border-primary-dark/40 dark:bg-primary-dark/20">
+              <p class="text-xs font-bold text-primary-dark dark:text-primary-hover">定时运行参数</p>
+              <p class="text-[10px] text-primary-dark/80 dark:text-primary-hover">这里的值会覆盖报表默认参数，并在每次订阅运行时复用。</p>
               <div v-for="item in savedReportCustomParameterSchema" :key="item.name">
                 <label class="mb-1 block text-[11px] font-bold text-gray-600 dark:text-gray-300">{{ item.label || item.name }}<span v-if="item.required" class="text-red-500"> *</span></label>
                 <select v-if="item.type === 'select'" v-model="savedReportSubscriptionForm.params[item.name]" class="w-full rounded-lg border-gray-200 text-xs dark:border-gray-700 dark:bg-gray-900">
@@ -527,8 +527,8 @@
               <p class="text-[10px] text-gray-400">定时运行失败始终写入站内通知。</p>
               <label class="flex items-center justify-between text-xs text-gray-600"><span>失败时同时发送外部通知</span><input v-model="savedReportSubscriptionForm.notify_on_failure" type="checkbox" /></label>
               <label class="flex items-center justify-between text-xs text-gray-600"><span>运行成功后发送报表简报</span><input v-model="savedReportSubscriptionForm.notify_on_success" type="checkbox" /></label>
-              <div class="flex items-center justify-between text-xs text-gray-600"><span><span class="inline-flex items-center gap-1.5"><strong class="font-bold">AI 智能分析</strong><span class="relative inline-flex" @mouseenter="openSubscriptionHelp('ai')" @mouseleave="closeSubscriptionHelp"><button type="button" class="flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 transition-colors hover:border-blue-400 hover:text-blue-600" aria-label="了解 AI 智能分析" @mousedown.prevent @focus="openSubscriptionHelp('ai')" @blur="closeSubscriptionHelp" @click.stop.prevent="toggleSubscriptionHelp('ai')">?</button><span v-if="activeSubscriptionHelp === 'ai'" class="absolute left-0 top-6 z-30 w-64 rounded-xl border border-gray-100 bg-white p-3 text-left text-[11px] font-normal leading-relaxed text-gray-600 shadow-xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><strong class="mb-1 block text-xs text-gray-800 dark:text-gray-100">AI 智能分析是什么？</strong>系统会基于本次报表结果生成适合手机阅读的移动端报表简报，包括核心结论、关键数据和风险提示。分析失败时会自动降级为数据摘要，开启后会产生模型 Token 消耗。</span></span></span><small class="mt-0.5 block text-[10px] text-gray-400">关闭后仍会发送数据摘要</small></span><input v-model="savedReportSubscriptionForm.ai_analysis_enabled" type="checkbox" /></div>
-              <div v-if="savedReportSubscriptionForm.ai_analysis_enabled" class="block border-t border-gray-100 pt-2 dark:border-gray-800"><span class="flex items-center justify-between text-xs font-bold text-gray-600 dark:text-gray-300"><span class="inline-flex items-center gap-1.5">补充分析要求 <small class="font-normal text-gray-400">（可选）</small><span class="relative inline-flex" @mouseenter="openSubscriptionHelp('instruction')" @mouseleave="closeSubscriptionHelp"><button type="button" class="flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 transition-colors hover:border-blue-400 hover:text-blue-600" aria-label="了解补充分析要求" @mousedown.prevent @focus="openSubscriptionHelp('instruction')" @blur="closeSubscriptionHelp" @click.stop.prevent="toggleSubscriptionHelp('instruction')">?</button><span v-if="activeSubscriptionHelp === 'instruction'" class="absolute left-0 top-6 z-30 w-64 rounded-xl border border-gray-100 bg-white p-3 text-left text-[11px] font-normal leading-relaxed text-gray-600 shadow-xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><strong class="mb-1 block text-xs text-gray-800 dark:text-gray-100">补充要求如何使用？</strong>可以指定关注异常、排名、成本或表达风格，立即执行和定时运行都会使用。要求只能影响分析侧重点，不能要求 AI 编造数据、突破权限或覆盖系统真实性约束。</span></span></span><small class="font-normal text-gray-400">{{ savedReportSubscriptionForm.analysis_instruction.length }}/500</small></span><textarea v-model="savedReportSubscriptionForm.analysis_instruction" maxlength="500" rows="3" class="mt-1.5 w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" placeholder="例如：重点关注异常值，按管理层语言总结，并说明需要优先处理的事项。"/><small class="mt-1 block text-[10px] text-gray-400">最多 500 字，仅在开启 AI 智能分析后生效，不能覆盖系统真实性约束。</small></div>
+              <div class="flex items-center justify-between text-xs text-gray-600"><span><span class="inline-flex items-center gap-1.5"><strong class="font-bold">AI 智能分析</strong><span class="relative inline-flex" @mouseenter="openSubscriptionHelp('ai')" @mouseleave="closeSubscriptionHelp"><button type="button" class="flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-400 transition-colors hover:border-primary hover:text-primary" aria-label="了解 AI 智能分析" @mousedown.prevent @focus="openSubscriptionHelp('ai')" @blur="closeSubscriptionHelp" @click.stop.prevent="toggleSubscriptionHelp('ai')">?</button><span v-if="activeSubscriptionHelp === 'ai'" class="absolute left-0 top-6 z-30 w-64 rounded-xl border border-gray-100 bg-white p-3 text-left text-[11px] font-normal leading-relaxed text-gray-600 shadow-xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><strong class="mb-1 block text-xs text-gray-800 dark:text-gray-100">AI 智能分析是什么？</strong>系统会基于本次报表结果生成适合手机阅读的移动端报表简报，包括核心结论、关键数据和风险提示。分析失败时会自动降级为数据摘要，开启后会产生模型 Token 消耗。</span></span></span><small class="mt-0.5 block text-[10px] text-gray-400">关闭后仍会发送数据摘要</small></span><input v-model="savedReportSubscriptionForm.ai_analysis_enabled" type="checkbox" /></div>
+              <div v-if="savedReportSubscriptionForm.ai_analysis_enabled" class="block border-t border-gray-100 pt-2 dark:border-gray-800"><span class="flex items-center justify-between text-xs font-bold text-gray-600 dark:text-gray-300"><span class="inline-flex items-center gap-1.5">补充分析要求 <small class="font-normal text-gray-400">（可选）</small><span class="relative inline-flex" @mouseenter="openSubscriptionHelp('instruction')" @mouseleave="closeSubscriptionHelp"><button type="button" class="flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold text-gray-400 transition-colors hover:border-primary hover:text-primary" aria-label="了解补充分析要求" @mousedown.prevent @focus="openSubscriptionHelp('instruction')" @blur="closeSubscriptionHelp" @click.stop.prevent="toggleSubscriptionHelp('instruction')">?</button><span v-if="activeSubscriptionHelp === 'instruction'" class="absolute left-0 top-6 z-30 w-64 rounded-xl border border-gray-100 bg-white p-3 text-left text-[11px] font-normal leading-relaxed text-gray-600 shadow-xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><strong class="mb-1 block text-xs text-gray-800 dark:text-gray-100">补充要求如何使用？</strong>可以指定关注异常、排名、成本或表达风格，立即执行和定时运行都会使用。要求只能影响分析侧重点，不能要求 AI 编造数据、突破权限或覆盖系统真实性约束。</span></span></span><small class="font-normal text-gray-400">{{ savedReportSubscriptionForm.analysis_instruction.length }}/500</small></span><textarea v-model="savedReportSubscriptionForm.analysis_instruction" maxlength="500" rows="3" class="mt-1.5 w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" placeholder="例如：重点关注异常值，按管理层语言总结，并说明需要优先处理的事项。"/><small class="mt-1 block text-[10px] text-gray-400">最多 500 字，仅在开启 AI 智能分析后生效，不能覆盖系统真实性约束。</small></div>
             </div>
             <div class="space-y-2"><p class="text-xs font-bold text-gray-600">外部通知渠道</p><div class="flex flex-wrap gap-3"><label v-for="channel in [{ value: 'dingtalk', label: '钉钉' }, { value: 'wechat_work', label: '企业微信' }, { value: 'email', label: '邮件' }]" :key="channel.value" class="flex items-center gap-1.5 text-xs text-gray-600"><input v-model="savedReportSubscriptionForm.external_channels" type="checkbox" :value="channel.value" />{{ channel.label }}</label></div><p class="text-[10px] text-gray-400">外部渠道需先在个人中心 → 消息通知中启用。</p></div>
             <div class="space-y-2 rounded-xl border border-gray-100 p-3 dark:border-gray-800">
@@ -544,7 +544,7 @@
               <label v-if="savedReportSubscriptionForm.alert_condition.type !== 'always'" class="flex items-center justify-between gap-2 text-xs text-gray-500"><span>连续命中次数</span><input v-model.number="savedReportSubscriptionForm.alert_condition.consecutive_hits" type="number" min="1" max="99" class="w-20 rounded-lg border-gray-200 text-xs" /></label>
             </div>
             <div class="flex flex-wrap gap-2">
-              <button class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold" :disabled="savedReportSubscriptionSaving" @click="saveSavedReportSubscription">{{ savedReportSubscriptionSaving ? '保存中...' : '保存订阅' }}</button>
+              <button class="px-3 py-2 rounded-lg bg-primary text-white text-xs font-bold" :disabled="savedReportSubscriptionSaving" @click="saveSavedReportSubscription">{{ savedReportSubscriptionSaving ? '保存中...' : '保存订阅' }}</button>
               <button v-if="savedReportSubscription" class="px-3 py-2 rounded-lg border text-xs font-bold" @click="toggleSavedReportSubscriptionStatus">{{ savedReportSubscription.status === 'active' ? '暂停' : '恢复' }}</button>
               <button v-if="savedReportSubscription" class="inline-flex min-w-[5.5rem] items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-bold transition-all active:scale-95 disabled:cursor-wait disabled:opacity-70" :disabled="savedReportSubscriptionRunning" @click="runSavedReportSubscriptionNow"><svg v-if="savedReportSubscriptionRunning" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg><span>{{ savedReportSubscriptionRunning ? '执行中...' : '立即执行' }}</span></button>
               <button v-if="savedReportSubscription" class="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-xs font-bold transition-all active:scale-95 hover:bg-red-50" @click="showDeleteSubscriptionConfirm = true">删除订阅</button>
@@ -559,9 +559,9 @@
       <div v-if="showDeleteSubscriptionConfirm" class="fixed inset-0 z-[270] flex items-center justify-center bg-black/40 p-4 backdrop-blur-[1px]" @click.self="!savedReportSubscriptionDeleting && (showDeleteSubscriptionConfirm = false)">
         <div class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl dark:bg-gray-950">
           <div class="flex items-start gap-3">
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/30">⚠️</div>
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/30"><ExclamationTriangleIcon class="h-5 w-5" aria-hidden="true" /></div>
             <div class="min-w-0">
-              <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">确认删除订阅？</h3>
+              <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">确认删除订阅？</h3>
               <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">删除后将停止该报表的定时运行和消息推送，但不会删除固化报表和运行历史。</p>
               <p class="mt-2 truncate text-xs font-bold text-gray-700 dark:text-gray-200">{{ selectedSavedReportDetail?.title }}</p>
             </div>
@@ -583,7 +583,7 @@
       <div class="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
           <div>
-            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">共享固化报表</h3>
+            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">共享固化报表</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ sharingReport.title }}</p>
           </div>
           <button type="button" class="p-2 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" @click="closeShareReportModal">
@@ -595,7 +595,7 @@
         <div class="p-5 space-y-4">
           <div>
             <div class="flex items-center justify-between mb-2">
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">共享给用户</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">共享给用户</label>
               <span class="text-[10px] text-gray-400">已选 {{ selectedShareUserIds.length }} 人</span>
             </div>
             <input
@@ -611,12 +611,12 @@
                 v-for="user in shareUserCandidates"
                 :key="user.id"
                 type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-blue-50/60 dark:hover:bg-blue-950/30 transition-colors"
+                class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-primary/5 dark:hover:bg-primary-dark/30 transition-colors"
                 @click="toggleShareUser(user.id)"
               >
                 <span
-                  class="w-4 h-4 rounded border flex items-center justify-center text-[10px] font-black"
-                  :class="isShareUserSelected(user.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 text-transparent'"
+                  class="w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold"
+                  :class="isShareUserSelected(user.id) ? 'bg-primary border-primary text-white' : 'border-gray-300 text-transparent'"
                 >✓</span>
                 <span class="min-w-0 flex-1">
                   <span class="block text-xs font-bold text-gray-800 dark:text-gray-100 truncate">{{ user.real_name || user.user_name }}</span>
@@ -628,7 +628,7 @@
           </div>
           <div>
             <div class="flex items-center justify-between mb-2">
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">共享给角色</label>
+              <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">共享给角色</label>
               <span class="text-[10px] text-gray-400">已选 {{ selectedShareRoleIds.length }} 个</span>
             </div>
             <input
@@ -648,7 +648,7 @@
                 @click="toggleShareRole(role.id)"
               >
                 <span
-                  class="w-4 h-4 rounded border flex items-center justify-center text-[10px] font-black"
+                  class="w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold"
                   :class="isShareRoleSelected(role.id) ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-gray-300 text-transparent'"
                 >✓</span>
                 <span class="min-w-0 flex-1">
@@ -701,7 +701,7 @@
         @click="showFrequentCollapse = !showFrequentCollapse"
       >
         <span class="flex items-center gap-1.5">
-          <span>🔥</span> 我常问
+          <FireIcon class="h-3.5 w-3.5 text-amber-500" aria-hidden="true" /> 我常问
           <span
             class="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300"
           >
@@ -760,7 +760,7 @@
 
     <!-- 首屏骨架 -->
     <div v-if="initialLoading" class="grid gap-4">
-      <div v-for="i in 3" :key="`sk-${i}`" class="portal-skeleton-card rounded-xl border border-gray-150 dark:border-gray-800 p-4 space-y-3">
+      <div v-for="i in 3" :key="`sk-${i}`" class="portal-skeleton-card rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
         <div class="flex items-center gap-2">
           <div class="portal-skeleton-shimmer w-9 h-9 rounded-xl"></div>
           <div class="portal-skeleton-shimmer h-4 w-32 rounded"></div>
@@ -789,7 +789,7 @@
           class="absolute inset-0 bg-white/60 dark:bg-gray-900/60 backdrop-blur-[2px] z-20 rounded-xl flex items-start justify-center pt-24 pointer-events-auto"
         >
           <div class="flex flex-col items-center gap-2">
-            <svg class="w-8 h-8 animate-spin text-blue-600 dark:text-blue-500" fill="none" viewBox="0 0 24 24">
+            <svg class="w-8 h-8 animate-spin text-primary dark:text-primary" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -808,7 +808,7 @@
             visuals.card, visuals.cardBorder,
             isDatasetDisabled(group) ? 'opacity-75 grayscale-[0.25] border-dashed' : visuals.cardHover,
             canDragCards && !isDatasetDisabled(group) ? 'cursor-grab active:cursor-grabbing' : '',
-            dragOverId === (group.id || group.title) ? 'border-blue-400 dark:border-blue-500' : '',
+            dragOverId === (group.id || group.title) ? 'border-primary dark:border-primary' : '',
             dragSourceId === (group.id || group.title) ? 'opacity-50' : '',
           ]"
           :draggable="canDragCards && !isDatasetDisabled(group)"
@@ -917,7 +917,7 @@
                     >
                       <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 group-hover/btn:text-gray-900 dark:group-hover/btn:text-white flex items-center justify-between">
                         <span>{{ isSessionMounted(group) ? '取消本会话默认' : '本会话默认' }}</span>
-                        <span v-if="isSessionMounted(group)" class="text-[10px] text-blue-600 dark:text-blue-400 font-normal">已固定</span>
+                        <span v-if="isSessionMounted(group)" class="text-[10px] text-primary dark:text-primary font-normal">已固定</span>
                       </span>
                       <span class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight">
                         {{ isSessionMounted(group) ? '后续提问恢复默认权限范围' : '后续提问默认限定此范围' }}
@@ -954,7 +954,7 @@
                   type="button"
                   class="flex items-center justify-center w-6 h-6 rounded-lg transition-all duration-200 active:scale-90"
                   :class="isCardCollapsed(group)
-                    ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 opacity-100'
+                    ? 'text-primary bg-primary/5 dark:bg-primary-dark/30 opacity-100'
                     : 'text-gray-300 dark:text-gray-600 opacity-0 group-hover/card:opacity-100 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800'"
                   :title="isCardCollapsed(group) ? '展开卡片内容' : '折叠收起卡片'"
                   :aria-expanded="!isCardCollapsed(group)"
@@ -1150,7 +1150,7 @@
                       >
                         <span
                           class="inline-flex items-center gap-1 rounded bg-white dark:bg-gray-800 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300 ring-1 ring-gray-100 dark:ring-gray-700/60 shadow-sm hover:shadow-xs transition-all duration-200 cursor-pointer select-none active:scale-95"
-                          :class="pinnedTableDictionary === buildTableDictionaryKey(group, related, table) ? 'ring-2 ring-primary/35 text-primary dark:text-primary' : 'hover:scale-102'"
+                          :class="pinnedTableDictionary === buildTableDictionaryKey(group, related, table) ? 'ring-2 ring-primary/35 text-primary dark:text-primary' : 'hover:scale-105'"
                           @click.stop="handleTableDictionaryClick($event, group, related, table)"
                         >
                           <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1170,20 +1170,20 @@
                         >
                           <div 
                             v-if="pinnedTableDictionary === buildTableDictionaryKey(group, related, table) && related.table_columns?.[table]?.length" 
-                            class="absolute z-45 bottom-full mb-2 w-72 bg-white dark:bg-gray-850 border border-gray-150 dark:border-gray-750 rounded-xl p-3 shadow-xl text-left select-none ring-1 ring-black/5"
+                            class="absolute z-[45] bottom-full mb-2 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 shadow-xl text-left select-none ring-1 ring-black/5"
                             :style="popoverStyles[buildTableDictionaryKey(group, related, table)] || { left: '50%', transform: 'translateX(-50%)' }"
                             @click.stop
                           >
-                            <h5 class="text-[10px] font-bold text-gray-800 dark:text-gray-250 mb-2 border-b border-gray-100 dark:border-gray-750 pb-1 flex items-center justify-between">
+                            <h5 class="text-[10px] font-bold text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-100 dark:border-gray-700 pb-1 flex items-center justify-between">
                               <span class="flex items-center gap-1 truncate">
-                                <svg class="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg class="w-3.5 h-3.5 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
                                 </svg>
                                 <span class="truncate">{{ table }} 字段字典</span>
                               </span>
                               <button 
                                 type="button" 
-                                class="text-gray-400 hover:text-gray-650 dark:hover:text-gray-200 w-4 h-4 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors flex-shrink-0 cursor-pointer"
+                                class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 w-4 h-4 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0 cursor-pointer"
                                 @click.stop="pinnedTableDictionary = null"
                               >
                                 &times;
@@ -1193,13 +1193,13 @@
                               <div 
                                 v-for="col in related.table_columns[table]" 
                                 :key="col.name" 
-                                class="flex flex-col border-b border-gray-50/50 dark:border-gray-750/30 pb-1.5 last:border-0 last:pb-0"
+                                class="flex flex-col border-b border-gray-50/50 dark:border-gray-700/30 pb-1.5 last:border-0 last:pb-0"
                               >
                                 <div class="flex items-center justify-between gap-2">
-                                  <span class="font-mono text-[9px] font-bold text-blue-600 dark:text-blue-400 truncate">{{ col.name }}</span>
+                                  <span class="font-mono text-[9px] font-bold text-primary dark:text-primary truncate">{{ col.name }}</span>
                                   <span class="text-[8px] bg-gray-100 dark:bg-gray-700/80 px-1 rounded text-gray-500 dark:text-gray-400 font-bold uppercase">{{ col.type }}</span>
                                 </div>
-                                <div class="text-[9px] text-gray-500 dark:text-gray-450 mt-0.5 font-medium leading-normal">
+                                <div class="text-[9px] text-gray-500 dark:text-gray-400 mt-0.5 font-medium leading-normal">
                                   {{ col.term }}
                                   <span v-if="col.description && col.description !== col.term" class="text-gray-400 dark:text-gray-500 ml-1 text-[8.5px] font-normal">
                                     ({{ col.description }})
@@ -1208,14 +1208,14 @@
                               </div>
                             </div>
                             <!-- 快捷提问按钮组 -->
-                            <div class="mt-2.5 pt-2.5 border-t border-gray-100 dark:border-gray-750 flex items-center justify-between gap-1">
+                            <div class="mt-2.5 pt-2.5 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between gap-1">
                               <button
                                 type="button"
-                                class="flex-1 flex items-center justify-center gap-0.5 py-1 px-1.5 text-[9px] font-bold rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-100/50 dark:border-blue-900/30 transition-all cursor-pointer active:scale-95 whitespace-nowrap"
+                                class="flex-1 flex items-center justify-center gap-0.5 py-1 px-1.5 text-[9px] font-bold rounded bg-primary/5 hover:bg-primary/10 dark:bg-primary-dark/30 dark:hover:bg-primary-dark/40 text-primary dark:text-primary border border-primary/10 dark:border-primary-dark/30 transition-all cursor-pointer active:scale-95 whitespace-nowrap"
                                 title="分析表结构和字段口径"
                                 @click.stop="handleQuickQuestionClick('structure', table, related)"
                               >
-                                <span>📖 结构说明</span>
+                                <span>结构说明</span>
                               </button>
                               <button
                                 type="button"
@@ -1223,7 +1223,7 @@
                                 title="查询最近100条明细数据"
                                 @click.stop="handleQuickQuestionClick('query', table, related)"
                               >
-                                <span>📊 查询明细</span>
+                                <span>查询明细</span>
                               </button>
                               <button
                                 type="button"
@@ -1238,7 +1238,7 @@
                             </div>
                             <div
                               v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]"
-                              class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-750 space-y-1.5"
+                              class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5"
                             >
                               <div
                                 v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.loading"
@@ -1268,7 +1268,7 @@
                                     class="flex-1 text-left px-2 py-1.5 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
                                     @click.stop="handleRecommendedQuestionClick(question, 'send')"
                                   >
-                                    🙋 {{ question.label }}
+                                    {{ question.label }}
                                   </button>
                                   <button
                                     type="button"
@@ -1311,7 +1311,7 @@
               </span>
               <button
                 type="button"
-                class="inline-flex items-center gap-1 text-[10px] font-bold text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-all px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-gray-700 disabled:opacity-50"
+                class="inline-flex items-center gap-1 text-[10px] font-bold text-gray-500 hover:text-primary dark:text-gray-400 dark:hover:text-primary transition-all px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-gray-700 disabled:opacity-50"
                 :disabled="isDatasetDisabled(group) || isFollowupsRefreshDisabled(group)"
                 @click.stop="handleRefreshGroupFollowups(group)"
               >
@@ -1336,18 +1336,18 @@
               <div
                 v-for="followup in group.followups"
                 :key="followup.query"
-                class="group/follow inline-flex items-stretch rounded-lg border border-gray-200/50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/20 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-100 dark:hover:border-blue-900/40 transition-all shadow-xs overflow-hidden"
+                class="group/follow inline-flex items-stretch rounded-lg border border-gray-200/50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/20 text-xs text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-primary hover:border-primary/10 dark:hover:border-primary-dark/40 transition-all shadow-xs overflow-hidden"
               >
                 <button
                   type="button"
-                  class="px-2.5 py-1 text-left bg-transparent hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-colors cursor-pointer font-medium"
+                  class="px-2.5 py-1 text-left bg-transparent hover:bg-primary/5 dark:hover:bg-primary-dark/20 transition-colors cursor-pointer font-medium"
                   @click="handleFollowupClick(followup, group, 'send')"
                 >
                   <span>{{ followup.label }}</span>
                 </button>
                 <button
                   type="button"
-                  class="opacity-0 group-hover/follow:opacity-100 flex items-center justify-center px-1.5 border-l border-gray-200/50 dark:border-gray-700 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-all duration-200 cursor-pointer"
+                  class="opacity-0 group-hover/follow:opacity-100 flex items-center justify-center px-1.5 border-l border-gray-200/50 dark:border-gray-700 hover:bg-primary/5 dark:hover:bg-primary-dark/20 transition-all duration-200 cursor-pointer"
                   title="填入输入框微调"
                   aria-label="填入输入框微调"
                   @click.stop="handleFollowupClick(followup, group, 'fill')"
@@ -1445,6 +1445,13 @@
 </template>
 
 <script setup lang="ts">
+import { ExclamationTriangleIcon,
+  BookmarkIcon,
+  StarIcon,
+  BellIcon,
+  ClockIcon,
+  FireIcon,
+} from "@heroicons/vue/24/outline";
 import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import axios from "@/utils/axios";
 import { useToast } from "@/composables/useToast";
@@ -2762,9 +2769,9 @@ const statusBannerClass = computed(() => {
   }
   switch (portalStatus.value) {
     case "loading":
-      return "border-blue-100 bg-blue-50/70 text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200";
+      return "border-primary/10 bg-primary/5 text-primary-dark dark:border-primary-dark/40 dark:bg-primary-dark/30 dark:text-primary-hover";
     case "refreshing":
-      return "border-blue-100 bg-blue-50/50 text-blue-600 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300";
+      return "border-primary/10 bg-primary/5 text-primary dark:border-primary-dark/40 dark:bg-primary-dark/20 dark:text-primary-hover";
     case "llm_failed":
       return "border-red-100 bg-red-50/70 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200";
     case "fallback":
@@ -2844,11 +2851,11 @@ const emptySearchSuggestions = computed(() => allTags.value.slice(0, 3));
 
 const tagFilterClass = (tag: string) => {
   if (selectedTag.value !== tag) {
-    return "bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800";
+    return "bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800";
   }
   const owner = (props.payload.groups || []).find((group) => (group.tags || []).includes(tag));
   const theme = owner ? getGroupVisuals(owner, 0) : getGroupVisuals({ id: tag, title: tag }, 0);
-  return `${theme.tag} ring-1 ring-current/20 shadow-xs`;
+  return `${theme.tag} ring-1 ring-[color-mix(in_srgb,currentColor_20%,transparent)] shadow-xs`;
 };
 
 const applyEmptySearchSuggestion = (tag: string) => {
@@ -2917,7 +2924,7 @@ const CARD_THEMES: GroupVisualTheme[] = [
     card: "bg-white dark:bg-gray-900",
     cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-blue-500 dark:border-l-blue-400",
     cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
-    decor: "bg-blue-400",
+    decor: "bg-primary",
     iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>`,
     title: "text-gray-900 dark:text-gray-100",
@@ -2935,7 +2942,7 @@ const CARD_THEMES: GroupVisualTheme[] = [
     card: "bg-white dark:bg-gray-900",
     cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-violet-500 dark:border-l-violet-400",
     cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
-    decor: "bg-violet-400",
+    decor: "bg-primary",
     iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>`,
     title: "text-gray-900 dark:text-gray-100",
@@ -3007,7 +3014,7 @@ const CARD_THEMES: GroupVisualTheme[] = [
     card: "bg-white dark:bg-gray-900",
     cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-cyan-500 dark:border-l-cyan-400",
     cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
-    decor: "bg-cyan-400",
+    decor: "bg-primary",
     iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`,
     title: "text-gray-900 dark:text-gray-100",

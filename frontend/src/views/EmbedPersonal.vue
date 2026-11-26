@@ -465,7 +465,7 @@ const clearEmbedSession = (): void => {
 /**
  * 把会话令牌同时写入 axios 默认请求头与本 tab 存储。
  *
- * ⚠️ 写默认头这一步**不能省**：PersonalCenter 九个 Tab 的请求全部依赖 Cookie 认证，
+ * 写默认头这一步**不能省**：PersonalCenter 九个 Tab 的请求全部依赖 Cookie 认证，
  * 跨站 iframe 里这些请求同样收不到 Cookie。只把令牌用于门禁核验的话，页面的表现会是
  * 「门禁通过、各 Tab 却全是空数据 / 报错」——比拒绝渲染更难排查。
  *

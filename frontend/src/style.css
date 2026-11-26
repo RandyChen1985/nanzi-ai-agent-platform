@@ -2,6 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .scrollbar-hide,
+  .scrollbar-none,
+  .no-scrollbar {
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar,
+  .scrollbar-none::-webkit-scrollbar,
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* 细滚动条：不依赖 tailwind-scrollbar 插件，按需在容器上使用 */
+  .scrollbar-thin {
+    -ms-overflow-style: auto;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgb(209 213 219 / 0.85);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+}
+
+/* 入场动画的兜底：tailwind.config 里这批 keyframes 都用 `both` 填充，
+   首帧是 opacity: 0。关闭动画（减少动态效果 / 打印）时必须显式声明，
+   否则元素会停在首帧，直接看不见。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-fade-in-up,
+  .animate-slide-up,
+  .animate-shake,
+  .animate-slide-in-right,
+  .animate-fade-slide-up {
+    animation: none !important;
+  }
+}
+
+@media print {
+  .animate-fade-in,
+  .animate-fade-in-up,
+  .animate-slide-up,
+  .animate-slide-in-right,
+  .animate-fade-slide-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
 /* 表单控件兜底：边框 + 内边距。
    Tailwind preflight 会同时把表单控件的 `border-width` 和 `padding` 归零，而项目里大量
    输入框/下拉框/文本域只写了 `border-gray-300`（边框**颜色**）却漏了 `border`（边框**宽度**）、
@@ -229,5 +283,16 @@ html[data-theme='dark'] .custom-scrollbar[data-scroll-active]::-webkit-scrollbar
   html.dark .custom-scrollbar[data-scroll-active],
   html[data-theme='dark'] .custom-scrollbar[data-scroll-active] {
     scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+
+  /* 上面 utilities 里的 hide / thin 两族同样只在 Firefox 走标准属性 */
+  .scrollbar-hide,
+  .scrollbar-none,
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
   }
 }

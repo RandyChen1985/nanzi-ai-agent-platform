@@ -7,7 +7,7 @@
         class="fixed inset-0 z-[10000] bg-gray-900/60 backdrop-blur-sm flex flex-col items-center justify-center text-white"
       >
         <div class="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-        <h3 class="text-xl font-black">正在同步 SSO 用户数据...</h3>
+        <h3 class="text-xl font-bold">正在同步 SSO 用户数据...</h3>
         <p class="text-gray-300 mt-2 text-sm">正在为您生成 API Key 并同步权限，请勿刷新页面</p>
       </div>
     </Teleport>
@@ -178,7 +178,7 @@
                 class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
                 @click="showMoreMenu = false; openSsoModal()"
               >
-                <UserGroupIcon class="h-4 w-4 text-indigo-500" />
+                <UserGroupIcon class="h-4 w-4 text-primary" />
                 同步 SSO 用户
               </button>
               <button
@@ -187,7 +187,7 @@
                 class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
                 @click="showMoreMenu = false; showThirdPartyDrawer = true"
               >
-                <ArrowPathIcon class="h-4 w-4 text-violet-500" />
+                <ArrowPathIcon class="h-4 w-4 text-primary" />
                 同步第三方用户
               </button>
               <button
@@ -277,9 +277,9 @@
     <!-- 批量启用 / 禁用操作条 -->
     <div
       v-if="canEditUser && selectedUserIds.length > 0"
-      class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-indigo-200 bg-indigo-50/70 px-4 py-2.5"
+      class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5"
     >
-      <span class="text-sm font-medium text-indigo-900">
+      <span class="text-sm font-medium text-primary-dark">
         已选 <span class="font-bold">{{ selectedUserIds.length }}</span> 个用户
       </span>
       <div class="ml-auto flex items-center gap-2">
@@ -301,7 +301,7 @@
         </button>
         <button
           type="button"
-          class="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-lg border border-primary/25 bg-white px-3 py-1.5 text-sm font-medium text-primary-dark shadow-sm transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="batchSubmitting || batchSettingPassword"
           @click="openBatchPasswordDialog"
         >
@@ -546,7 +546,7 @@
         <button
           type="button"
           @click="resetFilters"
-          class="mt-5 px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+          class="mt-5 px-4 py-2 text-sm font-medium text-primary border border-primary/20 rounded-lg hover:bg-primary/5 transition-colors"
         >
           清除筛选
         </button>
@@ -598,7 +598,7 @@
                 v-for="user in users"
                 :key="user.id"
                 class="group hover:bg-gray-50/80 transition-colors"
-                :class="{ 'bg-indigo-50/40': selectedUserIds.includes(user.id) }"
+                :class="{ 'bg-primary/5': selectedUserIds.includes(user.id) }"
               >
                 <td v-if="canEditUser" class="w-10 px-3 py-4">
                   <input
@@ -639,7 +639,7 @@
                       <template v-if="user.primary_dept_name">
                         <span class="text-gray-300">·</span>
                         <span
-                          class="truncate text-blue-500"
+                          class="truncate text-primary"
                           :title="(user.dept_names || []).join('、')"
                         >{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
                       </template>
@@ -658,8 +658,8 @@
                     <span
                       :class="
                         user.role === 'admin'
-                          ? 'bg-purple-50 text-purple-700 border-purple-100'
-                          : 'bg-blue-50 text-blue-700 border-blue-100'
+                          ? 'bg-primary/5 text-primary-dark border-primary/10'
+                          : 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700'
                       "
                       class="px-2 py-0.5 text-[11px] font-semibold rounded-md border"
                     >
@@ -704,7 +704,7 @@
                     <button
                       v-if="canEditUser"
                       @click="editUser(user)"
-                      class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                      class="p-1.5 rounded-lg text-primary hover:bg-primary/5 transition-colors"
                       title="编辑用户"
                     >
                       <PencilSquareIcon class="w-4 h-4" />
@@ -712,7 +712,7 @@
                     <button
                       v-if="canViewUserKey"
                       @click="viewApiKey(user)"
-                      class="p-1.5 rounded-lg text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                      class="p-1.5 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/5 transition-colors"
                       title="查看 API Key"
                     >
                       <KeyIcon class="w-4 h-4" />
@@ -766,7 +766,7 @@
           class="bg-white border rounded-lg p-4 shadow-sm"
           :class="
             selectedUserIds.includes(user.id)
-              ? 'border-indigo-300 ring-1 ring-indigo-200'
+              ? 'border-primary/25 ring-1 ring-primary/20'
               : 'border-gray-200'
           "
         >
@@ -799,7 +799,7 @@
               <p class="text-xs text-gray-500 mt-0.5">
                 {{ user.real_name || "未设置姓名" }} · #{{ user.id }}
                 <template v-if="user.primary_dept_name">
-                  · <span class="text-blue-500" :title="(user.dept_names || []).join('、')">{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
+                  · <span class="text-primary" :title="(user.dept_names || []).join('、')">{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
                 </template>
               </p>
               <p class="text-xs mt-0.5 truncate" :class="user.email ? 'text-gray-500' : 'text-gray-300'">
@@ -810,8 +810,8 @@
               <span
                 :class="
                   user.role === 'admin'
-                    ? 'bg-purple-50 text-purple-700'
-                    : 'bg-blue-50 text-blue-700'
+                    ? 'bg-primary/5 text-primary-dark'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
                 "
                 class="px-2 py-0.5 text-[10px] font-semibold rounded"
               >
@@ -850,10 +850,10 @@
           <div class="flex justify-between items-center pt-3 mt-3 border-t border-gray-100">
             <span class="text-[10px] text-gray-400 font-mono">{{ formatDate(user.created_at).split(" ")[0] }}</span>
             <div v-if="hasAnyRowAction" class="flex items-center gap-1">
-              <button v-if="canEditUser" @click="editUser(user)" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="编辑">
+              <button v-if="canEditUser" @click="editUser(user)" class="p-1.5 rounded-lg text-primary hover:bg-primary/5" title="编辑">
                 <PencilSquareIcon class="w-4 h-4" />
               </button>
-              <button v-if="canViewUserKey" @click="viewApiKey(user)" class="p-1.5 rounded-lg text-gray-500 hover:bg-indigo-50" title="密钥">
+              <button v-if="canViewUserKey" @click="viewApiKey(user)" class="p-1.5 rounded-lg text-gray-500 hover:bg-primary/5" title="密钥">
                 <KeyIcon class="w-4 h-4" />
               </button>
               <button v-if="canEditUser" @click="openSetPasswordDialog(user)" class="p-1.5 rounded-lg text-gray-500 hover:bg-emerald-50" title="密码">
@@ -862,7 +862,7 @@
               <button
                 v-if="canEditUser && user.two_factor_enabled"
                 @click="openDisable2FADialog(user)"
-                class="p-1.5 rounded-lg text-purple-600 hover:bg-purple-50"
+                class="p-1.5 rounded-lg text-primary hover:bg-primary/5"
                 title="关闭 2FA"
               >
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -929,10 +929,10 @@
         <button
           v-if="canEditUser && openRowMenuUser.two_factor_enabled"
           type="button"
-          class="w-full text-left px-3 py-2 text-sm text-purple-700 hover:bg-purple-50 flex items-center gap-2"
+          class="w-full text-left px-3 py-2 text-sm text-primary-dark hover:bg-primary/5 flex items-center gap-2"
           @click="openDisable2FADialog(openRowMenuUser); closeMenus()"
         >
-          <svg class="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
           </svg>
           关闭 2FA
@@ -1021,7 +1021,7 @@
                 @click="activeTab = 'info'"
                 :class="
                   activeTab === 'info'
-                    ? 'border-blue-500 text-blue-600'
+                    ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 "
                 class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
@@ -1032,7 +1032,7 @@
                 @click="activeTab = 'permissions'"
                 :class="
                   activeTab === 'permissions'
-                    ? 'border-blue-500 text-blue-600'
+                    ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 "
                 class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
@@ -1043,7 +1043,7 @@
                 @click="activeTab = 'quota'"
                 :class="
                   activeTab === 'quota'
-                    ? 'border-blue-500 text-blue-600'
+                    ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 "
                 class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
@@ -1066,7 +1066,7 @@
                     v-model="formData.user_name"
                     type="text"
                     :disabled="showEditDialog"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-100 text-sm"
                   />
                 </div>
                 <div>
@@ -1077,7 +1077,7 @@
                   <input
                     v-model="formData.real_name"
                     type="text"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                     placeholder="请输入真实姓名"
                   />
                 </div>
@@ -1092,7 +1092,7 @@
                     autocapitalize="none"
                     autocorrect="off"
                     spellcheck="false"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                     placeholder="name@example.com（留空表示不设置）"
                   />
                   <p class="mt-1 text-[10px] text-gray-400 leading-relaxed">
@@ -1120,10 +1120,10 @@
                         @click="handleExtraDataTabChange('visual')"
                         :class="[
                           extraDataTab === 'visual'
-                            ? 'bg-white text-blue-600 shadow-sm'
+                            ? 'bg-white text-primary shadow-sm'
                             : 'text-gray-500 hover:text-gray-700',
                         ]"
-                        class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
+                        class="px-2 py-1 text-[10px] font-bold rounded-md transition-all"
                       >
                         可视化
                       </button>
@@ -1132,10 +1132,10 @@
                         @click="handleExtraDataTabChange('json')"
                         :class="[
                           extraDataTab === 'json'
-                            ? 'bg-white text-blue-600 shadow-sm'
+                            ? 'bg-white text-primary shadow-sm'
                             : 'text-gray-500 hover:text-gray-700',
                         ]"
-                        class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
+                        class="px-2 py-1 text-[10px] font-bold rounded-md transition-all"
                       >
                         JSON
                       </button>
@@ -1156,14 +1156,14 @@
                         v-model="pair.key"
                         type="text"
                         placeholder="Key"
-                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
                       />
                       <span class="text-gray-300 text-xs">:</span>
                       <input
                         v-model="pair.value"
                         type="text"
                         placeholder="Value"
-                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
                       />
                       <button
                         type="button"
@@ -1179,7 +1179,7 @@
                     <button
                       type="button"
                       @click="addExtraDataPair"
-                      class="w-full py-1.5 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:text-blue-500 hover:border-blue-200 hover:bg-blue-50/30 text-xs font-bold flex items-center justify-center gap-1 transition-all"
+                      class="w-full py-1.5 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:text-primary hover:border-primary/20 hover:bg-primary/5 text-xs font-bold flex items-center justify-center gap-1 transition-all"
                     >
                       <PlusIcon class="w-3 h-3" /> 添加键值对
                     </button>
@@ -1195,7 +1195,7 @@
                     <textarea
                       v-model="formData.extra_data"
                       rows="4"
-                      class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                      class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm font-mono"
                       placeholder='{"key": "value"}'
                     ></textarea>
                   </div>
@@ -1208,7 +1208,7 @@
                 >
                 <select
                   v-model="formData.role"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                 >
                   <option value="user">普通用户</option>
                   <option value="admin">管理员</option>
@@ -1223,7 +1223,7 @@
                     >
                     <span
                       v-if="selectedRoleSummary.selectedCount > 0"
-                      class="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600"
+                      class="shrink-0 rounded-full bg-primary/5 px-2 py-0.5 text-[10px] font-bold text-primary"
                     >已选 {{ selectedRoleSummary.selectedCount }} 个</span>
                     <span
                       v-if="selectedRoleSummary.missingCount > 0"
@@ -1235,7 +1235,7 @@
                     v-model="roleSearchQuery"
                     type="search"
                     placeholder="搜索角色（支持编码）..."
-                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-40 focus:outline-none focus:border-blue-400"
+                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-40 focus:outline-none focus:border-primary"
                   />
                 </div>
                 <div
@@ -1273,7 +1273,7 @@
                       type="checkbox"
                       :value="role.id"
                       v-model="formData.role_ids"
-                      class="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                      class="h-4 w-4 rounded text-primary focus:ring-primary"
                     />
                     <span class="text-xs sm:text-sm truncate">{{
                       role.name
@@ -1296,7 +1296,7 @@
                 <textarea
                   v-model="formData.remark"
                   rows="3"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                   placeholder="备注信息..."
                 ></textarea>
               </div>
@@ -1309,7 +1309,7 @@
                 <p
                   class="text-xs font-bold text-yellow-800 mb-2 uppercase tracking-tight"
                 >
-                  ✅ 用户创建成功！请立即保存 API Key：
+                  用户创建成功！请立即保存 API Key：
                 </p>
                 <div
                   class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
@@ -1338,8 +1338,8 @@
                 class="flex flex-col items-center justify-center flex-1 min-h-[320px] gap-4"
               >
                 <div class="relative">
-                  <div class="w-10 h-10 rounded-full border-[3px] border-blue-100"></div>
-                  <div class="absolute inset-0 w-10 h-10 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
+                  <div class="w-10 h-10 rounded-full border-[3px] border-primary/10"></div>
+                  <div class="absolute inset-0 w-10 h-10 rounded-full border-[3px] border-primary border-t-transparent animate-spin"></div>
                 </div>
                 <div class="text-center space-y-1">
                   <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
@@ -1378,7 +1378,7 @@
                     @click="activePermissionSubTab = 'assets'"
                     :class="
                       activePermissionSubTab === 'assets'
-                        ? 'border-blue-500 text-blue-600'
+                        ? 'border-primary text-primary'
                         : 'border-transparent text-gray-500'
                     "
                     class="px-4 py-2 border-b-2 text-sm font-medium"
@@ -1389,7 +1389,7 @@
                     @click="activePermissionSubTab = 'ui'"
                     :class="
                       activePermissionSubTab === 'ui'
-                        ? 'border-blue-500 text-blue-600'
+                        ? 'border-primary text-primary'
                         : 'border-transparent text-gray-500'
                     "
                     class="px-4 py-2 border-b-2 text-sm font-medium"
@@ -1413,8 +1413,8 @@
                         @click="activeResTab = type"
                         :class="[
                           activeResTab === type
-                            ? `text-${resourceConfig[type].color}-600 border-${resourceConfig[type].color}-600 bg-${resourceConfig[type].color}-50`
-                            : 'text-gray-500 border-transparent',
+                            ? resourceConfig[type].tabActive
+                            : 'text-gray-500 border-transparent hover:text-gray-700',
                         ]"
                         class="px-2 sm:px-3 py-1.5 border-b-2 text-[10px] sm:text-xs font-bold flex items-center gap-1 whitespace-nowrap"
                       >
@@ -1437,7 +1437,7 @@
                           <!-- 徽标里的小数字 = 其中角色/全员已有的条数；两个数字相加即「实际可用」 -->
                           <span
                             v-if="resourceTabInheritedCount(type) > 0"
-                            class="rounded-full bg-indigo-50 px-1 py-0.5 text-[9px] font-bold leading-none text-indigo-600"
+                            class="rounded-full bg-primary/5 px-1 py-0.5 text-[9px] font-bold leading-none text-primary"
                           >
                             {{ resourceTabInheritedCount(type) }}
                           </span>
@@ -1455,7 +1455,7 @@
                       本页合并白名单共
                       <b class="text-gray-700">{{ currentAssetCounts.total }}</b>
                       个，其中
-                      <b class="text-indigo-600">{{ currentAssetCounts.inherited }}</b>
+                      <b class="text-primary">{{ currentAssetCounts.inherited }}</b>
                       个由角色授予 —— 在用户页取消勾选不会生效（后端按并集计算），要收窄或放宽请到「角色管理」调整。
                     </template>
                   </div>
@@ -1477,10 +1477,10 @@
                     <!-- Hint Alert -->
                     <div
                       v-if="activeResTab === 'agents'"
-                      class="mb-3 bg-blue-50 border border-blue-100 rounded-md p-2.5 flex items-start gap-2"
+                      class="mb-3 bg-primary/5 border border-primary/10 rounded-md p-2.5 flex items-start gap-2"
                     >
                       <svg
-                        class="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0"
+                        class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -1493,7 +1493,7 @@
                         />
                       </svg>
                       <div
-                        class="text-[10px] sm:text-xs text-blue-700 leading-relaxed"
+                        class="text-[10px] sm:text-xs text-primary-dark leading-relaxed"
                       >
                         <p class="font-bold mb-0.5">自动授权说明</p>
                         <p class="opacity-80">
@@ -1522,9 +1522,9 @@
                         生效
                         <b class="text-gray-800">{{ currentAssetCounts.total }}</b>
                         项：直配
-                        <b class="text-blue-600">{{ currentAssetCounts.direct }}</b>
+                        <b class="text-primary">{{ currentAssetCounts.direct }}</b>
                         ·
-                        <span class="text-indigo-600">
+                        <span class="text-primary">
                           角色/全员已有
                           <b>{{ currentAssetCounts.inherited }}</b>
                         </span>
@@ -1623,7 +1623,7 @@
                         <input
                           type="checkbox"
                           v-model="showMissingDatasets"
-                          class="h-3.5 w-3.5 rounded text-blue-600 focus:ring-blue-500"
+                          class="h-3.5 w-3.5 rounded text-primary focus:ring-primary"
                         />
                         显示失联知识库（{{ missingDatasetCount }}）
                       </label>
@@ -1684,11 +1684,11 @@
                           :value="res.id"
                           :checked="isAssetChecked(res)"
                           :disabled="isAssetDisabled(res)"
-                          class="mt-1 h-4 w-4 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                          class="mt-1 h-4 w-4 rounded focus:ring-primary disabled:cursor-not-allowed"
                           :class="
                             isInheritedAsset(res)
-                              ? 'text-indigo-500 disabled:opacity-70'
-                              : 'text-blue-600 disabled:opacity-50'
+                              ? 'text-primary disabled:opacity-70'
+                              : 'text-primary disabled:opacity-50'
                           "
                           @change="toggleAssetResource(res)"
                         />
@@ -1701,7 +1701,7 @@
                             </p>
                             <span
                               v-if="isInheritedAsset(res)"
-                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-semibold leading-none ring-1 ring-indigo-100"
+                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/5 text-primary font-semibold leading-none ring-1 ring-primary/10"
                               >角色/全员已有</span
                             >
                             <span
@@ -1769,25 +1769,25 @@
                     <!-- 口径与页签徽标一致：直配 + 角色/全员已有 = 这个用户实际能用的条数 -->
                     <span v-if="currentAssetCounts.inherited > 0">
                       已勾选
-                      <b class="text-blue-600">{{ currentAssetCounts.total }}</b>
+                      <b class="text-primary">{{ currentAssetCounts.total }}</b>
                       <span class="ml-1 text-gray-400">
                         （直配
-                        <b class="text-blue-600">{{ currentAssetCounts.direct }}</b>
+                        <b class="text-primary">{{ currentAssetCounts.direct }}</b>
                         ·
-                        <span class="text-indigo-600"
+                        <span class="text-primary"
                           >角色/全员已有 {{ currentAssetCounts.inherited }}，只读</span
                         >）
                       </span>
                     </span>
                     <span v-else
                       >已勾选:
-                      <b class="text-blue-600">{{
+                      <b class="text-primary">{{
                         (permissionData as any)[activeResTab].length
                       }}</b></span
                     >
                     <button
                       @click="toggleSelectAll"
-                      class="font-black text-blue-600 hover:underline px-2 py-1 disabled:cursor-not-allowed disabled:text-gray-300 disabled:no-underline"
+                      class="font-bold text-primary hover:underline px-2 py-1 disabled:cursor-not-allowed disabled:text-gray-300 disabled:no-underline"
                       :disabled="selectableResources.length === 0"
                       :title="
                         selectableResources.length === 0
@@ -1884,7 +1884,7 @@
               v-if="!createdApiKey && activeTab !== 'quota'"
               @click="saveUser"
               :disabled="submitting"
-              class="order-1 sm:order-3 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
+              class="order-1 sm:order-3 px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 text-sm font-bold shadow-md shadow-primary/10"
             >
               {{ showEditDialog ? "保存更新" : "立即创建用户" }}
             </button>
@@ -1925,7 +1925,7 @@
               :key="option.key"
               type="button"
               class="rounded-full border px-2.5 py-1 font-semibold transition-colors"
-              :class="resourceTypeFilter === option.key ? 'border-primary bg-blue-50 text-primary' : 'border-gray-200 text-gray-500 hover:border-gray-300'"
+              :class="resourceTypeFilter === option.key ? 'border-primary bg-primary/5 text-primary' : 'border-gray-200 text-gray-500 hover:border-gray-300'"
               @click="resourceTypeFilter = option.key"
             >{{ option.label }}</button>
           </div>
@@ -1955,7 +1955,7 @@
               v-for="item in accessReviews"
               :key="item.id"
               class="rounded-xl border p-3"
-              :class="highlightRequestId === item.id ? 'border-primary bg-blue-50/40 ring-1 ring-primary/30' : 'border-gray-200'"
+              :class="highlightRequestId === item.id ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-gray-200'"
             >
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
@@ -1965,12 +1965,12 @@
                     </p>
                     <span
                       class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                      :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                      :class="item.resource_type === 'dataset' ? 'bg-primary/5 text-primary' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'"
                     >{{ item.resource_type === 'dataset' ? '知识库' : '数据集' }}</span>
                     <span
                       v-if="item.visibility"
                       class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                      :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
+                      :class="item.visibility === 'public' ? 'bg-primary/5 text-primary' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'"
                     >{{ item.visibility === 'public' ? '授权可见' : item.visibility === 'team' ? 'TEAM 级' : '私有' }}</span>
                     <span
                       v-if="item.resource_exists === false"
@@ -2041,7 +2041,7 @@
                       <p class="truncate text-sm font-semibold text-gray-900">{{ item.resource_name || item.resource_id }}</p>
                       <span
                         class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                        :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                        :class="item.resource_type === 'dataset' ? 'bg-primary/5 text-primary' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'"
                       >{{ item.resource_type === 'dataset' ? '知识库' : '数据集' }}</span>
                     </div>
                     <p class="mt-0.5 text-xs text-gray-500">
@@ -2068,7 +2068,7 @@
           <div class="mt-3 flex items-center gap-3 border-t pt-2">
             <button
               type="button"
-              class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+              class="text-xs text-primary hover:underline disabled:opacity-50"
               :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
               @click="accessReviewTab === 'pending' ? fetchAccessReviews() : fetchReviewedRequests()"
             >刷新</button>
@@ -2077,7 +2077,7 @@
                 ? accessReviews.length < accessReviewTotal
                 : reviewedRequests.length < reviewedTotal"
               type="button"
-              class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+              class="text-xs text-primary hover:underline disabled:opacity-50"
               :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
               @click="accessReviewTab === 'pending' ? fetchAccessReviews(true) : fetchReviewedRequests(true)"
             >加载更多</button>
@@ -2103,11 +2103,11 @@
       >
         <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
           <h2
-            class="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-600"
+            class="text-xl font-bold mb-4 flex items-center gap-2 text-primary"
           >
             <KeyIcon class="w-6 h-6" /> 查看 API Key
           </h2>
-          <div class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-6">
+          <div class="bg-primary/5 border border-primary/10 rounded-lg p-4 mb-6">
             <div v-if="loadingViewKey" class="text-center py-4 text-gray-500">
               加载中...
             </div>
@@ -2116,11 +2116,11 @@
                 type="text"
                 :value="viewedApiKey"
                 readonly
-                class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mon read-only:bg-gray-100o"
+                class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mono read-only:bg-gray-100"
               />
               <button
                 @click="copyViewedApiKey"
-                class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                class="px-3 py-2 bg-primary text-white rounded hover:bg-primary-dark"
               >
                 复制
               </button>
@@ -2423,7 +2423,7 @@
           <div class="flex justify-end">
             <button
               type="button"
-              class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              class="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark"
               @click="showBatchPasswordResultDialog = false"
             >
               知道了
@@ -2534,7 +2534,7 @@
           <div class="flex justify-end">
             <button
               type="button"
-              class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              class="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark"
               @click="showBatchResetResultDialog = false"
             >
               知道了
@@ -2611,7 +2611,7 @@
         <div
           class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl text-center"
         >
-          <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-3">
+          <div class="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-3">
             <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
             </svg>
@@ -2636,7 +2636,7 @@
               type="button"
               @click="executeDisable2FA"
               :disabled="disabling2FA"
-              class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+              class="px-5 py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-700 text-sm font-medium transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
             >
               <span v-if="disabling2FA" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
               <span>{{ disabling2FA ? '关闭中...' : '确认关闭' }}</span>
@@ -2660,8 +2660,8 @@
           <!-- Modal Header -->
           <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
             <div>
-              <h2 class="text-xl font-black text-gray-900 flex items-center gap-2">
-                <UserGroupIcon class="w-6 h-6 text-indigo-600" />
+              <h2 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <UserGroupIcon class="w-6 h-6 text-primary" />
                 同步 SSO 用户
               </h2>
               <p class="text-xs text-gray-400 mt-0.5">从 Laplace SSO 中心同步用户，默认分配“普通用户”身份。</p>
@@ -2680,7 +2680,7 @@
                 v-model="ssoSearchQuery"
                 type="search"
                 placeholder="搜索用户名、姓名或部门..."
-                class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
+                class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary transition-all"
               />
               <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2691,12 +2691,12 @@
                 <input
                   type="checkbox"
                   v-model="hideSynced"
-                  class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                  class="h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary"
                 />
                 <span class="text-xs font-bold text-gray-500 group-hover:text-gray-700 transition-colors">隐藏已同步</span>
               </label>
               <div class="text-[11px] text-gray-400 whitespace-nowrap border-l border-gray-200 pl-4">
-                已选 <span class="text-indigo-600 font-bold">{{ selectedSsoUsernames.length }}</span> 人
+                已选 <span class="text-primary font-bold">{{ selectedSsoUsernames.length }}</span> 人
               </div>
             </div>
           </div>
@@ -2704,7 +2704,7 @@
           <!-- Modal Content -->
           <div class="flex-1 overflow-y-auto p-0 min-h-[300px]">
             <div v-if="loadingSso" class="h-64 flex flex-col items-center justify-center text-gray-500">
-              <div class="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
               <p class="mt-4 text-sm font-medium">正在获取 SSO 数据...</p>
             </div>
 
@@ -2723,7 +2723,7 @@
                       type="checkbox"
                       :checked="isAllSsoSelected"
                       @change="toggleSsoSelectAll"
-                      class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                      class="h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary"
                     />
                   </th>
                   <th class="px-4 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">用户名/姓名</th>
@@ -2735,7 +2735,7 @@
                 <tr
                   v-for="user in filteredSsoUsers"
                   :key="user.code"
-                  class="hover:bg-indigo-50/30 transition-colors"
+                  class="hover:bg-primary/5 transition-colors"
                   :class="user.is_synced ? 'opacity-50 grayscale-[0.5]' : 'cursor-pointer'"
                   @click="!user.is_synced && (selectedSsoUsernames.includes(user.code) ? selectedSsoUsernames = selectedSsoUsernames.filter(c => c !== user.code) : selectedSsoUsernames.push(user.code))"
                 >
@@ -2745,7 +2745,7 @@
                       type="checkbox"
                       :value="user.code"
                       v-model="selectedSsoUsernames"
-                      class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                      class="h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary"
                     />
                   </td>
                   <td class="px-4 py-3">
@@ -2763,13 +2763,13 @@
                   <td class="px-4 py-3 text-right">
                     <span
                       v-if="user.is_synced"
-                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-gray-100 text-gray-400 border border-gray-200"
+                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-400 border border-gray-200"
                     >
                       已同步
                     </span>
                     <span
                       v-else
-                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-green-100 text-green-700 border border-green-200"
+                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 border border-green-200"
                     >
                       待同步
                     </span>
@@ -2790,7 +2790,7 @@
             <button
               @click="executeSsoSync"
               :disabled="selectedSsoUsernames.length === 0 || syncingSso"
-              class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold shadow-lg shadow-indigo-100 flex items-center gap-2"
+              class="px-8 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold shadow-lg shadow-primary/10 flex items-center gap-2"
             >
               <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
               立即同步选中的 {{ selectedSsoUsernames.length }} 个用户
@@ -2809,17 +2809,17 @@
       >
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
           <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-            <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
-              <UserGroupIcon class="w-5 h-5 text-indigo-600" />
+            <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <UserGroupIcon class="w-5 h-5 text-primary" />
               确认同步配置
             </h3>
           </div>
 
           <div class="p-6 space-y-5">
-            <div class="bg-indigo-50/50 p-4 rounded-lg border border-indigo-100">
-              <p class="text-sm text-indigo-900 font-bold mb-1">已选择 {{ selectedSsoUsernames.length }} 个用户</p>
+            <div class="bg-primary/5 p-4 rounded-lg border border-primary/10">
+              <p class="text-sm text-primary-dark font-bold mb-1">已选择 {{ selectedSsoUsernames.length }} 个用户</p>
               <div class="flex flex-wrap gap-1 mt-2">
-                <span v-for="uname in selectedSsoUsernames.slice(0, 10)" :key="uname" class="text-[10px] bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-600 font-mono">{{ uname }}</span>
+                <span v-for="uname in selectedSsoUsernames.slice(0, 10)" :key="uname" class="text-[10px] bg-white px-2 py-0.5 rounded border border-primary/20 text-primary font-mono">{{ uname }}</span>
                 <span v-if="selectedSsoUsernames.length > 10" class="text-[10px] text-gray-400 self-center">...及其他 {{ selectedSsoUsernames.length - 10 }} 人</span>
               </div>
             </div>
@@ -2827,10 +2827,10 @@
             <!-- Role Assignment -->
             <div class="space-y-4">
               <div>
-                <label class="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">分配系统身份</label>
+                <label class="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">分配系统身份</label>
                 <select
                   v-model="ssoSyncRole"
-                  class="w-full border border-gray-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
+                  class="w-full border border-gray-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-primary transition-all outline-none"
                 >
                   <option value="user">普通用户 (User)</option>
                   <option value="admin">管理员 (Admin)</option>
@@ -2839,7 +2839,7 @@
 
               <div>
                 <div class="flex justify-between items-center mb-2">
-                  <label class="block text-xs font-black text-gray-400 uppercase tracking-widest">分配业务角色</label>
+                  <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">分配业务角色</label>
                   <span class="text-[10px] text-gray-400">可选</span>
                 </div>
                 <div class="border border-gray-100 rounded-lg p-3 max-h-48 overflow-y-auto bg-gray-50/30 grid grid-cols-1 gap-2">
@@ -2847,15 +2847,15 @@
                     v-for="role in businessRoles"
                     :key="role.id"
                     class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-white p-2 rounded transition-colors"
-                    :class="ssoSyncRoleIds.includes(role.id) ? 'bg-white shadow-sm ring-1 ring-indigo-500/20' : ''"
+                    :class="ssoSyncRoleIds.includes(role.id) ? 'bg-white shadow-sm ring-1 ring-primary/20' : ''"
                   >
                     <input
                       type="checkbox"
                       :value="role.id"
                       v-model="ssoSyncRoleIds"
-                      class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                      class="h-4 w-4 rounded text-primary focus:ring-primary"
                     />
-                    <span class="text-xs font-bold" :class="ssoSyncRoleIds.includes(role.id) ? 'text-indigo-600' : 'text-gray-600'">{{ role.name }}</span>
+                    <span class="text-xs font-bold" :class="ssoSyncRoleIds.includes(role.id) ? 'text-primary' : 'text-gray-600'">{{ role.name }}</span>
                   </label>
                 </div>
               </div>
@@ -2872,7 +2872,7 @@
             <button
               @click="confirmExecuteSsoSync"
               :disabled="syncingSso"
-              class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-black shadow-lg shadow-indigo-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5"
+              class="px-8 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 text-sm font-bold shadow-lg shadow-primary/30 flex items-center gap-2 transition-all transform hover:-translate-y-0.5"
             >
               <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
               确认同步入库
@@ -3743,15 +3743,15 @@ const activeResTab = ref<ResourceTab>("agents");
 
 const resourceConfig: Record<
   (typeof resourceTypes)[number],
-  { label: string; color: string; icon: string }
+  { label: string; color: string; tabActive: string; tabTextActive: string; icon: string }
 > = {
-  agents: { label: "智能体", color: "blue", icon: "🤖" },
-  datasets: { label: "知识库", color: "green", icon: "📚" },
-  metadata: { label: "数据集", color: "orange", icon: "💾" },
-  apis: { label: "外部API", color: "purple", icon: "🔗" },
-  models: { label: "可用模型", color: "indigo", icon: "🧠" },
-  forbidden_configs: { label: "禁用资源", color: "red", icon: "🚫" },
-};
+  agents: { label: "智能体", color: "blue", tabActive: "text-primary border-primary bg-primary/5", tabTextActive: "text-primary", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>` },
+  datasets: { label: "知识库", color: "green", tabActive: "text-emerald-600 border-emerald-600 bg-emerald-50", tabTextActive: "text-emerald-600", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>` },
+  metadata: { label: "数据集", color: "orange", tabActive: "text-amber-600 border-amber-600 bg-amber-50", tabTextActive: "text-amber-600", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>` },
+  apis: { label: "外部API", color: "sky", tabActive: "text-sky-600 border-sky-600 bg-sky-50", tabTextActive: "text-sky-600", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>` },
+  models: { label: "可用模型", color: "teal", tabActive: "text-teal-600 border-teal-600 bg-teal-50", tabTextActive: "text-teal-600", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" /></svg>` },
+  forbidden_configs: { label: "禁用资源", color: "red", tabActive: "text-rose-600 border-rose-600 bg-rose-50", tabTextActive: "text-rose-600", icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>` },
+}
 
 const loadingResources = ref(false);
 const allResources = ref<{
@@ -4389,8 +4389,8 @@ const visibleResources = computed(() => {
 
 /** 可见范围徽标：与知识库页三档口径保持一致 */
 const KNOWLEDGE_SCOPE_BADGE: Record<string, { label: string; cls: string }> = {
-  public: { label: "授权可见", cls: "bg-blue-50 text-blue-600" },
-  team: { label: "TEAM 级", cls: "bg-violet-50 text-violet-600" },
+  public: { label: "授权可见", cls: "bg-primary/5 text-primary" },
+  team: { label: "TEAM 级", cls: "bg-primary/5 text-primary" },
   private: { label: "个人私有", cls: "bg-amber-50 text-amber-700" },
 };
 
@@ -4400,7 +4400,7 @@ const knowledgeScopeOf = (res: any): "public" | "team" | "private" => {
 };
 
 /** 兜底项：字段异常时也不让徽标消失 */
-const FALLBACK_SCOPE_BADGE = { label: "授权可见", cls: "bg-blue-50 text-blue-600" };
+const FALLBACK_SCOPE_BADGE = { label: "授权可见", cls: "bg-primary/5 text-primary" };
 
 const knowledgeScopeBadge = (res: any) =>
   KNOWLEDGE_SCOPE_BADGE[knowledgeScopeOf(res)] ?? FALLBACK_SCOPE_BADGE;
@@ -4482,7 +4482,7 @@ const methodBadgeClass = (method: string) => {
     case "GET":
       return "bg-emerald-50 text-emerald-600";
     case "POST":
-      return "bg-blue-50 text-blue-600";
+      return "bg-primary/5 text-primary";
     case "PUT":
     case "PATCH":
       return "bg-amber-50 text-amber-600";

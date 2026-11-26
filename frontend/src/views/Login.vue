@@ -94,7 +94,9 @@ const handleBackdropPointer = (payload: { x: number; y: number }) => {
 }
 
 const activeSatelliteIndex = ref(0)
-const activeSatellite = computed(() => F3_SATELLITES[activeSatelliteIndex.value] ?? F3_SATELLITES[0])
+const activeSatellite = computed(
+  () => F3_SATELLITES[activeSatelliteIndex.value] ?? F3_SATELLITES[0]!,
+)
 
 const liveTelemetryText = computed(() => {
     const id = activeThemeId.value
@@ -801,7 +803,7 @@ const handleLogin = async () => {
           class="max-w-[520px]"
           :class="[
             activeThemeId === 'g' ? 'pl-4' : '',
-            activeThemeId === 'h' ? 'rounded-2xl bg-[#f1f4f8]/75 backdrop-blur-md border border-slate-900/8 p-6' : '',
+            activeThemeId === 'h' ? 'rounded-2xl bg-[#f1f4f8]/75 backdrop-blur-md border border-slate-900/10 p-6' : '',
           ]"
         >
           <div
@@ -877,7 +879,7 @@ const handleLogin = async () => {
           class="flex items-center gap-4 font-mono text-[11px]"
           :class="[
             activeThemeId === 'g' ? 'pl-4 text-slate-500' : '',
-            activeThemeId === 'h' ? 'w-fit rounded-full bg-white/75 border border-slate-900/8 px-3.5 py-1.5 text-slate-600' : '',
+            activeThemeId === 'h' ? 'w-fit rounded-full bg-white/75 border border-slate-900/10 px-3.5 py-1.5 text-slate-600' : '',
             activeThemeId === 'i' ? 'text-slate-200/70' : '',
             activeThemeId === 'j' ? 'text-[#5b736a]' : '',
             activeThemeId === 'f1' || activeThemeId === 'f2' ? 'text-slate-500' : '',
@@ -1483,8 +1485,6 @@ const handleLogin = async () => {
   filter: brightness(1.14);
 }
 
-.animate-fade-slide-up { animation: fadeSlideUp 0.28s ease-out; }
-@keyframes fadeSlideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .animate-fade-in { animation: fadeIn 0.35s ease-out; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .animate-shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }

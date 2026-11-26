@@ -567,7 +567,7 @@ const segments = computed<ContentSegment[]>(() => {
         } else {
           result.push({
             type: 'text',
-            content: renderMarkdown(`> ⚠️ **SQL Plan 解析失败**\n\n\`\`\`json\n${rawSqlPlan}\n\`\`\``),
+            content: renderMarkdown(`> ⚠ **SQL Plan 解析失败**\n\n\`\`\`json\n${rawSqlPlan}\n\`\`\``),
           });
         }
       }
@@ -602,7 +602,7 @@ const segments = computed<ContentSegment[]>(() => {
         const errorCode = parsed.error.code;
         result.push({
           type: 'text',
-          content: renderMarkdown(`> ⚠️ **图表配置解析失败**\n> 原因：${parsed.error.message}（${errorCode}）\n\n\`\`\`json\n${jsonStr}\n\`\`\``),
+          content: renderMarkdown(`> ⚠ **图表配置解析失败**\n> 原因：${parsed.error.message}（${errorCode}）\n\n\`\`\`json\n${jsonStr}\n\`\`\``),
         });
       }
     }
@@ -654,7 +654,7 @@ const segments = computed<ContentSegment[]>(() => {
       <div v-if="segment.type === 'thought'" class="thought-block group mb-6">
         <div class="flex items-center space-x-2 mb-2 text-slate-400">
           <div class="p-1 bg-slate-100 rounded"><svg class="w-3.5 h-3.5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg></div>
-          <span class="text-[11px] font-black uppercase tracking-[0.2em]">Deep Reasoning</span>
+          <span class="text-[11px] font-bold uppercase tracking-[0.2em]">Deep Reasoning</span>
         </div>
         <div class="markdown-body thought-content pl-4 py-1 border-l-2 border-slate-200 text-slate-500/80 italic text-sm" v-html="segment.content"></div>
       </div>
@@ -680,7 +680,7 @@ const segments = computed<ContentSegment[]>(() => {
             :key="mode"
             @click="localChartTypes[idx] = mode"
             class="px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-[10px] font-bold transition-colors"
-            :class="getActiveChartMode(segment, idx) === mode ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
+            :class="getActiveChartMode(segment, idx) === mode ? 'text-primary dark:text-primary bg-primary/5 dark:bg-primary-dark/20' : 'text-gray-400'"
             :title="chartModeTitle[mode]"
           >
             {{ getChartViewModeLabel(mode) }}
@@ -696,7 +696,7 @@ const segments = computed<ContentSegment[]>(() => {
                 <th
                   v-for="(column, columnIndex) in getChartTable(segment).columns"
                   :key="`${column}-${columnIndex}`"
-                  class="sticky top-0 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-left font-black text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 whitespace-nowrap"
+                  class="sticky top-0 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-left font-bold text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 whitespace-nowrap"
                 >
                   {{ column }}
                 </th>
@@ -738,9 +738,9 @@ const segments = computed<ContentSegment[]>(() => {
           v-if="readonly"
           class="max-h-[420px] overflow-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-[11.5px] leading-relaxed text-gray-700 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-300"
         ><code>{{ segment.content }}</code></pre>
-        <div v-else class="p-4 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10 flex items-center justify-between shadow-sm">
+        <div v-else class="p-4 rounded-xl border border-primary/20 dark:border-primary-dark bg-primary/5 dark:bg-primary-dark/10 flex items-center justify-between shadow-sm">
           <div class="flex items-center space-x-3">
-            <div class="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+            <div class="p-2 bg-primary/10 dark:bg-primary-dark/30 rounded-lg text-primary dark:text-primary">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
             </div>
             <div>
@@ -750,7 +750,7 @@ const segments = computed<ContentSegment[]>(() => {
           </div>
           <button
             @click="emit('open-canvas', { type: 'html', title: segment.title || '', content: segment.content })"
-            class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-lg shadow-sm transition-all"
+            class="px-3 py-1.5 text-xs font-bold text-white bg-primary hover:bg-primary-dark active:scale-95 rounded-lg shadow-sm transition-all"
           >
             运行应用
           </button>
@@ -791,15 +791,15 @@ const segments = computed<ContentSegment[]>(() => {
           <summary class="analysis-summary">
             <div class="flex items-center justify-between w-full">
               <div class="flex items-center space-x-2">
-                <div class="p-1 bg-blue-500 rounded text-white shadow-sm shadow-blue-500/20">
+                <div class="p-1 bg-primary rounded text-white shadow-sm shadow-primary/20">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                   </svg>
                 </div>
-                <span class="text-xs font-black text-gray-800 dark:text-gray-100 uppercase tracking-tight">{{ segment.title }}</span>
+                <span class="text-xs font-bold text-gray-800 dark:text-gray-100 uppercase tracking-tight">{{ segment.title }}</span>
               </div>
               <div class="flex items-center space-x-2">
-                <span class="text-[10px] font-bold text-gray-400 group-hover:text-blue-500 transition-colors">思维链路</span>
+                <span class="text-[10px] font-bold text-gray-400 group-hover:text-primary transition-colors">思维链路</span>
                 <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-300 group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
                 </svg>

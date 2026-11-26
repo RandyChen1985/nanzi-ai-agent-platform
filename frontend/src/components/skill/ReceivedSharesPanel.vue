@@ -132,7 +132,7 @@ onMounted(() => {
         <button
           type="button"
           class="rounded-md px-3 py-1.5 text-xs font-medium transition-all"
-          :class="filter === 'PENDING' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          :class="filter === 'PENDING' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
           @click="load('PENDING')"
         >
           待处理<span v-if="pendingCount" class="ml-1 tabular-nums text-amber-600">{{ pendingCount }}</span>
@@ -140,7 +140,7 @@ onMounted(() => {
         <button
           type="button"
           class="rounded-md px-3 py-1.5 text-xs font-medium transition-all"
-          :class="filter === 'all' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          :class="filter === 'all' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
           @click="load('all')"
         >
           全部
@@ -182,7 +182,7 @@ onMounted(() => {
       <article
         v-for="item in items"
         :key="item.id"
-        class="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-blue-200 dark:border-gray-700 dark:bg-gray-900"
+        class="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-primary/20 dark:border-gray-700 dark:bg-gray-900"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
@@ -207,7 +207,7 @@ onMounted(() => {
         <p class="mt-3 line-clamp-2 text-sm text-gray-600 dark:text-gray-300">{{ item.description || '暂无描述' }}</p>
         <blockquote
           v-if="item.message"
-          class="mt-2 rounded-lg border-l-2 border-blue-200 bg-blue-50/60 px-3 py-1.5 text-xs text-blue-800 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-200"
+          class="mt-2 rounded-lg border-l-2 border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary-dark dark:border-primary-dark dark:bg-primary-dark/30 dark:text-primary-hover"
         >
           {{ item.message }}
         </blockquote>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { UserGroupIcon } from "@heroicons/vue/24/outline";
 /**
  * 专家团设置：改「这个智能体是不是团主专家」、团的展示文案，以及**成员名单**。
  *
@@ -271,7 +272,7 @@ const submit = () => {
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 text-sm font-medium text-gray-700">
-              <span>👥</span><span>专家团主专家</span>
+              <UserGroupIcon class="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" /><span>专家团主专家</span>
             </div>
             <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
               打开后会在智能体中心以「专家团」形式展示；关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
@@ -381,10 +382,10 @@ const submit = () => {
               v-if="canEditMembers && scopeUnrestricted"
               class="border-b border-sky-100 bg-sky-50/60 px-3 py-2.5"
             >
-              <div class="flex items-center gap-1.5 text-[11px] font-semibold text-sky-800">
+              <div class="flex items-center gap-1.5 text-[11px] font-semibold text-primary-dark">
                 <span>ⓘ</span><span>当前没有限定调度范围</span>
               </div>
-              <p class="mt-1 text-[11px] leading-relaxed text-sky-700/90">
+              <p class="mt-1 text-[11px] leading-relaxed text-primary-dark/90">
                 现在主专家可以委派<b>全部已授权</b>的子智能体。保存下面的名单后会收窄为
                 <b>仅名单内</b>，名单外的一律拒绝。
               </p>
@@ -410,7 +411,7 @@ const submit = () => {
                       memberRows.lead.display_name
                     }}</span>
                     <span
-                      class="shrink-0 rounded-full bg-sky-50 px-1.5 py-px text-[10px] font-medium text-sky-700"
+                      class="shrink-0 rounded-full bg-sky-50 px-1.5 py-px text-[10px] font-medium text-primary-dark"
                       >主专家</span
                     >
                   </div>

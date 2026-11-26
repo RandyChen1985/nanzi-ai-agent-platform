@@ -87,7 +87,7 @@ const submit = async () => {
         </div>
 
         <div class="space-y-3 px-5 pb-4">
-          <div class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
+          <div class="rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark">
             <template v-if="isPublish">
               <strong>「{{ agent?.display_name }}」将立即成为平台系统级智能体</strong><br />
               它会进入主助手的自动委派候选与路由，被授权的用户可直接使用。
@@ -103,7 +103,7 @@ const submit = async () => {
             v-if="isPublish"
             class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900"
           >
-            ⚠ 发布后<strong>不能直接发布新配置</strong>：能力配置可以改草稿并调试，
+            发布后<strong>不能直接发布新配置</strong>：能力配置可以改草稿并调试，
             但上线要走「申请上线」由管理员审批；名称、描述、头像等元数据变为只读。
             系统会自动把所有者加入可用名单。
           </div>

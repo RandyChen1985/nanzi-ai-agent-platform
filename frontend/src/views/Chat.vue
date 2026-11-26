@@ -15,7 +15,7 @@
         
         <!-- Loading State -->
         <div v-if="loading" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/50 backdrop-blur-sm z-20">
-            <div class="w-12 h-12 border-4 border-blue-100 border-b-blue-600 rounded-full animate-spin mb-4"></div>
+            <div class="w-12 h-12 border-4 border-primary/10 border-b-blue-600 rounded-full animate-spin mb-4"></div>
             <p class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4">初始化智能对话中...</p>
             
             <!-- Timeout Retry Button -->
@@ -23,7 +23,7 @@
                 <span class="text-xs text-red-400">连接似乎有点慢...</span>
                 <button 
                     @click="retryInit" 
-                    class="px-4 py-2 bg-white border border-gray-200 shadow-sm text-sm text-gray-600 hover:text-blue-600 hover:border-blue-300 rounded-lg transition-all flex items-center space-x-2"
+                    class="px-4 py-2 bg-white border border-gray-200 shadow-sm text-sm text-gray-600 hover:text-primary hover:border-primary/25 rounded-lg transition-all flex items-center space-x-2"
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -344,11 +344,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-.animate-fade-in {
-  animation: fade-in 0.3s ease-out forwards;
-}
+
 </style>

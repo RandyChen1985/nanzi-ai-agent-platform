@@ -731,17 +731,17 @@ onBeforeUnmount(() => {
                         </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <span class="inline-flex items-center gap-2 px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-50 text-blue-800">
+                        <span class="inline-flex items-center gap-2 px-2.5 py-1 text-xs font-semibold rounded-full bg-primary/5 text-primary-dark">
                             <span class="provider-mini-icon" :style="{ backgroundColor: providerMeta(m.provider).color }">{{ providerMeta(m.provider).icon }}</span>
                             {{ providerLabels[m.provider] || m.provider }}
                         </span>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <span class="inline-flex items-center space-x-1.5 select-none">
-                            <svg v-if="m.type === 'multimodal'" class="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="多模态模型">
+                            <svg v-if="m.type === 'multimodal'" class="w-4 h-4 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="多模态模型">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
-                            <svg v-else class="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="语言模型">
+                            <svg v-else class="w-4 h-4 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="语言模型">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                             </svg>
                             <span class="font-medium">{{ m.type === 'llm' ? 'LLM' : (m.type === 'multimodal' ? 'Multimodal' : m.type) }}</span>
@@ -768,7 +768,7 @@ onBeforeUnmount(() => {
                         <button
                             v-if="canSave"
                             type="button"
-                            class="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50"
+                            class="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-primary-dark transition-colors hover:bg-primary/5"
                             title="查看模型使用关系"
                             @click="openModelUsage(m)"
                         >
@@ -785,7 +785,7 @@ onBeforeUnmount(() => {
                                 @click="testModel(m)" 
                                 :disabled="testingModelId === m.id"
                                 title="测试连接"
-                                class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-50"
+                                class="p-1.5 text-primary hover:bg-primary/5 rounded-md transition-colors disabled:opacity-50"
                             >
                                 <svg v-if="testingModelId === m.id" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -797,7 +797,7 @@ onBeforeUnmount(() => {
                             <button 
                                 @click="openModelModal(m)" 
                                 title="编辑模型"
-                                class="p-1.5 text-primary hover:bg-blue-50 rounded-md transition-colors"
+                                class="p-1.5 text-primary hover:bg-primary/5 rounded-md transition-colors"
                             >
                                 <PencilSquareIcon class="h-4 w-4" />
                             </button>
@@ -934,14 +934,14 @@ onBeforeUnmount(() => {
                        <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
                     </div>
                     <template v-if="modelForm.type !== 'embedding'">
-                        <section class="mb-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+                        <section class="mb-3 rounded-lg border border-primary/10 bg-primary/5 p-3">
                             <div class="flex items-center justify-between gap-3">
                                 <div>
                                     <div class="flex items-center gap-1.5">
                                         <label class="block text-sm font-medium text-gray-700">模型温度 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}</label>
                                         <button
                                             type="button"
-                                            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-blue-300 text-[10px] font-bold leading-none text-blue-600 hover:bg-blue-100"
+                                            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary/25 text-[10px] font-bold leading-none text-primary hover:bg-primary/10"
                                             aria-label="查看温度参考"
                                             title="查看各家模型温度参考"
                                             @click="showTemperatureGuide = true"
@@ -949,7 +949,7 @@ onBeforeUnmount(() => {
                                     </div>
                                     <p class="mt-1 text-xs text-gray-500">新建模型默认跟随全局温度，可按模型单独调整；测试连接会使用这里的值。</p>
                                 </div>
-                                <span class="shrink-0 text-xs text-blue-600">0～2</span>
+                                <span class="shrink-0 text-xs text-primary">0～2</span>
                             </div>
                             <input
                                 v-model.number="modelForm.temperature"
@@ -957,7 +957,7 @@ onBeforeUnmount(() => {
                                 min="0"
                                 max="2"
                                 step="0.05"
-                                class="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-blue-100 accent-blue-600"
+                                class="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-primary/10 accent-primary"
                             />
                             <p class="mt-2 text-[11px] leading-4 text-gray-500">
                                 当前 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}：{{ getTemperatureGuidance(modelForm.temperature) }}
@@ -1095,7 +1095,7 @@ onBeforeUnmount(() => {
               
                 <div class="flex justify-end space-x-3 mt-6">
                     <button @click="showModelModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
-                    <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim()" class="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 rounded-md text-sm font-medium text-primary bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim()" class="inline-flex items-center gap-2 px-4 py-2 border border-primary/20 rounded-md text-sm font-medium text-primary bg-primary/5 hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg v-if="testingFormModel" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
                         {{ testingFormModel ? '测试中' : '测试连接' }}
                     </button>
@@ -1146,19 +1146,19 @@ onBeforeUnmount(() => {
                   <tr
                     v-for="reference in temperatureReference"
                     :key="reference.provider"
-                    :class="isCurrentTemperatureProvider(reference) ? 'bg-blue-50/70' : 'bg-white'"
+                    :class="isCurrentTemperatureProvider(reference) ? 'bg-primary/5' : 'bg-white'"
                   >
                     <td class="px-3 py-3 align-top font-semibold text-slate-800">
                       <span class="inline-flex items-center gap-1.5">
                         {{ reference.provider }}
-                        <span v-if="isCurrentTemperatureProvider(reference)" class="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">当前</span>
+                        <span v-if="isCurrentTemperatureProvider(reference)" class="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark">当前</span>
                       </span>
                     </td>
                     <td class="px-3 py-3 align-top leading-5">{{ reference.range }}</td>
                     <td class="px-3 py-3 align-top leading-5">{{ reference.recommendation }}</td>
                     <td class="px-3 py-3 align-top leading-5">{{ reference.scenarios }}</td>
                     <td class="px-3 py-3 align-top">
-                      <a :href="reference.officialUrl" target="_blank" rel="noopener noreferrer" class="font-medium text-blue-600 hover:text-blue-800 hover:underline">官方文档</a>
+                      <a :href="reference.officialUrl" target="_blank" rel="noopener noreferrer" class="font-medium text-primary hover:text-primary-dark hover:underline">官方文档</a>
                     </td>
                   </tr>
                 </tbody>

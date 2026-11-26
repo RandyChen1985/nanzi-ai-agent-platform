@@ -36,7 +36,7 @@
             <span class="block truncate text-xs text-gray-500 dark:text-gray-400">{{ activity.subtitle }}</span>
           </span>
           <span class="hidden text-xs text-gray-400 sm:block">{{ formatTime(activity.occurred_at) }}</span>
-          <span class="rounded-lg bg-blue-50 px-2 py-1 text-center text-xs font-medium text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">{{ activityLabel(activity) }}</span>
+          <span class="rounded-lg bg-primary/5 px-2 py-1 text-center text-xs font-medium text-primary dark:bg-primary-dark/40 dark:text-primary-hover">{{ activityLabel(activity) }}</span>
         </button>
       </div>
       <div v-else class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-gray-800">

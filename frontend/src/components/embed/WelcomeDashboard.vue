@@ -195,7 +195,7 @@ const recommendationButtonLabel = computed(() => {
     <!-- Header：先回答“现在能做什么”，家底放在行动之后 -->
     <header class="mb-6 sm:mb-7 animate-fade-in-up">
       <p class="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-300">对话首页</p>
-      <h1 class="mt-1.5 text-3xl sm:text-[34px] font-black tracking-[-0.045em] text-gray-900 dark:text-gray-100">
+      <h1 class="mt-1.5 text-3xl sm:text-[34px] font-bold tracking-[-0.045em] text-gray-900 dark:text-gray-100">
         {{ greeting }}
       </h1>
       <p class="mt-2 max-w-xl text-sm leading-relaxed text-gray-500 dark:text-gray-400">
@@ -220,7 +220,7 @@ const recommendationButtonLabel = computed(() => {
     <!-- 开始一件事：默认入口卡 + 基于近 3 天会话的生成推荐 -->
     <section class="w-full animate-fade-in-up delay-100">
       <div class="mb-3 flex min-w-0 items-center gap-2 px-1">
-        <p class="shrink-0 text-[10px] font-black uppercase tracking-widest text-gray-300">开始一件事</p>
+        <p class="shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-300">开始一件事</p>
         <span class="hidden text-[10px] text-gray-300 sm:inline">点卡片开始</span>
         <span class="flex-1"></span>
         <span
@@ -276,7 +276,7 @@ const recommendationButtonLabel = computed(() => {
                 type="button"
                 :aria-label="card.title"
                 :style="{ '--welcome-card-index': index }"
-                class="welcome-card-item group flex min-h-[132px] flex-col rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-blue-50/30 hover:shadow-md dark:border-gray-700 dark:bg-gray-800/50 dark:hover:bg-blue-900/10 lg:p-5"
+                class="welcome-card-item group flex min-h-[132px] flex-col rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary/5 hover:shadow-md dark:border-gray-700 dark:bg-gray-800/50 dark:hover:bg-primary-dark/10 lg:p-5"
                 @click="card.kind === 'configured' ? emit('quick-question', card.prompt) : handleActionCard(card)"
               >
                 <div class="flex items-start gap-3">
@@ -306,7 +306,7 @@ const recommendationButtonLabel = computed(() => {
     <!-- 我的资源：压成一条可扫读的状态条，放在行动之后 -->
     <section v-if="personalResources?.length" class="mt-6 w-full animate-fade-in-up delay-200">
       <div class="mb-2.5 flex items-center gap-1.5 px-1">
-        <p class="text-[10px] font-black uppercase tracking-widest text-gray-300">我的资源</p>
+        <p class="text-[10px] font-bold uppercase tracking-widest text-gray-300">我的资源</p>
         <button
           type="button"
           class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-300 transition-colors hover:bg-gray-100 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-gray-800"
@@ -343,19 +343,7 @@ const recommendationButtonLabel = computed(() => {
 </template>
 
 <style scoped>
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.animate-fade-in-up {
-  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
+
 .delay-100 { animation-delay: 0.08s; }
 .delay-200 { animation-delay: 0.16s; }
 

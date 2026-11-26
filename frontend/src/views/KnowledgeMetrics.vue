@@ -696,9 +696,3 @@ onUnmounted(() => {
   activeController = null
 })
 </script>
-
-<style scoped>
-.text-primary {
-  color: var(--color-primary, #3b82f6);
-}
-</style>

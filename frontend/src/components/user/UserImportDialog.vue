@@ -60,19 +60,19 @@
         <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <!-- Step 1: upload -->
           <section v-if="step === 'upload'" class="space-y-5">
-            <div class="flex flex-col gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex flex-col gap-3 rounded-xl border border-primary/10 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div class="flex items-start gap-2.5">
-                <DocumentArrowDownIcon class="mt-0.5 h-5 w-5 shrink-0 text-indigo-500" />
+                <DocumentArrowDownIcon class="mt-0.5 h-5 w-5 shrink-0 text-primary" />
                 <div>
-                  <p class="text-sm font-semibold text-indigo-900">第一步：下载导入模板</p>
-                  <p class="mt-0.5 text-xs leading-relaxed text-indigo-700/80">
+                  <p class="text-sm font-semibold text-primary-dark">第一步：下载导入模板</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-primary-dark/80">
                     模板包含「账号、姓名、邮箱、角色」四列，并在说明页列出当前全部业务角色编码与名称。
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-sm font-medium text-indigo-700 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary/20 bg-white px-3.5 py-2 text-sm font-medium text-primary-dark shadow-sm transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60"
                 :disabled="downloadingTemplate"
                 @click="downloadTemplate"
               >
@@ -448,19 +448,19 @@
                   class="text-xs font-medium"
                   :class="!sendEmailRequested
                     ? 'text-gray-500'
-                    : emailFailedCount ? 'text-red-700' : 'text-sky-700'"
+                    : emailFailedCount ? 'text-red-700' : 'text-primary-dark'"
                 >
                   密码邮件
                 </p>
                 <template v-if="sendEmailRequested">
                   <p
                     class="mt-1 text-2xl font-bold"
-                    :class="emailFailedCount ? 'text-red-700' : 'text-sky-700'"
+                    :class="emailFailedCount ? 'text-red-700' : 'text-primary-dark'"
                   >
                     {{ emailSentCount }}<span class="ml-1 text-sm font-normal">成功</span>
                   </p>
                   <p v-if="emailFailedCount" class="text-xs text-red-600">失败 {{ emailFailedCount }}</p>
-                  <p v-else-if="created.length" class="text-xs text-sky-600">已全部提交</p>
+                  <p v-else-if="created.length" class="text-xs text-primary">已全部提交</p>
                   <p v-else class="text-xs text-gray-500">无账号可发送</p>
                 </template>
                 <p v-else class="mt-1 text-sm font-semibold text-gray-500">未开启</p>
@@ -486,7 +486,7 @@
             </div>
             <div
               v-else-if="sendEmailRequested"
-              class="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"
+              class="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-primary-dark"
             >
               <template v-if="created.length">
                 <p class="font-semibold">密码邮件已提交给邮件服务器（{{ emailSentCount }} 封）</p>

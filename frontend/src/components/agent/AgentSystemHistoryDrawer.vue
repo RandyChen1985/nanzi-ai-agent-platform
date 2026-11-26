@@ -53,12 +53,12 @@ const eventTone = (entry: AgentSystemHistoryEntry) => {
   const map: Record<string, { dot: string; label: string }> = {
     PUBLISH: { dot: 'bg-emerald-500', label: '发布为系统级' },
     UNPUBLISH: { dot: 'bg-red-500', label: '下架（取消系统级）' },
-    META_UPDATE: { dot: 'bg-blue-500', label: '修改元数据' },
+    META_UPDATE: { dot: 'bg-primary', label: '修改元数据' },
     TOGGLE_ENABLED: { dot: 'bg-slate-500', label: '启用状态变更' },
-    BASELINE_PUBLISH: { dot: 'bg-indigo-500', label: '发布新基线版本' },
-    TRANSFER_OWNER: { dot: 'bg-violet-500', label: '变更权属人' },
-  SHARE_SEND: { dot: 'bg-sky-500', label: '分享给同事' },
-  SHARE_ACCEPT: { dot: 'bg-sky-500', label: '分享被接受' },
+    BASELINE_PUBLISH: { dot: 'bg-primary', label: '发布新基线版本' },
+    TRANSFER_OWNER: { dot: 'bg-primary', label: '变更权属人' },
+  SHARE_SEND: { dot: 'bg-primary', label: '分享给同事' },
+  SHARE_ACCEPT: { dot: 'bg-primary', label: '分享被接受' },
   SHARE_REJECT: { dot: 'bg-gray-400', label: '分享被拒绝' },
   SHARE_REVOKE: { dot: 'bg-amber-500', label: '分享已作废' },
   }
@@ -164,7 +164,7 @@ watch(
               </p>
               <p
                 v-if="entry.comment"
-                class="mt-1 rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-xs leading-relaxed text-blue-900"
+                class="mt-1 rounded-md border border-primary/10 bg-primary/5 px-2.5 py-1.5 text-xs leading-relaxed text-primary-dark"
               >
                 申请理由：{{ entry.comment }}
               </p>

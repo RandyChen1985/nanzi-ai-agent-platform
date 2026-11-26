@@ -296,6 +296,48 @@ def test_skills_stats_endpoint_is_login_readable_not_admin_gated():
     assert "skill_platform_admin" not in stats_block
 
 
+def test_platform_skill_read_endpoints_are_login_readable():
+    """平台技能详情 / 文件 / 预览是只读接口：登录即可看。
+
+    技能工作台的「平台技能」页签对所有登录用户可见（无 element:skills:admin 时
+    只读浏览），因此这三条读接口不能再挂 admin 依赖；写操作仍是 admin。
+    """
+    from app.core.dependencies import require_api_key
+
+    for path in ("/{skill_id}", "/{skill_id}/files", "/{skill_id}/preview"):
+        route = next(
+            r for r in skills.router.routes if r.path == path and "GET" in r.methods
+        )
+        calls = [getattr(item, "call", None) for item in route.dependant.dependencies]
+        assert require_api_key in calls, path
+        assert skills.skill_platform_admin not in calls, path
+
+
+def test_platform_skill_export_download_and_bindings_stay_admin_only():
+    """整包导出、任意文件下载、绑定反查属管理动作，仍然只给平台技能管理员。"""
+    for path in ("/{skill_id}/export", "/{skill_id}/download", "/bindings"):
+        route = next(
+            r for r in skills.router.routes if r.path == path and "GET" in r.methods
+        )
+        calls = [getattr(item, "call", None) for item in route.dependant.dependencies]
+        assert skills.skill_platform_admin in calls, path
+
+
+def test_secure_skill_path_rejects_symlink_escape(mock_skills_dir):
+    """只读接口对全部登录用户开放后，软链不能把读取带出技能库。"""
+    outside = mock_skills_dir.parent / "outside-secret"
+    outside.mkdir()
+    (outside / "secret.md").write_text("leak", encoding="utf-8")
+
+    skill_dir = mock_skills_dir / "linked-skill"
+    skill_dir.mkdir()
+    (skill_dir / "escape").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(HTTPException) as exc:
+        skills.validate_secure_skill_path("linked-skill", "escape/secret.md")
+    assert exc.value.status_code == 403
+
+
 def test_enforce_command_blacklist(mock_skills_dir):
     from unittest.mock import patch, AsyncMock
     from app.services.ai.runtime.agentscope.tools import _enforce_command_blacklist

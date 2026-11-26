@@ -520,7 +520,6 @@ const selectableFilteredProfiles = computed(() =>
   filteredTableProfiles.value.filter((t) => !isTableImported(t.table_name)),
 )
 
-
 const importedTableSet = computed(() => {
   const set = new Set<string>()
   for (const name of props.importedTableNames || []) {
@@ -728,10 +727,10 @@ const goDataSourceManagement = () => {
 
 // db_type 标签颜色
 const dbTypeColor = (type: string) => {
-  if (type === 'mysql') return 'bg-blue-100 text-blue-700'
-  if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700'
+  if (type === 'mysql') return 'bg-primary/10 text-primary-dark'
+  if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 dark:text-cyan-300'
   if (type === 'oracle') return 'bg-red-100 text-red-700'
-  if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700'
+  if (type === 'sqlserver' || type === 'mssql') return 'bg-primary/10 text-primary-dark'
   return 'bg-gray-100 text-gray-600'
 }
 </script>
@@ -812,7 +811,7 @@ const dbTypeColor = (type: string) => {
                     <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase" :class="dbTypeColor(c.db_type)">{{ c.db_type }}</span>
                     <span
                       v-if="selectedConfigId === c.id && testing"
-                      class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/5 text-primary border border-primary/10"
                     >验证中...</span>
                     <span
                       v-else-if="selectedConfigId === c.id && testPassed"
@@ -846,14 +845,14 @@ const dbTypeColor = (type: string) => {
             </div>
           </div>
 
-          <div v-if="config.type === 'clickhouse' && selectedConfigId" class="p-4 bg-blue-50/50 border border-blue-100 rounded-xl">
+          <div v-if="config.type === 'clickhouse' && selectedConfigId" class="p-4 bg-primary/5 border border-primary/10 rounded-xl">
             <div class="flex gap-3">
-              <div class="text-blue-500 mt-0.5">
+              <div class="text-primary mt-0.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               </div>
-              <div class="text-[11px] text-blue-700 leading-normal">
+              <div class="text-[11px] text-primary-dark leading-normal">
                 <p class="font-bold mb-1">ClickHouse 连接提示：</p>
-                <p>系统使用原生 TCP 协议。常用端口为 <strong class="underline decoration-blue-300">9000</strong>。如果您之前使用的是 8123 (HTTP 端口)，请尝试更改为 9000。</p>
+                <p>系统使用原生 TCP 协议。常用端口为 <strong class="underline decoration-primary/25">9000</strong>。如果您之前使用的是 8123 (HTTP 端口)，请尝试更改为 9000。</p>
               </div>
             </div>
           </div>
@@ -878,14 +877,14 @@ const dbTypeColor = (type: string) => {
         <div v-else class="h-full flex flex-col gap-2.5 min-h-0">
           <div
             v-if="isDataSourceLocked"
-            class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 shrink-0 text-[11px] min-w-0"
+            class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-primary/5 border border-primary/10 shrink-0 text-[11px] min-w-0"
             title="追加导入仅允许从该数据源选表，不可切换其他数据源"
           >
             <img v-if="isDbTypeImage(dbTypeIcon(lockedConfig?.db_type || config.type))" :src="dbTypeIconSrc(lockedConfig?.db_type || config.type)" :alt="lockedConfig?.db_type || config.type" class="h-4 w-4 shrink-0 object-contain" />
             <component v-else :is="dbTypeIcon(lockedConfig?.db_type || config.type)" class="w-4 h-4 text-slate-600 shrink-0" />
-            <span class="font-bold text-blue-800 shrink-0">数据源已锁定</span>
-            <span class="text-blue-200 shrink-0">|</span>
-            <span class="font-mono font-bold text-blue-900 shrink-0">{{ lockedDataSourceName }}</span>
+            <span class="font-bold text-primary-dark shrink-0">数据源已锁定</span>
+            <span class="text-primary/30 shrink-0">|</span>
+            <span class="font-mono font-bold text-primary-dark shrink-0">{{ lockedDataSourceName }}</span>
             <span
               v-if="lockedConfig?.db_type"
               class="px-1 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
@@ -895,7 +894,7 @@ const dbTypeColor = (type: string) => {
             </span>
             <span
               v-if="lockedConfig"
-              class="text-blue-600/70 font-mono truncate min-w-0"
+              class="text-primary/70 font-mono truncate min-w-0"
             >
               {{ lockedConfig.host }}:{{ lockedConfig.port }}/{{ lockedConfig.database_name }}
             </span>
@@ -1004,7 +1003,7 @@ const dbTypeColor = (type: string) => {
                  class="p-4 flex items-center gap-4 transition-colors"
                  :class="isTableImported(table.name)
                    ? 'bg-gray-50/80 cursor-not-allowed opacity-70'
-                   : 'hover:bg-blue-50/30 cursor-pointer'"
+                   : 'hover:bg-primary/5 cursor-pointer'"
                >
                   <div class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all shrink-0"
                        :class="isTableImported(table.name)
@@ -1027,7 +1026,7 @@ const dbTypeColor = (type: string) => {
                       <span
                         v-else-if="table.type"
                         class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
-                        :class="table.type === 'view' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-blue-100 text-blue-700 border border-blue-200'"
+                        :class="table.type === 'view' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-primary/10 text-primary-dark border border-primary/20'"
                       >
                         {{ table.type === 'view' ? '视图' : '表' }}
                       </span>
@@ -1148,7 +1147,7 @@ const dbTypeColor = (type: string) => {
                           <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
                             <span class="text-sm font-mono font-bold text-gray-800 break-all">{{ displayTableName(profile.table_name) }}</span>
                             <span v-if="isTableImported(profile.table_name)" class="text-[9px] px-1 py-0.5 rounded font-bold bg-gray-100 text-gray-500">已导入</span>
-                            <span v-else class="text-[9px] px-1 py-0.5 rounded font-black shrink-0" :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'">{{ profile.table_type === 'view' ? 'VIEW' : 'TABLE' }}</span>
+                            <span v-else class="text-[9px] px-1 py-0.5 rounded font-bold shrink-0" :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary-dark'">{{ profile.table_type === 'view' ? 'VIEW' : 'TABLE' }}</span>
                             <span v-if="profile.confidence_score != null" class="text-[9px] px-1 py-0.5 rounded font-bold shrink-0" :class="confidenceClass(profile.confidence_score)">{{ profile.confidence_score }}分</span>
                             <span v-if="profile.is_ignored === 1" class="text-[9px] text-orange-600 font-bold">建议忽略</span>
                           </div>
@@ -1325,7 +1324,7 @@ const dbTypeColor = (type: string) => {
         <div v-if="step === 1 && !isDataSourceLocked" class="flex items-center gap-2 min-w-0 flex-1 justify-end">
           <div v-if="selectedConfigId" class="hidden sm:flex items-center gap-1.5 text-xs text-gray-500 min-w-0 mr-1">
             <template v-if="testing">
-              <svg class="animate-spin h-3.5 w-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <svg class="animate-spin h-3.5 w-3.5 text-primary shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
               <span class="truncate">验证 <strong class="text-gray-700">{{ selectedConfigName }}</strong> 连接中</span>
             </template>
             <template v-else-if="testPassed">
@@ -1352,7 +1351,7 @@ const dbTypeColor = (type: string) => {
             class="px-5 py-1.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 shrink-0 disabled:opacity-50"
             :class="testPassed && !testing && !loading
               ? 'bg-primary hover:bg-primary-dark text-white'
-              : 'bg-blue-600 hover:bg-blue-700 text-white'"
+              : 'bg-primary/60 hover:bg-primary/70 text-white'"
           >
             <svg v-if="testing || loading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             <svg v-else-if="testPassed" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
@@ -1391,11 +1390,5 @@ const dbTypeColor = (type: string) => {
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(20px) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+
 </style>

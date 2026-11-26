@@ -3,7 +3,7 @@
  *
  * 「挂载数据集 / 知识库」在三个地方发生：
  *  1. 知识库面板（`useKnowledgePortal`）逐个拨开关；
- *  2. 数据门户（`useDatasetMount`）勾选 📊 数据集；
+ *  2. 数据门户（`useDatasetMount`）勾选数据集；
  *  3. 加号菜单「数据&知识库」浮层（`DataKnowledgeCascadeMenu` + `ChatInput`）。
  *
  * 三处写出的 chip 必须逐字段一致——发送链（`useChatAttachments`）依赖 `type` 与

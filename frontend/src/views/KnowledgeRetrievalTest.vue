@@ -487,7 +487,7 @@ onMounted(fetchRagFlowConfig)
           :title="connectivityError ? `点击重新检测（上次失败：${connectivityError}）` : '点击重新检测连通性'"
           @click="checkConnectivity"
           :class="{
-            'border-blue-200 bg-blue-50/50 text-blue-700': isKnowledgeEnabled && engineStatus === 'checking',
+            'border-primary/20 bg-primary/5 text-blue-700': isKnowledgeEnabled && engineStatus === 'checking',
             'border-emerald-200 bg-emerald-50/50 text-emerald-700': isKnowledgeEnabled && engineStatus === 'connected',
             'border-amber-200 bg-amber-50/50 text-amber-700': !isKnowledgeEnabled || engineStatus === 'disconnected'
           }"
@@ -495,7 +495,7 @@ onMounted(fetchRagFlowConfig)
           <span
             class="inline-block w-2 h-2 rounded-full"
             :class="{
-              'bg-blue-500 animate-pulse': engineStatus === 'checking',
+              'bg-primary animate-pulse': engineStatus === 'checking',
               'bg-emerald-500': engineStatus === 'connected',
               'bg-amber-500': engineStatus === 'disconnected'
             }"
@@ -540,10 +540,10 @@ onMounted(fetchRagFlowConfig)
                   <span
                     v-for="item in datasetDisplayItems"
                     :key="item.id"
-                    class="inline-flex max-w-full items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-700"
+                    class="inline-flex max-w-full items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-xs text-primary-dark"
                   >
                     <span class="max-w-[170px] truncate">{{ item.name }}</span>
-                    <button type="button" class="shrink-0 text-indigo-400 hover:text-indigo-700" :aria-label="`移除${item.name}`" :disabled="!isEngineReady" @click="removeDataset(item.id)">×</button>
+                    <button type="button" class="shrink-0 text-primary hover:text-primary-dark" :aria-label="`移除${item.name}`" :disabled="!isEngineReady" @click="removeDataset(item.id)">×</button>
                   </span>
                   <button
                     v-if="hiddenDatasetCount > 0"
@@ -746,7 +746,7 @@ onMounted(fetchRagFlowConfig)
                     </div>
                     <p class="text-xs text-gray-500 mt-1 font-mono">
                       Chunk: {{ chunk.chunk_id || chunk.id || '-' }} · 相似度: <span class="font-bold" :class="scoreClass(chunk)">{{ formatScore(chunk) }}</span>
-                      <span v-if="chunk.dataset_id && datasetNameById[chunk.dataset_id]" class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">{{ datasetNameById[chunk.dataset_id] }}</span>
+                      <span v-if="chunk.dataset_id && datasetNameById[chunk.dataset_id]" class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-primary/5 text-primary-dark">{{ datasetNameById[chunk.dataset_id] }}</span>
                       <span v-if="chunk.page_no" class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">第 {{ chunk.page_no }} 页</span>
                     </p>
                   </div>

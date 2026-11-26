@@ -258,7 +258,7 @@ return {
     assert result["selected"] == result["selectedIndigo"]
 
     # 无选中：保持现状，不得残留红色标题/底色
-    assert "border-gray-150" in result["plainGray"]["bigCard"]
+    assert "border-gray-100" in result["plainGray"]["bigCard"]
     assert "bg-white" in result["plainGray"]["bigCard"]
     assert result["plainGray"]["subCard"] == "border-gray-200"
     assert "bg-gray-50" in result["plainGray"]["subHead"]
@@ -267,13 +267,13 @@ return {
     # 内置组圆点本来就是红色（沙箱/高危语义），这里不能被"无选中"改掉
     assert result["plainGray"]["dot"] == "bg-red-500"
 
-    assert result["plainIndigo"]["subCard"] == "border-indigo-100"
-    assert "bg-indigo-50/60" in result["plainIndigo"]["subHead"]
-    assert result["plainIndigo"]["title"] == "text-indigo-700"
-    assert result["plainIndigo"]["count"] == "text-indigo-400"
-    assert result["plainIndigo"]["arrow"] == "text-indigo-400"
-    assert result["plainIndigo"]["dot"] == "bg-indigo-500"
-    assert "text-indigo-600" in result["plainIndigo"]["action"]
+    assert result["plainIndigo"]["subCard"] == "border-primary/10"
+    assert "bg-primary/5" in result["plainIndigo"]["subHead"]
+    assert result["plainIndigo"]["title"] == "text-primary-dark"
+    assert result["plainIndigo"]["count"] == "text-primary"
+    assert result["plainIndigo"]["arrow"] == "text-primary"
+    assert result["plainIndigo"]["dot"] == "bg-primary"
+    assert "text-primary" in result["plainIndigo"]["action"]
 
 
 # skills 模式：后端 `skill_candidates` 只给 { id, label, description, group_key, group }，没有 category/aliases。

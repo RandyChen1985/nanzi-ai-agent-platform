@@ -91,16 +91,16 @@
               <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
             </div>
             <div
-              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
+              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
-                <svg class="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" />
                 </svg>
                 <span class="truncate">数据门户</span>
                 <span
                   v-if="pinned"
-                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
+                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-primary bg-primary/5 border border-primary/10 dark:text-primary-hover dark:bg-primary/10 dark:border-primary/20"
                 >
                   已钉住
                 </span>
@@ -108,7 +108,7 @@
               <div class="flex items-center gap-2 flex-shrink-0">
                 <button
                   type="button"
-                  class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="text-gray-400 hover:text-primary dark:hover:text-primary p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="打开完整数据门户"
                   aria-label="打开完整数据门户"
                   @click="emit('open-full-page')"
@@ -130,8 +130,8 @@
                 </label>
                 <button
                   type="button"
-                  class="hidden sm:inline-flex text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
-                  :class="{ 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10': pinned }"
+                  class="hidden sm:inline-flex text-gray-400 hover:text-primary dark:hover:text-primary p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  :class="{ 'text-primary dark:text-primary bg-primary/5 dark:bg-blue-500/10': pinned }"
                   :title="pinButtonTitle"
                   :aria-label="pinned ? '取消钉住' : '钉住侧栏'"
                   @click="pinned = !pinned"
@@ -167,7 +167,7 @@
                 </button>
                 <button
                   type="button"
-                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="关闭 (Esc)"
                   aria-label="关闭数据门户"
                   @click="closeDrawer"
@@ -181,8 +181,8 @@
             <div
               class="portal-drawer-scroll flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0 touch-pan-y"
             >
-              <div v-if="projectResourceScope" class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-                🔒 {{ projectResourceScope }}
+              <div v-if="projectResourceScope" class="mb-3 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary-dark dark:border-primary-dark/50 dark:bg-primary-dark/30 dark:text-primary-hover">
+                {{ projectResourceScope }}
               </div>
               <DatasetCapabilityMenu
                 :payload="payload || { groups: [] }"

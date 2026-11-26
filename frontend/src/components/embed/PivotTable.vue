@@ -343,7 +343,7 @@ watch(
     <!-- Left Field Config Sidebar -->
     <div class="w-full lg:w-64 shrink-0 bg-white dark:bg-gray-900 border-b lg:border-b-0 lg:border-r border-gray-100 dark:border-gray-800 flex flex-col p-4">
       <div class="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800 mb-4">
-        <h4 class="text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+        <h4 class="text-sm font-bold uppercase tracking-wider text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
           <TableCellsIcon class="w-4 h-4 text-primary" />
           <span>可用数据字段</span>
         </h4>
@@ -363,7 +363,7 @@ watch(
           :key="field.name"
           draggable="true"
           @dragstart="handleDragStart(field)"
-          class="group p-2.5 bg-gray-50 dark:bg-gray-800/40 border border-gray-150 dark:border-gray-800 rounded-xl cursor-grab active:cursor-grabbing hover:border-primary/30 hover:bg-white dark:hover:bg-gray-800 transition-all flex items-center justify-between"
+          class="group p-2.5 bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-800 rounded-xl cursor-grab active:cursor-grabbing hover:border-primary/30 hover:bg-white dark:hover:bg-gray-800 transition-all flex items-center justify-between"
         >
           <div class="min-w-0">
             <p class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate">{{ field.label }}</p>
@@ -376,21 +376,21 @@ watch(
           <div class="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0">
             <button
               @click="addFieldToZone(field, 'rows')"
-              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-650 rounded text-[9px] font-black transition-colors shadow-sm"
+              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-600 rounded text-[9px] font-bold transition-colors shadow-sm"
               title="加入行维度"
             >
               行
             </button>
             <button
               @click="addFieldToZone(field, 'columns')"
-              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-650 rounded text-[9px] font-black transition-colors shadow-sm"
+              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-600 rounded text-[9px] font-bold transition-colors shadow-sm"
               title="加入列维度"
             >
               列
             </button>
             <button
               @click="addFieldToZone(field, 'values')"
-              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-650 rounded text-[9px] font-black transition-colors shadow-sm"
+              class="p-1 bg-white dark:bg-gray-700 hover:bg-primary hover:text-white dark:hover:bg-primary border border-gray-200 dark:border-gray-600 rounded text-[9px] font-bold transition-colors shadow-sm"
               title="加入数值度量"
             >
               值
@@ -415,14 +415,14 @@ watch(
           class="border border-dashed border-gray-200 dark:border-gray-800 hover:border-primary/40 rounded-xl p-3 bg-gray-50/20 dark:bg-gray-900/10 transition-colors min-h-[90px] flex flex-col justify-between"
         >
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">行维度 (Rows)</span>
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">行维度 (Rows)</span>
             <span class="text-[9px] text-gray-300 dark:text-gray-600 font-medium">拖入/点击加入</span>
           </div>
           <div class="flex flex-wrap gap-1.5 items-center">
             <div
               v-for="rf in rowFields"
               :key="rf.name"
-              class="inline-flex items-center space-x-1 px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/30 rounded text-[10px] font-bold shadow-sm"
+              class="inline-flex items-center space-x-1 px-2 py-0.5 bg-primary/5 dark:bg-primary-dark/20 text-primary-dark dark:text-primary border border-primary/10 dark:border-primary-dark/30 rounded text-[10px] font-bold shadow-sm"
             >
               <span>{{ rf.label }}</span>
               <button @click="removeFieldFromZone(rf.name, 'rows')" class="hover:text-red-500 transition-colors">
@@ -440,7 +440,7 @@ watch(
           class="border border-dashed border-gray-200 dark:border-gray-800 hover:border-primary/40 rounded-xl p-3 bg-gray-50/20 dark:bg-gray-900/10 transition-colors min-h-[90px] flex flex-col justify-between"
         >
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">列维度 (Columns)</span>
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">列维度 (Columns)</span>
             <span class="text-[9px] text-gray-300 dark:text-gray-600 font-medium">拖入/点击加入</span>
           </div>
           <div class="flex flex-wrap gap-1.5 items-center">
@@ -465,7 +465,7 @@ watch(
           class="border border-dashed border-gray-200 dark:border-gray-800 hover:border-primary/40 rounded-xl p-3 bg-gray-50/20 dark:bg-gray-900/10 transition-colors min-h-[90px] flex flex-col justify-between"
         >
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">数值度量 (Values)</span>
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">数值度量 (Values)</span>
             <span class="text-[9px] text-gray-300 dark:text-gray-600 font-medium">拖入/点击加入</span>
           </div>
           <div class="flex flex-wrap gap-1.5 items-center">
@@ -481,7 +481,7 @@ watch(
                 <select
                   :value="mf.aggType"
                   @change="changeAggType(idx, ($event.target as HTMLSelectElement).value as any)"
-                  class="bg-transparent border-none p-0 pr-3.5 focus:ring-0 text-[9px] text-emerald-600 dark:text-emerald-400 font-black cursor-pointer uppercase appearance-none"
+                  class="bg-transparent border-none p-0 pr-3.5 focus:ring-0 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold cursor-pointer uppercase appearance-none"
                 >
                   <option value="sum">求和</option>
                   <option value="avg">平均</option>
@@ -513,16 +513,16 @@ watch(
                 <tr
                   v-for="(headerRow, rIdx) in pivotResult.headers"
                   :key="rIdx"
-                  class="bg-slate-50 dark:bg-gray-800/60 border-b border-gray-150 dark:border-gray-800/80"
+                  class="bg-slate-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-800/80"
                 >
                   <th
                     v-for="(cell, cIdx) in headerRow"
                     :key="cIdx"
                     :rowspan="cell.rowSpan ?? 1"
                     :colspan="cell.colSpan ?? 1"
-                    class="px-4 py-3 text-left font-bold text-gray-700 dark:text-gray-300 border-r border-gray-150 dark:border-gray-800"
+                    class="px-4 py-3 text-left font-bold text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-800"
                     :class="[
-                      cell.isDimension ? 'bg-indigo-500/5 text-indigo-700 dark:text-indigo-400' : '',
+                      cell.isDimension ? 'bg-primary/5 text-primary-dark dark:text-primary' : '',
                       cell.isCategory ? 'bg-amber-500/5 text-amber-700 dark:text-amber-400 text-center' : '',
                       cell.isMeasureName ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400 text-[10px] uppercase font-mono' : '',
                       cell.isPadding ? 'bg-transparent border-none' : ''
@@ -543,7 +543,7 @@ watch(
                     :key="cIdx"
                     class="px-4 py-2.5 border-r border-gray-100 dark:border-gray-800 font-medium"
                     :class="[
-                      cell.isDimensionValue ? 'bg-indigo-50/10 text-gray-900 dark:text-gray-100 font-bold' : '',
+                      cell.isDimensionValue ? 'bg-primary/5 text-gray-900 dark:text-gray-100 font-bold' : '',
                       cell.isNumeric ? 'text-right font-mono' : 'text-left'
                     ]"
                   >
@@ -560,7 +560,7 @@ watch(
           v-else
           class="flex flex-col items-center justify-center h-full min-h-[250px] text-gray-400 space-y-4"
         >
-          <div class="p-4 bg-gray-100 dark:bg-gray-850 rounded-full">
+          <div class="p-4 bg-gray-100 dark:bg-gray-800 rounded-full">
             <TableCellsIcon class="w-12 h-12 text-gray-400" />
           </div>
           <div class="text-center max-w-sm">

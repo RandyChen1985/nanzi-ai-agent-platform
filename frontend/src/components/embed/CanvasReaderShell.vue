@@ -166,7 +166,7 @@ const handleImageError = (event: Event) => {
   main.className = 'canvas-img-error-main';
   const icon = document.createElement('span');
   icon.className = 'canvas-img-error-icon';
-  icon.textContent = '⚠️';
+  icon.textContent = '⚠';
   const text = document.createElement('span');
   text.className = 'canvas-img-error-text';
   // 带上地址：只说「加载失败」用户没法判断是路径写错、文件没了、还是没权限

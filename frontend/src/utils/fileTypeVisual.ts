@@ -89,7 +89,7 @@ const CATEGORY_STYLE: Record<
   Omit<FileTypeVisual, "category" | "ext">
 > = {
   folder: {
-    icon: "📁",
+    icon: "DIR",
     label: "文件夹",
     iconBg: "bg-amber-100 dark:bg-amber-500/20",
     iconRing: "ring-amber-200/60 dark:ring-amber-500/30",
@@ -97,7 +97,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-amber-700 dark:text-amber-300",
   },
   image: {
-    icon: "🖼️",
+    icon: "IMG",
     label: "图片",
     iconBg: "bg-violet-100 dark:bg-violet-500/20",
     iconRing: "ring-violet-200/60 dark:ring-violet-500/30",
@@ -105,7 +105,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-violet-700 dark:text-violet-300",
   },
   document: {
-    icon: "📄",
+    icon: "DOC",
     label: "文档",
     iconBg: "bg-blue-100 dark:bg-blue-500/20",
     iconRing: "ring-blue-200/60 dark:ring-blue-500/30",
@@ -113,7 +113,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-blue-700 dark:text-blue-300",
   },
   spreadsheet: {
-    icon: "📊",
+    icon: "XLS",
     label: "表格",
     iconBg: "bg-emerald-100 dark:bg-emerald-500/20",
     iconRing: "ring-emerald-200/60 dark:ring-emerald-500/30",
@@ -121,7 +121,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-emerald-700 dark:text-emerald-300",
   },
   presentation: {
-    icon: "📽️",
+    icon: "PPT",
     label: "演示",
     iconBg: "bg-orange-100 dark:bg-orange-500/20",
     iconRing: "ring-orange-200/60 dark:ring-orange-500/30",
@@ -129,7 +129,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-orange-700 dark:text-orange-300",
   },
   code: {
-    icon: "💻",
+    icon: "CODE",
     label: "代码",
     iconBg: "bg-slate-200 dark:bg-slate-600/40",
     iconRing: "ring-slate-300/60 dark:ring-slate-500/30",
@@ -137,7 +137,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-slate-700 dark:text-slate-300",
   },
   archive: {
-    icon: "🗜️",
+    icon: "ZIP",
     label: "压缩包",
     iconBg: "bg-yellow-100 dark:bg-yellow-500/20",
     iconRing: "ring-yellow-200/60 dark:ring-yellow-500/30",
@@ -145,7 +145,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-yellow-800 dark:text-yellow-300",
   },
   video: {
-    icon: "🎬",
+    icon: "VID",
     label: "视频",
     iconBg: "bg-rose-100 dark:bg-rose-500/20",
     iconRing: "ring-rose-200/60 dark:ring-rose-500/30",
@@ -153,7 +153,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-rose-700 dark:text-rose-300",
   },
   audio: {
-    icon: "🎵",
+    icon: "AUD",
     label: "音频",
     iconBg: "bg-pink-100 dark:bg-pink-500/20",
     iconRing: "ring-pink-200/60 dark:ring-pink-500/30",
@@ -161,7 +161,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-pink-700 dark:text-pink-300",
   },
   data: {
-    icon: "🗃️",
+    icon: "DATA",
     label: "数据",
     iconBg: "bg-cyan-100 dark:bg-cyan-500/20",
     iconRing: "ring-cyan-200/60 dark:ring-cyan-500/30",
@@ -169,7 +169,7 @@ const CATEGORY_STYLE: Record<
     badgeText: "text-cyan-700 dark:text-cyan-300",
   },
   unknown: {
-    icon: "📎",
+    icon: "FILE",
     label: "其他",
     iconBg: "bg-gray-100 dark:bg-gray-700/60",
     iconRing: "ring-gray-200/60 dark:ring-gray-600/40",

@@ -1,0 +1,2288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="prototype-kind" content="方案对比" />
+<title>全站前端 · 去 AI 味视觉重构与设计系统统一方案</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  :root {
+    /* 统一设计系统 Token（重构后标准基线） */
+    --bg-canvas: #f5f7fa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f8fafc;
+    --bg-muted: #f1f5f9;
+    --border: #e5e9f0;
+    --border-strong: #d5dce6;
+    --ink-1: #0f172a;
+    --ink-2: #334155;
+    --ink-3: #64748b;
+    --ink-4: #94a3b8;
+
+    --brand: #1677ff;
+    --brand-hover: #0958d9;
+    --brand-soft: #eff6ff;
+    --brand-border: #bfdbfe;
+
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --ok-border: #a7f3d0;
+    --warn: #d97706;
+    --warn-soft: #fffbeb;
+    --warn-border: #fde68a;
+    --danger: #dc2626;
+    --danger-soft: #fef2f2;
+    --danger-border: #fecaca;
+
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-pop: 0 10px 28px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.06);
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-canvas);
+    color: var(--ink-1);
+    font-size: 13.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; padding: 0; }
+  .mono { font-family: var(--font-mono); }
+  .num { font-variant-numeric: tabular-nums; }
+  svg.ico { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  svg.ico-sm { width: 13px; height: 13px; }
+  svg.ico-lg { width: 18px; height: 18px; }
+
+  /* ==================== 顶部评审控制台 ==================== */
+  .deck-bar {
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .deck-bar-inner {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .deck-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-shrink: 0;
+  }
+  .deck-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    background: #0b0f19;
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: -0.04em;
+  }
+  .deck-brand b { display: block; font-size: 13px; font-weight: 650; line-height: 1.2; }
+  .deck-brand small { display: block; font-size: 11px; color: var(--ink-3); }
+
+  .deck-nav {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .deck-tab {
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-3);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.14s ease;
+  }
+  .deck-tab:hover { color: var(--ink-1); }
+  .deck-tab.active {
+    background: #fff;
+    color: var(--ink-1);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+  .deck-tab .prio {
+    font-size: 10px;
+    font-weight: 650;
+    padding: 0 4px;
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .prio-p0 { background: var(--danger-soft); color: var(--danger); }
+  .prio-p1 { background: var(--brand-soft); color: var(--brand); }
+  .deck-tab.active .prio-p0 { background: #fee2e2; }
+
+  .deck-controls {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .mode-switch {
+    display: inline-flex;
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .mode-btn {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-3);
+    transition: all 0.14s;
+  }
+  .mode-btn.active {
+    background: #0f172a;
+    color: #fff;
+    font-weight: 600;
+  }
+  .mode-btn.active.is-after { background: var(--brand); }
+  .anno-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-2);
+    transition: all 0.14s;
+  }
+  .anno-toggle.on {
+    border-color: var(--danger-border);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .anno-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-4); }
+  .anno-toggle.on .anno-dot { background: var(--danger); }
+
+  /* ==================== 主舞台容器 ==================== */
+  .stage {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 18px 20px 72px;
+  }
+  .view-panel { display: none; }
+  .view-panel.active { display: block; }
+
+  .scene-summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .scene-summary h2 { margin: 0; font-size: 15px; font-weight: 650; color: var(--ink-1); }
+  .scene-summary p { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-3); max-width: 820px; }
+  .diff-pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .diff-pill {
+    font-size: 11.5px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .diff-pill b { color: var(--brand); font-weight: 650; }
+
+  /* 对比网格：单栏 vs 左右并排 */
+  .compare-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .compare-grid.split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 1180px) { .compare-grid.split { grid-template-columns: 1fr; } }
+
+  .pane {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg-canvas);
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+  }
+  .pane.hidden { display: none; }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 14px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .pane-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 650;
+  }
+  .pane-badge.before { color: #b91c1c; }
+  .pane-badge.after { color: var(--brand); }
+  .pane-badge i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .pane-badge.before i { background: #ef4444; }
+  .pane-badge.after i { background: var(--brand); }
+  .pane-meta { font-size: 11.5px; color: var(--ink-3); }
+  .pane-body { padding: 16px; }
+
+  /* 病灶红框批注系统 */
+  .ai-flaw { position: relative; }
+  .show-anno .ai-flaw {
+    outline: 1.5px dashed rgba(220, 38, 38, 0.72);
+    outline-offset: 2px;
+  }
+  .flaw-tag {
+    display: none;
+    position: absolute;
+    top: -10px;
+    right: 8px;
+    z-index: 20;
+    background: #dc2626;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(220, 38, 38, 0.25);
+    pointer-events: none;
+  }
+  .show-anno .flaw-tag { display: inline-block; }
+
+  /* ==================== 通用重构后设计系统组件 ==================== */
+  .ds-page { background: var(--bg-canvas); }
+  .ds-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .ds-title-wrap { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .ds-h1 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink-1); }
+  .ds-sub { font-size: 12.5px; color: var(--ink-3); margin: 2px 0 0; }
+  .ds-count { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .ds-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    font-size: 12.5px;
+    font-weight: 550;
+    transition: all 0.14s ease;
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--brand); color: #fff; border: 1px solid var(--brand); }
+  .btn-primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+  .btn-default { background: #fff; color: var(--ink-2); border: 1px solid var(--border-strong); }
+  .btn-default:hover { background: var(--bg-subtle); color: var(--ink-1); border-color: #cbd5e1; }
+  .btn-ghost { background: transparent; color: var(--ink-3); border: 1px solid transparent; }
+  .btn-ghost:hover { background: var(--bg-muted); color: var(--ink-1); }
+  .btn-sm { height: 28px; padding: 0 9px; font-size: 12px; border-radius: 7px; }
+  .btn-icon { width: 32px; padding: 0; }
+  .btn-icon.sm { width: 28px; height: 28px; }
+
+  .ds-input {
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: #fff;
+    font-size: 12.5px;
+    color: var(--ink-1);
+    outline: none;
+    transition: border-color 0.14s, box-shadow 0.14s;
+  }
+  .ds-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12); }
+
+  .ds-search { position: relative; }
+  .ds-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--ink-4); pointer-events: none; }
+  .ds-search input { padding-left: 30px; width: 210px; }
+
+  .ds-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+    overflow-x: auto;
+  }
+  .ds-tab {
+    position: relative;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-3);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    transition: color 0.14s, border-color 0.14s;
+  }
+  .ds-tab:hover { color: var(--ink-1); }
+  .ds-tab.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+  .ds-tab .cnt {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 6px;
+    border-radius: 99px;
+    background: var(--bg-muted);
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .ds-tab.active .cnt { background: var(--brand-soft); color: var(--brand); }
+
+  /* 一体化紧凑 KPI 条（致敬 MetadataPermissionOverview） */
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 720px) { .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .kpi-cell {
+    padding: 12px 16px;
+    border-right: 1px solid var(--border);
+    text-align: left;
+    transition: background 0.12s;
+  }
+  .kpi-cell:last-child { border-right: none; }
+  .kpi-cell.clickable { cursor: pointer; }
+  .kpi-cell.clickable:hover { background: var(--bg-subtle); }
+  .kpi-cell.selected { background: var(--brand-soft); box-shadow: inset 0 -2px 0 var(--brand); }
+  .kpi-k { font-size: 11.5px; color: var(--ink-3); display: flex; align-items: center; justify-content: space-between; }
+  .kpi-v { font-size: 22px; font-weight: 650; color: var(--ink-1); line-height: 1.25; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .kpi-v.ok { color: var(--ok); }
+  .kpi-v.warn { color: var(--warn); }
+  .kpi-v.danger { color: var(--danger); }
+  .kpi-sub { font-size: 11px; color: var(--ink-4); margin-top: 3px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 550;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .badge-neutral { background: var(--bg-muted); color: var(--ink-2); }
+  .badge-brand { background: var(--brand-soft); color: var(--brand); }
+  .badge-ok { background: var(--ok-soft); color: var(--ok); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot-ok { background: var(--ok); }
+  .dot-warn { background: var(--warn); }
+  .dot-danger { background: var(--danger); }
+  .dot-muted { background: var(--ink-4); }
+
+  .seg {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-muted);
+    gap: 2px;
+  }
+  .seg button {
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--ink-3);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .seg button.active {
+    background: #fff;
+    color: var(--ink-1);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+
+  .ds-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 14px 15px;
+    transition: border-color 0.14s, box-shadow 0.14s;
+  }
+  .ds-card:hover { border-color: var(--border-strong); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05); }
+  .ds-card.accent-ok { border-left: 3px solid var(--ok); }
+  .ds-card.accent-warn { border-left: 3px solid var(--warn); }
+  .ds-card.accent-muted { border-left: 3px solid #cbd5e1; background: #fcfcfd; }
+  .ds-card.accent-brand { border-left: 3px solid var(--brand); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip {
+    padding: 4px 10px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 12px;
+    color: var(--ink-2);
+    transition: all 0.12s;
+  }
+  .chip:hover { border-color: var(--border-strong); color: var(--ink-1); }
+  .chip.active { background: var(--ink-1); border-color: var(--ink-1); color: #fff; font-weight: 550; }
+  .chip .n { opacity: 0.65; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+  /* 标准表格 */
+  .ds-table-wrap {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow-x: auto;
+  }
+  table.ds-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.ds-table th {
+    text-align: left;
+    padding: 9px 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-3);
+    background: var(--bg-subtle);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.ds-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    color: var(--ink-2);
+    vertical-align: middle;
+  }
+  table.ds-table tr:last-child td { border-bottom: none; }
+  table.ds-table tbody tr:hover { background: #f8fbff; }
+
+  /* 通用下拉菜单 */
+  .pop-wrap { position: relative; }
+  .pop-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    min-width: 156px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px;
+    box-shadow: var(--shadow-pop);
+    z-index: 40;
+  }
+  .pop-menu.open { display: block; }
+  .pop-item {
+    width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pop-item:hover { background: var(--bg-muted); color: var(--ink-1); }
+  .pop-item.danger { color: var(--danger); }
+  .pop-item.danger:hover { background: var(--danger-soft); }
+
+  /* ==================== Tab 1: 设计系统总览 ==================== */
+  .audit-hero {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 960px) { .audit-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .stat-box {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 12px 14px;
+  }
+  .stat-box .l { font-size: 11.5px; color: var(--ink-3); }
+  .stat-box .v { font-size: 24px; font-weight: 650; margin-top: 4px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat-box .s { font-size: 11px; color: var(--ink-4); margin-top: 3px; }
+  .stat-box.bad .v { color: var(--danger); }
+  .stat-box.warn .v { color: var(--warn); }
+  .stat-box.good .v { color: var(--brand); }
+
+  .token-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 960px) { .token-grid { grid-template-columns: 1fr; } }
+  .token-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 15px 16px; }
+  .token-card h3 { margin: 0 0 10px; font-size: 13.5px; font-weight: 650; display: flex; align-items: center; justify-content: space-between; }
+  .swatch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch {
+    flex: 1;
+    min-width: 92px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 11px;
+  }
+  .swatch-color { height: 34px; }
+  .swatch-info { padding: 6px 8px; background: #fff; }
+  .swatch-info b { display: block; font-size: 11.5px; color: var(--ink-1); }
+  .swatch-info span { color: var(--ink-4); font-family: var(--font-mono); font-size: 10.5px; }
+
+  .rule-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .rule-list li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 12.5px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-subtle);
+    border: 1px solid #eef2f6;
+  }
+  .rule-list .k {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  .rule-list .k.no { background: var(--danger-soft); color: var(--danger); }
+
+  /* ==================== 改造前「现状 AI 味」真实还原样式 ==================== */
+  .old-h1-black { font-size: 26px; font-weight: 900; color: #0f172a; margin: 0; letter-spacing: -0.02em; }
+  .old-indigo-pill { background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+  .old-indigo-tabs { display: flex; gap: 16px; border-bottom: 1px solid #e2e8f0; margin: 12px 0 14px; overflow-x: auto; }
+  .old-indigo-tab { padding: 8px 2px; font-size: 13px; font-weight: 700; color: #64748b; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .old-indigo-tab.on { color: #4f46e5; border-bottom-color: #4f46e5; }
+
+  .old-kpi-row1 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+  .old-kpi-row2 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 720px) { .old-kpi-row1, .old-kpi-row2 { grid-template-columns: repeat(2, 1fr); } }
+  .old-kpi-color {
+    border-radius: 16px;
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .old-kpi-color:hover .old-scale-icon { transform: scale(1.15); }
+  .old-scale-icon { transition: transform 0.2s; display: inline-flex; width: 28px; height: 28px; border-radius: 8px; align-items: center; justify-content: center; }
+  .old-kpi-white {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: box-shadow 0.2s;
+  }
+  .old-kpi-white:hover { box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08); }
+  .old-kpi-white:hover .old-big-ico { transform: scale(1.1); }
+  .old-big-ico { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; transition: transform 0.2s; font-size: 18px; }
+
+  .old-client-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 10px;
+  }
+  .old-indigo-bar {
+    background: linear-gradient(90deg, rgba(238, 242, 255, 0.9), #fff, rgba(239, 246, 255, 0.9));
+    border: 1px solid #c7d2fe;
+    border-radius: 14px;
+    padding: 10px 14px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #3730a3;
+  }
+
+  /* 彩虹光晕 FlowGuideBanner 还原 */
+  .old-glow-banner {
+    position: relative;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid #a7f3d0;
+    background: linear-gradient(90deg, rgba(236, 253, 245, 0.9), rgba(240, 253, 250, 0.6), rgba(248, 250, 252, 0.8));
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .old-glow-orb-1 { position: absolute; right: -40px; top: -40px; width: 150px; height: 150px; border-radius: 50%; background: rgba(167, 243, 208, 0.55); filter: blur(36px); pointer-events: none; }
+  .old-glow-orb-2 { position: absolute; left: 30%; bottom: -55px; width: 140px; height: 140px; border-radius: 50%; background: rgba(153, 246, 228, 0.45); filter: blur(28px); pointer-events: none; }
+  .old-step-grid { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  @media (max-width: 900px) { .old-step-grid { grid-template-columns: repeat(2, 1fr); } }
+  .old-step-card {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 12px;
+    padding: 10px;
+    font-size: 11px;
+    transition: transform 0.18s;
+  }
+  .old-step-card:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08); }
+
+  /* 4 色彩虹 Tab */
+  .old-rainbow-tabs { display: flex; gap: 14px; border-bottom: 1px solid #e5e7eb; margin-bottom: 12px; }
+  .old-rtab { padding: 8px 4px; font-size: 13px; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .old-rtab.t-blue { color: #2563eb; border-bottom-color: #2563eb; }
+  .old-rtab.t-em { color: #059669; border-bottom-color: #059669; }
+  .old-rtab.t-ind { color: #4f46e5; border-bottom-color: #4f46e5; }
+  .old-rtab.t-pur { color: #9333ea; border-bottom-color: #9333ea; }
+
+  /* 场景模板深蓝厚重 Hero */
+  .old-blue-hero {
+    border-radius: 16px;
+    background: #1e40af;
+    color: #fff;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+  }
+  .old-hero-pills { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .old-hero-pills span { background: #fff; color: #1e3a8a; border-radius: 99px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
+  .old-hero-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .old-hero-kpi { background: #fff; color: #0f172a; border-radius: 10px; padding: 10px 12px; }
+
+  /* 紫光弹窗与 macOS 代码块 */
+  .old-violet-q {
+    border: 1px solid #ddd6fe;
+    background: rgba(245, 243, 255, 0.72);
+    border-radius: 12px;
+    padding: 14px;
+    color: #2e1065;
+  }
+  .old-mac-code {
+    position: relative;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: 12px;
+    padding: 32px 14px 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-x: auto;
+  }
+  .old-mac-code::before {
+    content: "";
+    position: absolute;
+    top: 11px;
+    left: 14px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ff5f56;
+    box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
+  }
+  .old-scalar-btn {
+    background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 12.5px;
+    box-shadow: 0 4px 15px -2px rgba(99, 102, 241, 0.45);
+  }
+  @keyframes oldPing { 75%, 100% { transform: scale(2); opacity: 0; } }
+  .old-ping-wrap { position: relative; display: inline-flex; width: 8px; height: 8px; }
+  .old-ping-ring { position: absolute; inset: 0; border-radius: 50%; background: #4ade80; opacity: 0.75; animation: oldPing 1.2s cubic-bezier(0,0,.2,1) infinite; }
+  .old-ping-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+
+  /* ==================== 重构后模块专属布局 ==================== */
+  .cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .cards-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 1000px) { .cards-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .cards-3, .cards-2 { grid-template-columns: 1fr; } }
+
+  .meta-kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding-top: 10px; margin-top: 10px; border-top: 1px dashed var(--border); font-size: 11.5px; }
+  .meta-kv .k { color: var(--ink-4); display: block; font-size: 11px; }
+  .meta-kv .v { color: var(--ink-2); font-weight: 550; }
+
+  /* 轻量化引导条（替代 7 份光晕横幅） */
+  .quiet-guide {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .quiet-guide-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .quiet-guide-steps {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+    background: var(--bg-subtle);
+  }
+  @media (max-width: 900px) { .quiet-guide-steps { grid-template-columns: 1fr; } }
+  .quiet-step {
+    padding: 10px 12px;
+    border-right: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .quiet-step:last-child { border-right: none; }
+  .quiet-step-num {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-size: 11px;
+    font-weight: 650;
+    align-items: center;
+    justify-content: center;
+    margin-right: 6px;
+  }
+
+  /* 系统配置双栏与说明抽屉 */
+  .cfg-shell { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 820px) { .cfg-shell { grid-template-columns: 1fr; } }
+  .cfg-nav { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .cfg-nav-btn {
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 7px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background 0.12s, color 0.12s;
+  }
+  .cfg-nav-btn:hover { background: var(--bg-subtle); color: var(--ink-1); }
+  .cfg-nav-btn.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .cfg-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 260px;
+    gap: 16px;
+    padding: 13px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    align-items: start;
+  }
+  @media (max-width: 820px) { .cfg-row { grid-template-columns: 1fr; } }
+  .cfg-row:last-child { border-bottom: none; }
+  .cfg-row.dirty { background: #fffdf5; box-shadow: inset 3px 0 0 var(--warn); }
+  .save-bar {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: #0f172a;
+    color: #fff;
+    margin-bottom: 12px;
+    font-size: 12.5px;
+  }
+  .save-bar.show { display: flex; }
+
+  /* 个人中心左右导航重构 */
+  .pc-shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 820px) { .pc-shell { grid-template-columns: 1fr; } }
+  .pc-nav { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 10px 8px; }
+  .pc-group-title { font-size: 11px; font-weight: 600; color: var(--ink-4); padding: 6px 10px 4px; }
+  .pc-nav-item {
+    width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 1px;
+  }
+  .pc-nav-item:hover { background: var(--bg-subtle); color: var(--ink-1); }
+  .pc-nav-item.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+
+  /* 轻量右侧抽屉 & 模态框 */
+  .drawer-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    background: rgba(15, 23, 42, 0.35);
+    justify-content: flex-end;
+  }
+  .drawer-backdrop.open { display: flex; }
+  .drawer-panel {
+    width: min(440px, 92vw);
+    height: 100%;
+    background: #fff;
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 30px rgba(15, 23, 42, 0.12);
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer-head {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .drawer-body { padding: 16px 18px; overflow-y: auto; flex: 1; font-size: 13px; color: var(--ink-2); line-height: 1.7; }
+
+  /* 重构后干净代码块与问答卡 */
+  .clean-code {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .clean-code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--bg-subtle);
+    border-bottom: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+  .clean-code pre {
+    margin: 0;
+    padding: 12px 14px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-x: auto;
+  }
+
+  .clean-q-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--brand);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .q-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    margin-bottom: 6px;
+    transition: all 0.12s;
+  }
+  .q-opt:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+  .q-opt.selected { border-color: var(--brand); background: var(--brand-soft); color: var(--ink-1); font-weight: 550; }
+  .q-radio { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #cbd5e1; display: grid; place-items: center; flex-shrink: 0; }
+  .q-opt.selected .q-radio { border-color: var(--brand); }
+  .q-opt.selected .q-radio::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+
+  /* 轻 Toast */
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 200;
+    background: #0f172a;
+    color: #fff;
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: all 0.18s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body class="show-anno">
+
+<!-- 顶部评审控制栏 -->
+<header class="deck-bar">
+  <div class="deck-bar-inner">
+    <div class="deck-brand">
+      <div class="deck-logo">NZ</div>
+      <div>
+        <b>NanZi UI 去 AI 味重构方案</b>
+        <small>基于 49 页面 / 351 文件全站代码审计</small>
+      </div>
+    </div>
+
+    <nav class="deck-nav" role="tablist" aria-label="重构对比模块">
+      <button class="deck-tab active" data-tab="overview">设计规范总览</button>
+      <button class="deck-tab" data-tab="mcp"><span class="prio prio-p0">P0</span>MCP 服务台</button>
+      <button class="deck-tab" data-tab="skills"><span class="prio prio-p0">P0</span>技能与引导条</button>
+      <button class="deck-tab" data-tab="sysconfig"><span class="prio prio-p0">P0</span>系统配置</button>
+      <button class="deck-tab" data-tab="scenarios"><span class="prio prio-p0">P0</span>场景与 AI 弹窗</button>
+      <button class="deck-tab" data-tab="chat"><span class="prio prio-p0">P0</span>对话与调试细节</button>
+      <button class="deck-tab" data-tab="personal"><span class="prio prio-p1">P1</span>个人中心导航</button>
+    </nav>
+
+    <div class="deck-controls" id="compareControls" style="display:none">
+      <div class="mode-switch" role="group" aria-label="视图模式">
+        <button class="mode-btn" data-mode="before">改造前 (现状)</button>
+        <button class="mode-btn active is-after" data-mode="after">改造后 (建议)</button>
+        <button class="mode-btn" data-mode="split">左右对照</button>
+      </div>
+      <button class="anno-toggle on" id="annoBtn" title="在现状视图上显示 AI 味病灶红框批注">
+        <span class="anno-dot"></span><span>病灶批注</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="stage">
+
+  <!-- ==================== 1. 设计规范总览 ==================== -->
+  <section class="view-panel active" id="panel-overview">
+    <div class="scene-summary">
+      <div>
+        <h2>全项目 UI 体检结论：不是「丑」，而是「三代审美撕裂 + 典型 AI 模板味残留」</h2>
+        <p>项目近期重构的 <b>系统概览 / 我的任务 / 元数据权限总览 / 部门与菜单管理 / 资源广场</b> 已经具备极高的克制工程质感；但其余模块叠加了早期及 AI 批量生成时的紫蓝混战、光晕彩虹横幅、Emoji 图标与 402 处 Tailwind v4 幻觉死类名，导致整站割裂感明显。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">统一基线 <b>#1677FF + 精密冷灰</b></span>
+        <span class="diff-pill">重构策略 <b>向站内既有标杆收敛</b></span>
+      </div>
+    </div>
+
+    <div class="audit-hero">
+      <div class="stat-box bad">
+        <div class="l">Tailwind v3 幻觉死类名</div>
+        <div class="v">402 处</div>
+        <div class="s">横跨 69 文件（shadow-xs/gray-150 等）</div>
+      </div>
+      <div class="stat-box bad">
+        <div class="l">含 Emoji 当图标的模板</div>
+        <div class="v">99 / 349</div>
+        <div class="s">BrowserPanel 40 · SystemConfig 37</div>
+      </div>
+      <div class="stat-box bad">
+        <div class="l">主按钮色系分裂</div>
+        <div class="v">6 套主色</div>
+        <div class="s">primary / blue / indigo / purple / slate / 渐变</div>
+      </div>
+      <div class="stat-box warn">
+        <div class="l">光晕横幅 + 彩虹规范弹窗</div>
+        <div class="v">7 + 10 份</div>
+        <div class="s">blur-3xl 双光球 + 200 行拷贝弹窗</div>
+      </div>
+      <div class="stat-box good">
+        <div class="l">站内已跑通的克制标杆</div>
+        <div class="v">7 个页面</div>
+        <div class="s">Overview / MyTasks / 权限总览 / 部门等</div>
+      </div>
+    </div>
+
+    <div class="token-grid">
+      <div class="token-card">
+        <h3>统一色板收敛（告别 6 色主按钮打架）<span class="badge badge-brand">单一品牌主色</span></h3>
+        <div class="swatch-row" style="margin-bottom:10px">
+          <div class="swatch"><div class="swatch-color" style="background:#1677ff"></div><div class="swatch-info"><b>Brand Primary</b><span>#1677FF</span></div></div>
+          <div class="swatch"><div class="swatch-color" style="background:#0f172a"></div><div class="swatch-info"><b>Ink Primary</b><span>#0F172A</span></div></div>
+          <div class="swatch"><div class="swatch-color" style="background:#f5f7fa;border-bottom:1px solid #e5e9f0"></div><div class="swatch-info"><b>Canvas</b><span>#F5F7FA</span></div></div>
+          <div class="swatch"><div class="swatch-color" style="background:#059669"></div><div class="swatch-info"><b>Semantic OK</b><span>#059669</span></div></div>
+          <div class="swatch"><div class="swatch-color" style="background:#d97706"></div><div class="swatch-info"><b>Semantic Warn</b><span>#D97706</span></div></div>
+          <div class="swatch"><div class="swatch-color" style="background:#dc2626"></div><div class="swatch-info"><b>Semantic Danger</b><span>#DC2626</span></div></div>
+        </div>
+        <ul class="rule-list">
+          <li><span class="k no">禁</span><span>禁用非语义的 <b>indigo / purple / violet</b> 主按钮、Tab 彩虹染色、蓝紫发光阴影与双光球渐变横幅。</span></li>
+          <li><span class="k">准</span><span>全站主 CTA、激活 Tab、选中边框严格收敛至 <code>primary (#1677ff)</code>；语义绿/琥珀/红仅表达健康、警告与危险。</span></li>
+        </ul>
+      </div>
+
+      <div class="token-card">
+        <h3>六条「去 AI 味」工程纪律<span class="badge badge-neutral">沉淀为通用底座</span></h3>
+        <ul class="rule-list">
+          <li><span class="k">图标</span><span>全面收敛至 <b>Heroicons (outline, 1.75px)</b>，清零界面 Emoji（🚀🧠💡⚡🔌）与裸 Unicode 符号（▦☰⌄）。</span></li>
+          <li><span class="k">字重</span><span>淘汰 342 处 <code>font-black</code> 与中文 <code>uppercase tracking-widest</code>；标题 <code>600-650</code>，数字统一 <code>tabular-nums</code>。</span></li>
+          <li><span class="k">容器</span><span>卡片统一 <code>rounded-xl (12px) + 1px border</code>；消灭 <code>rounded-2xl/3xl</code> 滥用与不可点卡片的 <code>scale-110</code> 伪动效。</span></li>
+          <li><span class="k">指标</span><span>用一体化 <code>divide-x</code> 指标条或可折叠健康条，取代「左大黑字 + 右 4 色大图标块」虚胖 KPI 卡。</span></li>
+          <li><span class="k">引导</span><span>7 份光晕 <code>FlowGuideBanner</code> 统一降噪为默认折叠的中性单行步骤条；长文运维文档收进按需抽屉。</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="ds-table-wrap">
+      <table class="ds-table">
+        <thead>
+          <tr>
+            <th style="width:180px">业务模块</th>
+            <th style="width:110px">AI 味等级</th>
+            <th>核心病灶（基于源码实证）</th>
+            <th style="width:240px">站内正面参照 / 重构方向</th>
+            <th style="width:90px">效果样板</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>MCP 服务台 / 注册中心</b></td>
+            <td><span class="badge badge-danger">重度 · P0</span></td>
+            <td>274 处 indigo/purple、69 处 font-black、48 处 rounded-2xl、7 张静态 KPI 卡挂 hover scale-110、6 色按钮混战</td>
+            <td>对齐 <b>AdminSecretCenter</b> 3 列语义左条卡 + 一体化指标条</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('mcp')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>技能工作台 &amp; 7 份引导条</b></td>
+            <td><span class="badge badge-danger">重度 · P0</span></td>
+            <td>4 个一级 Tab 4 种彩虹色、切 Tab 主按钮变色、7 份 blur-3xl 双光球横幅 + 10 份复制彩虹规范大弹窗</td>
+            <td>对齐 <b>MyTasks / Agent 方案 A</b>，单一主色 + 极简可折叠条</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('skills')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>系统配置 &amp; 组织权限</b></td>
+            <td><span class="badge badge-danger">重度 · P0</span></td>
+            <td>SystemConfig 8182 行含 5 色彩底补丁 + 80 Emoji + 500 字内联文档 + 四重闪烁保存告警；第三方同步抽屉 57 处纯紫</td>
+            <td>对齐 <b>部门管理 / 菜单管理</b> 中性容器 + 长文进抽屉</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('sysconfig')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>场景模板 &amp; 元数据 / AI 弹窗</b></td>
+            <td><span class="badge badge-danger">重度 · P0</span></td>
+            <td>场景页深蓝厚重 Hero + 不可点白药丸吃掉半屏；元数据 6 色彩虹 Tab + 43 Emoji 漂移抽屉 + 紫光发光 AI 弹窗</td>
+            <td>对齐 <b>MetadataPermissionOverview</b> 轻量页头 + 去紫弹窗</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('scenarios')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>对话交互 &amp; 调试工具</b></td>
+            <td><span class="badge badge-warn">中重 · P0</span></td>
+            <td>UserQuestionCard 通体套紫、Playground 紫粉渐变、macOS 代码块假红绿灯、BrowserPanel 6 层工具栏 + 40 Emoji</td>
+            <td>对齐 <b>ChatExecutionTimeline</b> 灰阶克制 + 品牌蓝点缀</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('chat')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>个人中心 &amp; 审计/记忆</b></td>
+            <td><span class="badge badge-warn">中度 · P1</span></td>
+            <td>PersonalCenter 10 个平级 Tab + 3 级嵌套套娃；MemoryManagement 检索结果裸吐 JSON；AuditLogs 早期模板残留</td>
+            <td>左侧 3 组清晰导航 + 结构化检索卡 + 统一 Modal 底座</td>
+            <td><button class="btn btn-default btn-sm" onclick="switchTab('personal')">查看对比</button></td>
+          </tr>
+          <tr>
+            <td><b>概览 / 我的任务 / 资源广场</b></td>
+            <td><span class="badge badge-ok">已达标 · 保留</span></td>
+            <td>仅零星细节需收尾（如 Dashboard 在线用户弹窗的 font-black、TokenStats 虚胖 4 图标卡）</td>
+            <td>直接作为全站 <b>Design System v2</b> 视觉基准线</td>
+            <td><span style="font-size:11.5px;color:var(--ink-4)">全站标杆</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 2. MCP 服务台对比 ==================== -->
+  <section class="view-panel" id="panel-mcp">
+    <div class="scene-summary">
+      <div>
+        <h2>MCP 服务台（McpServiceDesk.vue）重构对比</h2>
+        <p>原页是全站 Indigo 滥用最重灾区（270 处 indigo + 69 处 font-black + 48 处 rounded-2xl）。改造后向站内刚改版获好评的 <b>MetadataPermissionOverview（一体化指标条）</b> 与 <b>AdminSecretCenter（三列语义左条卡 + ⋯ 菜单收口）</b> 对齐。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">去紫 <b>274 → 0</b></span>
+        <span class="diff-pill">屏效提升 <b>1 卡 → 3 列卡</b></span>
+        <span class="diff-pill">可点击试玩 <b>指标筛选 / 视图切换 / ⋯ 菜单</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <!-- 改造前 -->
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（McpServiceDesk.vue）</span>
+          <span class="pane-meta">页头蓝 / 正屏紫 · 7 张伪交互 KPI · 单列臃肿卡</span>
+        </div>
+        <div class="pane-body" style="background:#f8fafc">
+          <div class="ai-flaw" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="flaw-tag">3xl font-black + 页头蓝/正屏紫分裂</span>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <h3 class="old-h1-black">MCP 服务台</h3>
+                <span class="old-indigo-pill">对外协议服务</span>
+              </div>
+              <div style="font-size:12px;color:#64748b;margin-top:2px">管理对外发布的 MCP 端点、OAuth Client 与访问授权</div>
+            </div>
+            <button style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:700">刷新</button>
+          </div>
+
+          <div class="old-indigo-tabs ai-flaw">
+            <span class="flaw-tag">全量 indigo-600 下划线</span>
+            <span class="old-indigo-tab on">总览</span>
+            <span class="old-indigo-tab">使用指南</span>
+            <span class="old-indigo-tab">服务配置</span>
+            <span class="old-indigo-tab">外部 Client</span>
+            <span class="old-indigo-tab">已发布方法</span>
+            <span class="old-indigo-tab">调用审计</span>
+          </div>
+
+          <!-- 两排割裂 KPI 卡 -->
+          <div class="ai-flaw" style="margin-bottom:10px">
+            <span class="flaw-tag">上下两排割裂 + 静态 div 挂 hover:scale-110 假交互</span>
+            <div class="old-kpi-row1">
+              <div class="old-kpi-color" style="background:#f8fafc">
+                <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;font-weight:700;color:#64748b">近 7 天调用</span><span class="old-scale-icon" style="background:#e2e8f0">⚡</span></div>
+                <div style="font-size:24px;font-weight:900;margin-top:6px">12,840</div>
+              </div>
+              <div class="old-kpi-color" style="background:#ecfdf5;border-color:#a7f3d0">
+                <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;font-weight:700;color:#047857">成功率</span><span class="old-scale-icon" style="background:#d1fae5">✓</span></div>
+                <div style="font-size:24px;font-weight:900;color:#059669;margin-top:6px">99.2%</div>
+              </div>
+              <div class="old-kpi-color" style="background:#fff1f2;border-color:#fecdd3">
+                <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;font-weight:700;color:#be123c">失败/拒绝</span><span class="old-scale-icon" style="background:#ffe4e6">⚠️</span></div>
+                <div style="font-size:24px;font-weight:900;color:#e11d48;margin-top:6px">103</div>
+              </div>
+              <div class="old-kpi-color" style="background:#eef2ff;border-color:#c7d2fe">
+                <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;font-weight:700;color:#4338ca">平均延迟</span><span class="old-scale-icon" style="background:#e0e7ff">⏱</span></div>
+                <div style="font-size:24px;font-weight:900;color:#4f46e5;margin-top:6px">418ms</div>
+              </div>
+            </div>
+            <div class="old-kpi-row2">
+              <div class="old-kpi-white">
+                <div><div style="font-size:11px;color:#64748b;font-weight:700">服务状态</div><div style="font-size:17px;font-weight:900;color:#059669;margin-top:4px;display:flex;align-items:center;gap:6px"><span class="old-ping-wrap"><span class="old-ping-ring"></span><span class="old-ping-dot"></span></span>运行中</div></div>
+                <div class="old-big-ico" style="background:#ecfdf5">🔌</div>
+              </div>
+              <div class="old-kpi-white">
+                <div><div style="font-size:11px;color:#64748b;font-weight:700">活跃 Client</div><div style="font-size:22px;font-weight:900;margin-top:4px">8</div></div>
+                <div class="old-big-ico" style="background:#eef2ff;color:#4f46e5">🔑</div>
+              </div>
+              <div class="old-kpi-white">
+                <div><div style="font-size:11px;color:#64748b;font-weight:700">已发布方法</div><div style="font-size:22px;font-weight:900;margin-top:4px">24</div></div>
+                <div class="old-big-ico" style="background:#faf5ff;color:#9333ea">⚡</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 臃肿单列 Client 卡片 -->
+          <div class="old-client-card ai-flaw">
+            <span class="flaw-tag">单列 6 层臃肿 + 渐变徽章 + 紫底整条 + 4 按钮外露</span>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span style="font-size:15px;font-weight:900">Cursor 研发工作站</span>
+                  <span style="background:linear-gradient(90deg,#eff6ff,#eef2ff);color:#4338ca;border:1px solid #c7d2fe;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:700">全员共享</span>
+                  <span style="background:#ecfdf5;color:#059669;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:700">运行中</span>
+                </div>
+                <div class="mono" style="font-size:11px;color:#64748b;margin-top:4px">client_id: mcp_cli_cursor_prod_01 · 最近签发 2026-11-25 18:10</div>
+              </div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <span style="background:#4f46e5;color:#fff;padding:4px 9px;border-radius:8px;font-size:11.5px;font-weight:700">签发令牌</span>
+                <span style="background:#eef2ff;color:#4338ca;padding:4px 9px;border-radius:8px;font-size:11.5px;font-weight:700">白名单</span>
+                <span style="background:#eef2ff;color:#4338ca;padding:4px 9px;border-radius:8px;font-size:11.5px;font-weight:700">令牌管理</span>
+                <span style="background:#eef2ff;color:#4338ca;padding:4px 8px;border-radius:8px;font-size:11.5px;font-weight:700">更多 ⌄</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-size:11px;font-weight:700">
+              <span style="background:#ecfdf5;color:#047857;padding:2px 8px;border-radius:99px">有效 14</span>
+              <span style="background:#fffbeb;color:#b45309;padding:2px 8px;border-radius:99px">临期 2</span>
+              <span style="background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:99px">已过期 5</span>
+              <span style="background:#fff1f2;color:#be123c;padding:2px 8px;border-radius:99px">已吊销 1</span>
+            </div>
+            <div class="old-indigo-bar">
+              <b style="font-weight:900">资源访问范围：</b> 智能体 3 个 · 知识库 6 个 · 数据集 不限
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 改造后 -->
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 统一工程化设计系统（可交互）</span>
+          <span class="pane-meta">NanZi Blue #1677ff · 一体化 KPI 筛选闭环 · 3 列高密度卡</span>
+        </div>
+        <div class="pane-body ds-page">
+          <div class="ds-header">
+            <div>
+              <div class="ds-title-wrap">
+                <h3 class="ds-h1">MCP 服务台</h3>
+                <span class="badge badge-ok"><span class="dot dot-ok"></span>服务运行中 · 24 个方法</span>
+              </div>
+              <p class="ds-sub">管理对外发布的 MCP 端点、外部 Client 接入授权与调用审计</p>
+            </div>
+            <div class="ds-actions">
+              <button class="btn btn-default" onclick="showToast('已刷新服务台实时指标')">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M4 4v5h5M20 20v-5h-5M20.49 9A9 9 0 0 0 5.64 5.64L4 9m16 6l-1.64 3.36A9 9 0 0 1 3.51 15"/></svg>
+                刷新
+              </button>
+              <button class="btn btn-primary" onclick="showToast('打开新建外部 Client 向导（统一 Modal 底座）')">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                新建 Client
+              </button>
+            </div>
+          </div>
+
+          <div class="ds-tabs" id="mcpTabs">
+            <button class="ds-tab active" data-mcp-tab="clients">外部 Client <span class="cnt">6</span></button>
+            <button class="ds-tab" data-mcp-tab="guide">接入指南</button>
+            <button class="ds-tab" data-mcp-tab="config">能力发布</button>
+            <button class="ds-tab" data-mcp-tab="audit">调用审计</button>
+          </div>
+
+          <!-- 可点击的一体化 KPI 条 -->
+          <div class="kpi-strip" id="mcpKpiBar">
+            <button class="kpi-cell clickable selected" data-mcp-filter="all">
+              <div class="kpi-k"><span>外部 Client 总数</span><span style="color:var(--brand);font-weight:600">全部</span></div>
+              <div class="kpi-v">6</div>
+              <div class="kpi-sub">近 7 天累计调用 12,840 次 · 418ms</div>
+            </button>
+            <button class="kpi-cell clickable" data-mcp-filter="active">
+              <div class="kpi-k"><span>正常运行</span><span class="dot dot-ok"></span></div>
+              <div class="kpi-v ok">4</div>
+              <div class="kpi-sub">成功率 99.2% · 有效令牌 26 枚</div>
+            </button>
+            <button class="kpi-cell clickable" data-mcp-filter="expiring">
+              <div class="kpi-k"><span>令牌临期 / 需关注</span><span class="dot dot-warn"></span></div>
+              <div class="kpi-v warn">1</div>
+              <div class="kpi-sub">7 天内即将过期，建议轮换</div>
+            </button>
+            <button class="kpi-cell clickable" data-mcp-filter="disabled">
+              <div class="kpi-k"><span>已停用</span><span class="dot dot-muted"></span></div>
+              <div class="kpi-v" style="color:var(--ink-3)">1</div>
+              <div class="kpi-sub">暂停对外签发与调用</div>
+            </button>
+          </div>
+
+          <!-- 工具栏 -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <div class="chips" id="mcpFilterChips">
+              <button class="chip active" data-mcp-filter="all">全部 <span class="n">6</span></button>
+              <button class="chip" data-mcp-filter="active">运行中 <span class="n">4</span></button>
+              <button class="chip" data-mcp-filter="expiring">令牌临期 <span class="n">1</span></button>
+              <button class="chip" data-mcp-filter="disabled">已停用 <span class="n">1</span></button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="ds-search">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                <input class="ds-input" id="mcpSearch" placeholder="搜索 Client 名称或 ID..." />
+              </div>
+              <div class="seg" id="mcpViewSeg">
+                <button class="active" data-view="card" title="卡片视图">
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                </button>
+                <button data-view="table" title="列表视图">
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 动态渲染 Client 列表/卡片 -->
+          <div id="mcpContent"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 3. 技能工作台与 7 份引导横幅 ==================== -->
+  <section class="view-panel" id="panel-skills">
+    <div class="scene-summary">
+      <div>
+        <h2>技能工作台（SkillsManagement）&amp; 全站 7 份光晕引导横幅重构</h2>
+        <p>原页 4 个一级 Tab 用 4 种彩虹色（蓝/绿/靛/紫）、切 Tab 主按钮从蓝变绿，且首屏强压带双 <code>blur-3xl</code> 光球的渐变引导横幅。重构后统一单品牌色下划线 Tab、将 7 份光晕横幅收敛为极简中性单行可折叠条、卡片信息收敛至 3 层。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">消除 <b>4 色 Tab + 变色按钮</b></span>
+        <span class="diff-pill">首屏净增 <b>+180px 内容区</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（SkillsManagement + FlowGuideBanner）</span>
+          <span class="pane-meta">双球光晕渐变 + 4 色彩虹 Tab + 按钮随 Tab 变色</span>
+        </div>
+        <div class="pane-body">
+          <div class="old-glow-banner ai-flaw">
+            <span class="flaw-tag">7 份拷贝：blur-3xl 双光球 + 5 色彩虹卡 + 默认撑满首屏</span>
+            <div class="old-glow-orb-1"></div>
+            <div class="old-glow-orb-2"></div>
+            <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:34px;height:34px;border-radius:10px;background:#059669;color:#fff;display:grid;place-items:center;box-shadow:0 4px 12px rgba(5,150,105,.35)">⚡</div>
+                <div>
+                  <div style="font-weight:700;font-size:14px">技能全流程开发指引 <span style="background:#d1fae5;color:#047857;padding:1px 7px;border-radius:99px;font-size:10.5px;margin-left:4px">5 步生命周期</span></div>
+                  <div style="font-size:11.5px;color:#64748b">从创建 SKILL.md、挂载脚本工具，到审核上架与智能体装配</div>
+                </div>
+              </div>
+              <span style="font-size:11px;background:#fff;border:1px solid #d1d5db;border-radius:7px;padding:3px 8px">收起</span>
+            </div>
+            <div class="old-step-grid">
+              <div class="old-step-card"><span style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#2563eb;color:#fff;font-weight:700;margin-right:4px">1</span><b>创建技能</b><div style="color:#64748b;margin-top:4px">编写规范描述与指令</div></div>
+              <div class="old-step-card"><span style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#4f46e5;color:#fff;font-weight:700;margin-right:4px">2</span><b>挂载资源</b><div style="color:#64748b;margin-top:4px">上传脚本与参考文档</div></div>
+              <div class="old-step-card"><span style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#059669;color:#fff;font-weight:700;margin-right:4px">3</span><b>沙箱调试</b><div style="color:#64748b;margin-top:4px">验证触发词与执行</div></div>
+              <div class="old-step-card"><span style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#9333ea;color:#fff;font-weight:700;margin-right:4px">4</span><b>提交审核</b><div style="color:#64748b;margin-top:4px">管理员审核发布广场</div></div>
+              <div class="old-step-card"><span style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#d97706;color:#fff;font-weight:700;margin-right:4px">5</span><b>装配调用</b><div style="color:#64748b;margin-top:4px">在智能体中按需引用</div></div>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div class="old-rainbow-tabs ai-flaw" style="margin-bottom:0">
+              <span class="flaw-tag">同一排 4 个 Tab 4 种彩虹色</span>
+              <span class="old-rtab t-blue">平台技能</span>
+              <span class="old-rtab t-em">我的技能</span>
+              <span class="old-rtab t-ind">待审核 (3)</span>
+              <span class="old-rtab t-pur">已发布</span>
+            </div>
+            <div class="ai-flaw" style="display:flex;gap:6px">
+              <span class="flaw-tag">切 Tab 主按钮从蓝突变成绿</span>
+              <span style="background:#059669;color:#fff;padding:6px 11px;border-radius:8px;font-size:12px;font-weight:700">+ 新建个人技能</span>
+              <span style="background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;padding:6px 10px;border-radius:8px;font-size:11.5px;font-weight:700">💡 开放市场</span>
+            </div>
+          </div>
+
+          <div class="ai-flaw" style="margin-top:12px;border:1px solid #c7d2fe;background:#fff;border-radius:14px;padding:14px">
+            <span class="flaw-tag">外框跟 Tab 染紫/靛 + 单卡 10+ 杂乱标签 + 暴露服务器物理路径</span>
+            <div style="display:flex;align-items:flex-start;gap:10px">
+              <div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,rgba(59,130,246,.14),rgba(99,102,241,.16));display:grid;place-items:center;color:#4f46e5;font-weight:800">SK</div>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                  <b style="font-size:14px">财务月报异常归因</b>
+                  <span style="background:#ecfdf5;color:#047857;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">个人</span>
+                  <span style="background:#eef2ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">财务分析</span>
+                  <span style="background:#f5f3ff;color:#6d28d9;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">绑定 4 个智能体</span>
+                  <span style="background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">待审核</span>
+                </div>
+                <p style="margin:6px 0;font-size:12px;color:#64748b">自动拉取损益表与预算偏差，定位环比波动超过 15% 的成本中心并生成归因摘要。</p>
+                <div class="mono" style="font-size:10.5px;color:#94a3b8;background:#f8fafc;padding:3px 6px;border-radius:4px">/app/skills/personal/u_1042/fin_monthly_variance</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 统一品牌色 + 极简可折叠引导条（可交互）</span>
+          <span class="pane-meta">单主色 Tab · 默认折叠引导 · 隐藏底层路径</span>
+        </div>
+        <div class="pane-body ds-page">
+          <div class="ds-header">
+            <div>
+              <div class="ds-title-wrap">
+                <h3 class="ds-h1">技能工作台</h3>
+                <span class="ds-count">共 18 个技能 · 3 个待审核</span>
+              </div>
+            </div>
+            <div class="ds-actions">
+              <button class="btn btn-ghost" id="toggleGuideBtn">
+                <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+                <span>展开流程说明</span>
+              </button>
+              <button class="btn btn-default" onclick="showToast('打开技能市场目录')">浏览技能广场</button>
+              <button class="btn btn-primary" onclick="showToast('新建技能（无论在哪个 Tab，主按钮恒定为品牌蓝）')">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                新建技能
+              </button>
+            </div>
+          </div>
+
+          <!-- 极简中性引导条（替代所有 7 份光晕横幅） -->
+          <div class="quiet-guide" id="quietGuideBox" style="display:none">
+            <div class="quiet-guide-bar">
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg class="ico" style="color:var(--brand)" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                <b>技能生命周期（5 步）</b>
+                <span style="color:var(--ink-3)">创建指令 → 挂载资源 → 沙箱验证 → 审核发布 → 智能体装配</span>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('toggleGuideBtn').click()">收起</button>
+            </div>
+            <div class="quiet-guide-steps">
+              <div class="quiet-step"><span class="quiet-step-num">1</span><b>创建指令</b><div style="color:var(--ink-3);margin-top:4px">定义触发条件与执行规范</div></div>
+              <div class="quiet-step"><span class="quiet-step-num">2</span><b>挂载资源</b><div style="color:var(--ink-3);margin-top:4px">附加脚本与参考模板</div></div>
+              <div class="quiet-step"><span class="quiet-step-num">3</span><b>沙箱调试</b><div style="color:var(--ink-3);margin-top:4px">真实对话验证召回质量</div></div>
+              <div class="quiet-step"><span class="quiet-step-num">4</span><b>审核上架</b><div style="color:var(--ink-3);margin-top:4px">通过后全员可在广场复用</div></div>
+              <div class="quiet-step"><span class="quiet-step-num">5</span><b>装配启用</b><div style="color:var(--ink-3);margin-top:4px">绑定到业务智能体版本</div></div>
+            </div>
+          </div>
+
+          <!-- 单一品牌蓝下划线 Tab -->
+          <div class="ds-tabs" id="skillTabs">
+            <button class="ds-tab active" data-skill-tab="platform">平台技能 <span class="cnt">10</span></button>
+            <button class="ds-tab" data-skill-tab="personal">我的技能 <span class="cnt">5</span></button>
+            <button class="ds-tab" data-skill-tab="pending">待审核 <span class="cnt">3</span></button>
+            <button class="ds-tab" data-skill-tab="published">已发布 <span class="cnt">8</span></button>
+          </div>
+
+          <div class="cards-3" id="skillCardsGrid"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 4. 系统配置中心 ==================== -->
+  <section class="view-panel" id="panel-sysconfig">
+    <div class="scene-summary">
+      <div>
+        <h2>系统配置中心（SystemConfig.vue）重构对比</h2>
+        <p>原页 8182 行存在 5 色彩底分组贴片、80 处 Emoji、500 字运维文档直接铺在表单输入框下、以及修改一项参数触发 <b>4 重闪烁告警 + 3 处重复保存按钮</b>。重构后改为中性灰分组、友好中文主标题、长文运维指南进右侧抽屉、单一克制保存条。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">试一试 <b>修改任意输入框触发单一保存条</b></span>
+        <span class="diff-pill">点击 <b>「运维说明」打开侧栏抽屉</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（SystemConfig.vue）</span>
+          <span class="pane-meta">5 色彩底贴片 · 80 处 Emoji · 4 重闪烁告警</span>
+        </div>
+        <div class="pane-body">
+          <div class="ai-flaw" style="background:rgba(255,251,235,.9);border:1px solid #fcd34d;border-radius:10px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span class="flaw-tag">四重告警之 ①②：顶栏闪烁 + 底部悬浮 ping + 表单底第 3 个保存</span>
+            <span style="font-size:12px;color:#92400e;font-weight:700">⚠️ 有 1 项未保存更改（同时底部还有悬浮胶囊 + 表单底第 3 个按钮）</span>
+            <span style="background:#1677ff;color:#fff;padding:4px 10px;border-radius:7px;font-size:11.5px;font-weight:700">保存变更 ⌘S</span>
+          </div>
+
+          <div class="ai-flaw" style="border:1px solid #c7d2fe;background:rgba(238,242,255,.45);border-radius:12px;padding:12px;margin-bottom:8px">
+            <span class="flaw-tag">同一表单内硬染 5 色底板（indigo / sky / emerald / violet / amber）</span>
+            <div class="mono" style="font-size:12px;font-weight:700;color:#312e81">embed_api_base_url</div>
+            <input class="ds-input" style="width:100%;margin-top:6px" value="https://embed-internal.nanzi.local/v1" readonly />
+          </div>
+
+          <div class="ai-flaw" style="border:1px solid #bae6fd;background:rgba(240,249,255,.75);border-radius:12px;padding:12px;margin-bottom:8px">
+            <span class="flaw-tag">500 字 Markdown 运维手册 + 8 个 Emoji 硬铺在控件下方</span>
+            <div class="mono" style="font-size:12px;font-weight:700;color:#0c4a6e">sandbox_k8s_existing_pvc</div>
+            <input class="ds-input" style="width:100%;margin-top:6px" value="nanzi-sandbox-workspace-pvc" readonly />
+            <div style="margin-top:8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;font-size:11.5px;color:#1e3a8a;line-height:1.7">
+              <div>💡 <b>前置条件：</b>请确保集群已提前创建 ReadWriteMany 类型 PVC。</div>
+              <div>📂 <b>挂载路径：</b>Pod 内统一挂载至 <code>/workspace</code>，避免临时卷重启丢失。</div>
+              <div>🧱 <b>权限要求：</b>⚠️ 必须配置 <code>fsGroup: 1000</code> 否则非 root 写入失败。</div>
+              <div>🚀 <b>镜像加速：</b>⚙️ 建议配合私有 Harbor 仓库，🎯 冷启动可降至 1.2s...（后续还有 300 字）</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #ddd6fe;background:rgba(245,243,255,.55);border-radius:12px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center">
+            <div><span class="mono" style="font-size:12px;font-weight:700;color:#4c1d95">knowledge_scope_gate_enabled</span></div>
+            <span style="background:#ffe4e6;color:#be123c;border:1px solid #fecdd3;padding:4px 9px;border-radius:7px;font-size:11.5px;font-weight:700">测试改图（非危险动作却涂红）</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 中性分组 + 友好命名 + 运维指南进抽屉（可交互）</span>
+          <span class="pane-meta">零彩虹补丁 · 零 Emoji · 单一克制保存条</span>
+        </div>
+        <div class="pane-body ds-page">
+          <div class="save-bar" id="cfgSaveBar">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="dot dot-warn"></span>
+              <span>当前有 <b id="cfgDirtyCnt">0</b> 项未保存更改</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff" onclick="resetCfgDemo()">放弃更改</button>
+              <button class="btn btn-primary btn-sm" onclick="saveCfgDemo()">保存更改</button>
+            </div>
+          </div>
+
+          <div class="cfg-shell">
+            <aside class="cfg-nav" id="cfgNav">
+              <button class="cfg-nav-btn active" data-cfg-group="sandbox"><span>代码沙箱与 K8s</span><span class="badge badge-neutral">4</span></button>
+              <button class="cfg-nav-btn" data-cfg-group="rag"><span>知识库与向量</span><span class="badge badge-neutral">3</span></button>
+              <button class="cfg-nav-btn" data-cfg-group="security"><span>安全与认证策略</span><span class="badge badge-neutral">3</span></button>
+            </aside>
+
+            <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+              <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg-subtle)">
+                <div>
+                  <b id="cfgGroupTitle" style="font-size:13.5px">代码沙箱与 Kubernetes 执行环境</b>
+                  <span style="font-size:12px;color:var(--ink-3);margin-left:8px">所有变更在点击保存后立即热更新</span>
+                </div>
+                <button class="btn btn-default btn-sm" onclick="openDrawer('K8s 沙箱持久化卷（PVC）配置指南', cfgGuideHtml)">
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                  运维说明
+                </button>
+              </div>
+              <div id="cfgRows"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 5. 场景模板 & AI 紫光弹窗 ==================== -->
+  <section class="view-panel" id="panel-scenarios">
+    <div class="scene-summary">
+      <div>
+        <h2>场景模板页头（ScenarioTemplates）&amp; AI 智能识别弹窗去紫对比</h2>
+        <p>原场景模板页顶部叠了 <code>bg-blue-800</code> 大蓝块 + 不可点纯白药丸 + 3 大白 KPI 卡 + 双层冗余 Tab，吃掉近半屏高度；所有 AI 辅助弹窗（<code>SmartMetricModal</code> / <code>MetadataTables</code>）都套用紫蓝渐变头 + 荧光阴影 + <code>🧠</code> 动画。改造后首屏直达模板网格，AI 弹窗回归清爽专业感。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">首屏直接露出 <b>模板网格</b></span>
+        <span class="diff-pill">可点击 <b>分类筛选 / 体验去紫 AI 识别弹窗</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（ScenarioTemplates + SmartMetricModal）</span>
+          <span class="pane-meta">厚重深蓝横幅吃半屏 · 不可点假药丸 · 紫光 AI 弹窗</span>
+        </div>
+        <div class="pane-body">
+          <div class="old-blue-hero ai-flaw">
+            <span class="flaw-tag">bg-blue-800 重色块 + 不可点白药丸 + 3 大 KPI 挤占 350px+</span>
+            <div style="font-size:10.5px;letter-spacing:.12em;opacity:.75;text-transform:uppercase">SOLUTION PACKAGE</div>
+            <div style="font-size:20px;font-weight:800;margin-top:3px">行业场景模板中心</div>
+            <div class="old-hero-pills"><span>经营分析</span><span>知识问答</span><span>自动巡检</span></div>
+            <div class="old-hero-kpis">
+              <div class="old-hero-kpi"><div style="font-size:11px;color:#64748b">可用模板</div><div style="font-size:20px;font-weight:900">12</div></div>
+              <div class="old-hero-kpi"><div style="font-size:11px;color:#64748b">已交付实例</div><div style="font-size:20px;font-weight:900;color:#2563eb">28</div></div>
+              <div class="old-hero-kpi"><div style="font-size:11px;color:#64748b">覆盖业务域</div><div style="font-size:20px;font-weight:900;color:#059669">6</div></div>
+            </div>
+          </div>
+
+          <div class="ai-flaw" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;box-shadow:0 10px 25px rgba(99,102,241,.14)">
+            <span class="flaw-tag">SmartMetricModal / MetadataTables：紫蓝渐变头 + 荧光阴影 + 🧠 脉动</span>
+            <div style="padding:12px 16px;background:linear-gradient(90deg,rgba(238,242,255,.9),rgba(239,246,255,.6),#fff);border-bottom:1px solid #e0e7ff;display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="width:32px;height:32px;border-radius:10px;background:#4f46e5;color:#fff;display:grid;place-items:center;box-shadow:0 6px 14px rgba(79,70,229,.35)">✨</span>
+                <div><b style="font-size:13.5px">AI 智能识别业务指标</b> <span style="background:#e0e7ff;color:#4338ca;font-size:10px;padding:1px 6px;border-radius:99px;font-weight:700">AI 自动生成</span></div>
+              </div>
+              <span style="color:#94a3b8">✕</span>
+            </div>
+            <div style="padding:16px;text-align:center">
+              <div style="font-size:28px">🧠</div>
+              <div style="font-size:12px;color:#64748b;margin:6px 0 12px">正在深度理解表结构与血缘语义...</div>
+              <button style="background:#4f46e5;color:#fff;padding:8px 18px;border-radius:10px;font-size:12.5px;font-weight:700;box-shadow:0 6px 16px rgba(79,70,229,.35)">✨ 立即开始识别</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 轻量单行页头 + 首屏直达网格 + 克制 AI 辅助（可交互）</span>
+          <span class="pane-meta">去除装饰重蓝块 · 统计内联化 · 零紫光弹窗</span>
+        </div>
+        <div class="pane-body ds-page">
+          <div class="ds-header">
+            <div>
+              <div class="ds-title-wrap">
+                <h3 class="ds-h1">场景模板</h3>
+                <span class="ds-count">12 个官方方案 · 已交付 28 个实例</span>
+              </div>
+              <p class="ds-sub">选择成熟业务场景包，按向导绑定数据集与知识库即可完成交付</p>
+            </div>
+            <div class="ds-actions">
+              <button class="btn btn-default" onclick="openDrawer('AI 智能识别业务指标（去紫重构版）', aiModalHtml)">
+                <svg class="ico" style="color:var(--brand)" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/></svg>
+                预览去紫 AI 识别面板
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <div class="chips" id="scChips">
+              <button class="chip active" data-sc="all">全部场景 <span class="n">6</span></button>
+              <button class="chip" data-sc="bi">经营分析 <span class="n">2</span></button>
+              <button class="chip" data-sc="kb">知识问答 <span class="n">2</span></button>
+              <button class="chip" data-sc="ops">自动巡检 <span class="n">2</span></button>
+            </div>
+            <div class="seg">
+              <button class="active">模板目录</button>
+              <button onclick="showToast('已切换至：已交付实例列表')">已交付 (28)</button>
+            </div>
+          </div>
+
+          <div class="cards-3" id="scGrid"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 6. 对话交互与调试工具细节 ==================== -->
+  <section class="view-panel" id="panel-chat">
+    <div class="scene-summary">
+      <div>
+        <h2>对话交互细节（UserQuestionCard / 代码块 / Playground / 头像动效）重构对比</h2>
+        <p>收敛对话流与调试台里最容易暴露「AI 套壳感」的 4 处高频细节：通体套紫的 AI 提问卡、代码块假 macOS 红黄绿三圆点、AI 头像双层模糊光晕 + 永动绿点、以及 <code>Playground.vue</code> 硬覆写的紫粉渐变按钮。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">统一 <b>#1677FF + 灰阶克制</b></span>
+        <span class="diff-pill">可点击 <b>选择提问项并提交 / 复制代码</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（套紫提问卡 + macOS 三圆点 + 紫粉渐变）</span>
+          <span class="pane-meta">EmbedChat / AgentDebug / UserQuestionCard / Playground</span>
+        </div>
+        <div class="pane-body" style="display:grid;gap:12px">
+          <!-- 头像光晕 + 永动绿点 -->
+          <div class="ai-flaw" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <span class="flaw-tag">AI 头像双层 blur 光晕 + 永动 animate-ping + 紫粉按钮</span>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="position:relative">
+                <div style="position:absolute;inset:-4px;border-radius:50%;background:rgba(22,119,255,.35);filter:blur(5px)"></div>
+                <div style="position:relative;width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#60a5fa,#2563eb);color:#fff;display:grid;place-items:center;font-weight:800;font-size:12px">AI</div>
+                <span class="old-ping-wrap" style="position:absolute;right:-2px;top:-2px"><span class="old-ping-ring"></span><span class="old-ping-dot"></span></span>
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.14em;color:#94a3b8">CURRENT TURN · 智能助手</div>
+                <div style="font-size:12.5px;color:#334155">已为您分析 Q4 华东区销售偏差，需确认统计口径：</div>
+              </div>
+            </div>
+            <button class="old-scalar-btn">测试请求 (Scalar 紫粉)</button>
+          </div>
+
+          <!-- 通体套紫 UserQuestionCard -->
+          <div class="old-violet-q ai-flaw">
+            <span class="flaw-tag">UserQuestionCard：全卡硬编码 violet-*，与品牌蓝割裂</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <b style="font-size:13px">请选择本次报表统计口径</b>
+              <span style="background:#ede9fe;color:#6d28d9;font-size:10.5px;padding:1px 7px;border-radius:99px;font-weight:700">等待确认</span>
+            </div>
+            <div style="background:#fff;border:1.5px solid #8b5cf6;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:6px">● 含税成交额（与 ERP 财务结账一致）</div>
+            <div style="background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px">○ 不含税净收入（剔除退货与折让）</div>
+            <button style="background:#7c3aed;color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700">提交选择</button>
+          </div>
+
+          <!-- macOS 红黄绿圆点代码块 -->
+          <div class="old-mac-code ai-flaw">
+            <span class="flaw-tag">伪 macOS 红黄绿三圆点：标准 AI Demo 博客味</span>
+SELECT region, SUM(gmv_tax_incl) AS total_gmv
+FROM dws_sales_order_daily
+WHERE biz_date &gt;= '2026-10-01'
+GROUP BY region ORDER BY total_gmv DESC;
+          </div>
+        </div>
+      </div>
+
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 克制工具风对话与调试组件（可交互）</span>
+          <span class="pane-meta">去紫提问卡 · 干净代码块 · 无冗余光晕</span>
+        </div>
+        <div class="pane-body ds-page" style="display:grid;gap:12px">
+          <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:30px;height:30px;border-radius:8px;background:var(--brand-soft);border:1px solid var(--brand-border);color:var(--brand);display:grid;place-items:center;font-weight:700;font-size:12px">NZ</div>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--ink-1)">经营分析专家 <span style="font-weight:400;color:var(--ink-4);margin-left:6px">14:22</span></div>
+                <div style="font-size:12.5px;color:var(--ink-2)">已为您分析 Q4 华东区销售偏差，需先确认统计口径：</div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="showToast('Playground 已统一为 NanZi Blue #1677ff，移除紫粉渐变')">测试接口</button>
+          </div>
+
+          <!-- 去紫重构后的 UserQuestionCard -->
+          <div class="clean-q-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <svg class="ico" style="color:var(--brand)" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+                <b style="font-size:13px">请选择本次报表统计口径</b>
+              </div>
+              <span class="badge badge-brand" id="qStatusBadge">待确认</span>
+            </div>
+            <div id="qOptions">
+              <button class="q-opt selected" data-q="0"><span class="q-radio"></span><span>含税成交额（与 ERP 财务结账口径一致）</span></button>
+              <button class="q-opt" data-q="1"><span class="q-radio"></span><span>不含税净收入（剔除退货与渠道折让）</span></button>
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button class="btn btn-primary btn-sm" id="qSubmitBtn">确认并继续</button>
+            </div>
+          </div>
+
+          <!-- 干净专业代码块 -->
+          <div class="clean-code">
+            <div class="clean-code-head">
+              <span class="mono" style="font-weight:600">SQL</span>
+              <button class="btn btn-ghost btn-sm" style="height:22px;font-size:11.5px" onclick="showToast('已复制 SQL 到剪贴板')">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                复制
+              </button>
+            </div>
+            <pre>SELECT region, SUM(gmv_tax_incl) AS total_gmv
+FROM dws_sales_order_daily
+WHERE biz_date &gt;= '2026-10-01'
+GROUP BY region ORDER BY total_gmv DESC;</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 7. 个人中心导航重构 ==================== -->
+  <section class="view-panel" id="panel-personal">
+    <div class="scene-summary">
+      <div>
+        <h2>个人中心（PersonalCenter.vue）导航架构重构对比</h2>
+        <p>原页顶部平铺 <b>10 个一级 Tab</b>，进入「基本信息」又套左侧蓝底阴影子导航，进入「我的权限」甚至出现 <b>3 层嵌套 Tab</b>（且两级同名「权限清单」）+ 永久「新」徽标 + Emoji 标题。重构为经典的「左侧 3 分组导航 + 右侧单层内容区」。</p>
+      </div>
+      <div class="diff-pills">
+        <span class="diff-pill">导航层级 <b>3 级套娃 → 2 级直达</b></span>
+        <span class="diff-pill">清理 <b>18 处 Emoji + 25 处死类名</b></span>
+      </div>
+    </div>
+
+    <div class="compare-grid" data-compare>
+      <div class="pane pane-before hidden">
+        <div class="pane-head">
+          <span class="pane-badge before"><i></i>改造前 · 现状实录（10 平级 Tab + 3 级嵌套）</span>
+          <span class="pane-meta">PersonalCenter.vue (2537 行)</span>
+        </div>
+        <div class="pane-body" style="background:#fff">
+          <div class="ai-flaw" style="display:flex;gap:12px;border-bottom:1px solid #e5e7eb;overflow-x:auto;padding-bottom:8px;font-size:12px;white-space:nowrap;color:#64748b">
+            <span class="flaw-tag">10 个平级顶层 Tab 在 1280px 屏触发横滑</span>
+            <b style="color:#2563eb;border-bottom:2px solid #2563eb;padding-bottom:7px;margin-bottom:-9px">基本信息</b>
+            <span>我的权限</span><span>我的凭据</span><span>我的记忆</span><span>我的 Token 消耗</span><span>我的数据门户</span><span>我的技能</span><span>我的 MCP</span><span>我的任务</span><span>消息通知</span>
+          </div>
+          <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;margin-top:12px">
+            <div class="ai-flaw" style="display:flex;flex-direction:column;gap:4px">
+              <span class="flaw-tag">2 级重阴影蓝块 + 永久「新」标</span>
+              <div style="background:#2563eb;color:#fff;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:600;box-shadow:0 4px 10px rgba(37,99,235,.3);display:flex;justify-content:space-between"><span>安全设置</span><span style="background:#fff;color:#2563eb;border-radius:4px;padding:0 4px;font-size:10px">新</span></div>
+              <div style="padding:7px 10px;font-size:12px;color:#475569">个人资料</div>
+              <div style="padding:7px 10px;font-size:12px;color:#475569;display:flex;justify-content:space-between"><span>登录页风格</span><span style="background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:0 4px;font-size:10px">新</span></div>
+            </div>
+            <div class="ai-flaw" style="border:1px solid #e5e7eb;border-radius:10px;padding:12px">
+              <span class="flaw-tag">Emoji 与 SVG 混排 + 权限页三层同名 Tab</span>
+              <div style="font-weight:700;font-size:13.5px;margin-bottom:8px">🔑 修改登录密码</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:12px">建议每 90 天更新一次密码，保障账号安全。</div>
+              <div style="font-weight:700;font-size:13.5px">🛡 Google 两步验证 (2FA)</div>
+              <div style="margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;font-size:11.5px;color:#b91c1c">⚠️ 尚未开启两步验证，建议立即绑定 🔐</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane pane-after">
+        <div class="pane-head">
+          <span class="pane-badge after"><i></i>改造后 · 左侧 3 组清晰导航 + 右侧单层内容（可交互）</span>
+          <span class="pane-meta">消灭 3 级套娃 · 全 Heroicons · 品牌蓝聚焦</span>
+        </div>
+        <div class="pane-body ds-page">
+          <div class="ds-header">
+            <div>
+              <h3 class="ds-h1">个人中心</h3>
+              <p class="ds-sub">管理账号安全、授权状态与个人 AI 资产</p>
+            </div>
+          </div>
+
+          <div class="pc-shell">
+            <aside class="pc-nav" id="pcNav">
+              <div class="pc-group-title">账号与偏好</div>
+              <button class="pc-nav-item active" data-pc="security">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                账号与安全
+              </button>
+              <button class="pc-nav-item" data-pc="appearance">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2"/></svg>
+                界面与登录风格
+              </button>
+
+              <div class="pc-group-title" style="margin-top:6px">权限与通知</div>
+              <button class="pc-nav-item" data-pc="perms">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                我的权限与申请
+              </button>
+              <button class="pc-nav-item" data-pc="notify">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                消息通知
+              </button>
+
+              <div class="pc-group-title" style="margin-top:6px">个人资产</div>
+              <button class="pc-nav-item" data-pc="secrets">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                我的凭据
+              </button>
+              <button class="pc-nav-item" data-pc="usage">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+                Token 消耗
+              </button>
+            </aside>
+
+            <div id="pcContent" style="background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- 公共右侧轻抽屉（运维说明 / 去紫 AI 识别面板） -->
+<div class="drawer-backdrop" id="drawerBackdrop" onclick="if(event.target===this)closeDrawer()">
+  <div class="drawer-panel" role="dialog" aria-modal="true">
+    <div class="drawer-head">
+      <b id="drawerTitle" style="font-size:14.5px">说明</b>
+      <button class="btn btn-ghost btn-icon sm" onclick="closeDrawer()" aria-label="关闭">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ==================== 全局状态与顶部导航 ==================== */
+let currentTab = 'overview';
+let currentMode = 'after'; // before | after | split
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function openDrawer(title, html) {
+  document.getElementById('drawerTitle').textContent = title;
+  document.getElementById('drawerBody').innerHTML = html;
+  document.getElementById('drawerBackdrop').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawerBackdrop').classList.remove('open');
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.deck-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.view-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+  document.getElementById('compareControls').style.display = tab === 'overview' ? 'none' : 'flex';
+  applyCompareMode();
+}
+
+function applyCompareMode() {
+  document.querySelectorAll('[data-compare]').forEach(grid => {
+    const before = grid.querySelector('.pane-before');
+    const after = grid.querySelector('.pane-after');
+    grid.classList.toggle('split', currentMode === 'split');
+    before.classList.toggle('hidden', currentMode === 'after');
+    after.classList.toggle('hidden', currentMode === 'before');
+  });
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+}
+
+document.querySelectorAll('.deck-tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+document.querySelectorAll('.mode-btn').forEach(b => b.addEventListener('click', () => { currentMode = b.dataset.mode; applyCompareMode(); }));
+document.getElementById('annoBtn').addEventListener('click', function () {
+  this.classList.toggle('on');
+  document.body.classList.toggle('show-anno', this.classList.contains('on'));
+});
+
+/* ==================== 场景 2：MCP 服务台数据与交互 ==================== */
+const MCP_CLIENTS = [
+  { id: 'mcp_cli_cursor_prod', name: 'Cursor 研发工作站', status: 'active', scope: '全员共享', tokens: 14, expiring: 0, calls: '6,420', resources: '智能体 3 · 知识库 6 · 数据集 不限', updated: '2026-11-25 18:10' },
+  { id: 'mcp_cli_dify_fin', name: 'Dify 财务归因流', status: 'expiring', scope: '财务部专属', tokens: 3, expiring: 2, calls: '2,915', resources: '智能体 1 · 数据集 4', updated: '2026-11-24 11:42' },
+  { id: 'mcp_cli_claude_ops', name: 'Claude Desktop 运维终端', status: 'active', scope: 'SRE 团队', tokens: 6, expiring: 0, calls: '1,840', resources: '智能体 2 · 知识库 3', updated: '2026-11-25 09:20' },
+  { id: 'mcp_cli_bi_portal', name: 'BI 门户数据订阅', status: 'active', scope: '经营分析组', tokens: 4, expiring: 0, calls: '1,205', resources: '数据集 8', updated: '2026-11-22 16:05' },
+  { id: 'mcp_cli_feishu_bot', name: '飞书值班助手桥接', status: 'active', scope: '运维值班', tokens: 2, expiring: 0, calls: '460', resources: '智能体 1 · 知识库 2', updated: '2026-11-20 14:30' },
+  { id: 'mcp_cli_legacy_test', name: '联调测试客户端（旧）', status: 'disabled', scope: '个人创建', tokens: 0, expiring: 0, calls: '0', resources: '未配置白名单', updated: '2026-10-18 10:15' }
+];
+let mcpFilter = 'all', mcpView = 'card', mcpQuery = '';
+
+function statusBadge(st) {
+  if (st === 'active') return '<span class="badge badge-ok"><span class="dot dot-ok"></span>运行中</span>';
+  if (st === 'expiring') return '<span class="badge badge-warn"><span class="dot dot-warn"></span>令牌临期</span>';
+  return '<span class="badge badge-neutral"><span class="dot dot-muted"></span>已停用</span>';
+}
+
+function renderMcp() {
+  const list = MCP_CLIENTS.filter(c =>
+    (mcpFilter === 'all' || c.status === mcpFilter) &&
+    (!mcpQuery || c.name.toLowerCase().includes(mcpQuery) || c.id.toLowerCase().includes(mcpQuery))
+  );
+  const host = document.getElementById('mcpContent');
+  if (!list.length) {
+    host.innerHTML = '<div class="ds-card" style="text-align:center;padding:32px;color:var(--ink-3)">未找到匹配的外部 Client</div>';
+    return;
+  }
+  if (mcpView === 'table') {
+    host.innerHTML = `<div class="ds-table-wrap"><table class="ds-table">
+      <thead><tr><th>Client 名称 / ID</th><th>状态</th><th>有效令牌</th><th>资源白名单</th><th>7日调用</th><th style="text-align:right">操作</th></tr></thead>
+      <tbody>${list.map(c => `<tr>
+        <td><b>${c.name}</b><div class="mono" style="font-size:11px;color:var(--ink-4)">${c.id}</div></td>
+        <td>${statusBadge(c.status)}</td>
+        <td class="num">${c.tokens} 枚${c.expiring ? ` <span style="color:var(--warn)">(${c.expiring} 临期)</span>` : ''}</td>
+        <td style="font-size:12px;color:var(--ink-3)">${c.resources}</td>
+        <td class="num">${c.calls}</td>
+        <td style="text-align:right"><button class="btn btn-default btn-sm" onclick="showToast('已打开 ${c.name} 权限与令牌管理')">管理</button></td>
+      </tr>`).join('')}</tbody></table></div>`;
+    return;
+  }
+  host.innerHTML = `<div class="cards-3">${list.map(c => {
+    const accent = c.status === 'active' ? 'accent-ok' : c.status === 'expiring' ? 'accent-warn' : 'accent-muted';
+    return `<article class="ds-card ${accent}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="min-width:0">
+          <div style="font-size:14px;font-weight:600;color:var(--ink-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</div>
+          <div class="mono" style="font-size:11px;color:var(--ink-4);margin-top:2px">${c.id}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+          ${statusBadge(c.status)}
+          <div class="pop-wrap">
+            <button class="btn btn-ghost btn-icon sm" onclick="togglePop(this, event)" aria-label="更多操作">
+              <svg class="ico" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg>
+            </button>
+            <div class="pop-menu">
+              <button class="pop-item" onclick="showToast('签发用户令牌：${c.name}')">签发新令牌</button>
+              <button class="pop-item" onclick="showToast('配置白名单：${c.name}')">资源白名单</button>
+              <button class="pop-item" onclick="showToast('查看调用统计：${c.name}')">调用统计</button>
+              <button class="pop-item danger" onclick="showToast('触发停用确认：${c.name}')">${c.status === 'disabled' ? '重新启用' : '停用 Client'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--ink-3);background:var(--bg-subtle);border:1px solid #eef2f6;border-radius:7px;padding:6px 9px">${c.resources}</div>
+      <div class="meta-kv">
+        <div><span class="k">有效令牌</span><span class="v num">${c.tokens} 枚${c.expiring ? ` · <span style="color:var(--warn)">${c.expiring} 临期</span>` : ''}</span></div>
+        <div><span class="k">近 7 天调用</span><span class="v num">${c.calls} 次</span></div>
+        <div><span class="k">可见范围</span><span class="v">${c.scope}</span></div>
+        <div><span class="k">最近签发</span><span class="v num">${c.updated.slice(5)}</span></div>
+      </div>
+    </article>`;
+  }).join('')}</div>`;
+}
+
+function setMcpFilter(f) {
+  mcpFilter = f;
+  document.querySelectorAll('#mcpKpiBar [data-mcp-filter]').forEach(el => el.classList.toggle('selected', el.dataset.mcpFilter === f));
+  document.querySelectorAll('#mcpFilterChips [data-mcp-filter]').forEach(el => el.classList.toggle('active', el.dataset.mcpFilter === f));
+  renderMcp();
+}
+document.querySelectorAll('[data-mcp-filter]').forEach(el => el.addEventListener('click', () => setMcpFilter(el.dataset.mcpFilter)));
+document.getElementById('mcpSearch').addEventListener('input', e => { mcpQuery = e.target.value.trim().toLowerCase(); renderMcp(); });
+document.querySelectorAll('#mcpViewSeg button').forEach(b => b.addEventListener('click', () => {
+  mcpView = b.dataset.view;
+  document.querySelectorAll('#mcpViewSeg button').forEach(x => x.classList.toggle('active', x === b));
+  renderMcp();
+}));
+document.querySelectorAll('#mcpTabs .ds-tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#mcpTabs .ds-tab').forEach(x => x.classList.toggle('active', x === b));
+  showToast('已切换至：' + b.textContent.trim() + '（统一单主色下划线 Tab）');
+}));
+
+function togglePop(btn, ev) {
+  ev.stopPropagation();
+  const menu = btn.nextElementSibling;
+  const open = menu.classList.contains('open');
+  document.querySelectorAll('.pop-menu.open').forEach(m => m.classList.remove('open'));
+  if (!open) menu.classList.add('open');
+}
+document.addEventListener('click', () => document.querySelectorAll('.pop-menu.open').forEach(m => m.classList.remove('open')));
+
+/* ==================== 场景 3：技能工作台数据与交互 ==================== */
+const SKILLS = {
+  platform: [
+    { name: '财务月报异常归因', group: '财务分析', status: 'ok', statusText: '已启用', desc: '拉取损益表与预算偏差，定位环比波动超 15% 的成本中心并输出归因摘要。', binds: 6, updated: '昨天 17:40' },
+    { name: '合同风控条款比对', group: '法务合规', status: 'ok', statusText: '已启用', desc: '对照标准采购模板自动识别违约金、验收周期与付款节点的偏离条款。', binds: 4, updated: '11-23' },
+    { name: 'SQL 慢查询诊断', group: '研发运维', status: 'ok', statusText: '已启用', desc: '结合 EXPLAIN 执行计划与索引元数据定位全表扫描并生成改写建议。', binds: 9, updated: '11-21' }
+  ],
+  personal: [
+    { name: '周报汇总与风险提炼', group: '办公提效', status: 'ok', statusText: '个人私用', desc: '聚合本周研发任务与阻塞项，按项目维度输出管理层简报。', binds: 1, updated: '今天 09:10' },
+    { name: '华东渠道补货测算', group: '供应链', status: 'warn', statusText: '待审核', desc: '基于近 28 天动销与在途库存估算安全补货量。', binds: 2, updated: '11-24' }
+  ],
+  pending: [
+    { name: '华东渠道补货测算', group: '供应链', status: 'warn', statusText: '待管理员审核', desc: '提交人：林嘉豪 · 变更说明：补充节假日促销系数校验规则。', binds: 2, updated: '11-24' },
+    { name: '客诉工单情绪分级', group: '客户服务', status: 'warn', statusText: '待管理员审核', desc: '提交人：周婉清 · 新增高优先级升级路由与 SLA 提醒文案。', binds: 0, updated: '11-23' }
+  ],
+  published: [
+    { name: '财务月报异常归因', group: '财务分析', status: 'ok', statusText: '广场公开', desc: '已被 14 个部门工作台订阅复用，近 30 天触发 1,280 次。', binds: 6, updated: '昨天 17:40' }
+  ]
+};
+function renderSkills(tab) {
+  const items = SKILLS[tab] || SKILLS.platform;
+  document.getElementById('skillCardsGrid').innerHTML = items.map(s => `
+    <article class="ds-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="min-width:0">
+          <div style="font-size:14px;font-weight:600;color:var(--ink-1)">${s.name}</div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <span class="badge badge-neutral">${s.group}</span>
+            <span class="badge ${s.status === 'ok' ? 'badge-ok' : 'badge-warn'}"><span class="dot ${s.status === 'ok' ? 'dot-ok' : 'dot-warn'}"></span>${s.statusText}</span>
+          </div>
+        </div>
+        <button class="btn btn-default btn-sm" onclick="showToast('打开技能编辑器：${s.name}')">${tab === 'pending' ? '去审核' : '编辑'}</button>
+      </div>
+      <p style="margin:10px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.6">${s.desc}</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:9px;border-top:1px solid #f1f5f9;font-size:11.5px;color:var(--ink-4)">
+        <span class="num">装配 ${s.binds} 个智能体</span>
+        <span>更新于 ${s.updated}</span>
+      </div>
+    </article>
+  `).join('');
+}
+document.querySelectorAll('#skillTabs .ds-tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#skillTabs .ds-tab').forEach(x => x.classList.toggle('active', x === b));
+  renderSkills(b.dataset.skillTab);
+}));
+document.getElementById('toggleGuideBtn').addEventListener('click', function () {
+  const box = document.getElementById('quietGuideBox');
+  const open = box.style.display === 'none';
+  box.style.display = open ? 'block' : 'none';
+  this.querySelector('span').textContent = open ? '收起流程说明' : '展开流程说明';
+});
+
+/* ==================== 场景 4：系统配置中心数据与交互 ==================== */
+const CFG_GROUPS = {
+  sandbox: {
+    title: '代码沙箱与 Kubernetes 执行环境',
+    items: [
+      { key: 'sandbox_k8s_existing_pvc', label: '共享持久化卷（PVC）名称', desc: '所有沙箱 Pod 共享该 ReadWriteMany 卷，挂载于 /workspace。', val: 'nanzi-sandbox-workspace-pvc' },
+      { key: 'sandbox_k8s_image', label: '沙箱基础镜像地址', desc: '推荐使用内网私有仓库地址以缩短冷启动耗时。', val: 'registry.nanzi.internal/agent/sandbox:3.11-slim' },
+      { key: 'sandbox_exec_timeout_sec', label: '单次执行超时（秒）', desc: '超过阈值自动终止容器进程并释放配额。', val: '120' }
+    ]
+  },
+  rag: {
+    title: '知识库与向量检索引擎',
+    items: [
+      { key: 'embed_api_base_url', label: 'Embedding 接口地址', desc: '用于文档切片向量化与记忆语义检索的统一服务入口。', val: 'https://embed-internal.nanzi.local/v1' },
+      { key: 'knowledge_scope_gate_enabled', label: '检索范围严格门控', desc: '开启后仅检索智能体显式绑定的知识库，禁止跨库漂移。', val: '已开启（严格模式）' }
+    ]
+  },
+  security: {
+    title: '安全与认证策略',
+    items: [
+      { key: 'password_expire_days', label: '密码强制轮换周期（天）', desc: '到期前 7 天顶部温和提示，0 表示不限制。', val: '90' },
+      { key: 'session_idle_timeout_min', label: '会话空闲过期时长（分钟）', desc: '超时后自动吊销 HttpOnly Cookie 并跳转登录。', val: '480' }
+    ]
+  }
+};
+const cfgGuideHtml = `
+  <p style="margin-top:0">将原本铺在表单下方 500 字的彩底 Emoji 文档收拢进按需抽屉，让表单区保持高扫描密度：</p>
+  <div style="background:var(--bg-subtle);border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0">
+    <div style="font-weight:600;color:var(--ink-1);margin-bottom:6px">1. PVC 访问模式要求</div>
+    <div>集群需提前创建 <code>ReadWriteMany</code> 类型 PVC，确保多副本并发读写同一工作目录。</div>
+  </div>
+  <div style="background:var(--bg-subtle);border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0">
+    <div style="font-weight:600;color:var(--ink-1);margin-bottom:6px">2. 权限与安全上下文</div>
+    <div>请在 Pod Spec 中配置 <code>fsGroup: 1000</code>，避免非 root 沙箱进程写入 <code>/workspace</code> 时返回 Permission Denied。</div>
+  </div>
+  <div class="clean-code"><div class="clean-code-head"><span class="mono">YAML</span></div><pre>apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nanzi-sandbox-workspace-pvc
+spec:
+  accessModes: [ReadWriteMany]</pre></div>`;
+
+let activeCfgGroup = 'sandbox';
+const dirtyMap = {};
+
+function renderCfgRows() {
+  const g = CFG_GROUPS[activeCfgGroup];
+  document.getElementById('cfgGroupTitle').textContent = g.title;
+  document.getElementById('cfgRows').innerHTML = g.items.map(it => {
+    const cur = dirtyMap[it.key] !== undefined ? dirtyMap[it.key] : it.val;
+    const isDirty = cur !== it.val;
+    return `<div class="cfg-row ${isDirty ? 'dirty' : ''}">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink-1)">${it.label} ${isDirty ? '<span class="badge badge-warn" style="margin-left:6px">已修改</span>' : ''}</div>
+        <div class="mono" style="font-size:11px;color:var(--ink-4);margin-top:2px">${it.key}</div>
+        <div style="font-size:12px;color:var(--ink-3);margin-top:4px">${it.desc}</div>
+      </div>
+      <div>
+        <input class="ds-input" style="width:100%" value="${cur}" oninput="onCfgInput('${it.key}', '${it.val}', this.value)" />
+      </div>
+    </div>`;
+  }).join('');
+  updateCfgSaveBar();
+}
+function onCfgInput(key, orig, val) {
+  if (val === orig) delete dirtyMap[key];
+  else dirtyMap[key] = val;
+  updateCfgSaveBar();
+  // 更新当前行高亮而不丢焦点
+  const cnt = Object.keys(dirtyMap).length;
+  document.getElementById('cfgDirtyCnt').textContent = cnt;
+}
+function updateCfgSaveBar() {
+  const cnt = Object.keys(dirtyMap).length;
+  document.getElementById('cfgDirtyCnt').textContent = cnt;
+  document.getElementById('cfgSaveBar').classList.toggle('show', cnt > 0);
+}
+function resetCfgDemo() { Object.keys(dirtyMap).forEach(k => delete dirtyMap[k]); renderCfgRows(); showToast('已还原未保存更改'); }
+function saveCfgDemo() {
+  Object.keys(dirtyMap).forEach(k => {
+    Object.values(CFG_GROUPS).forEach(g => g.items.forEach(it => { if (it.key === k) it.val = dirtyMap[k]; }));
+    delete dirtyMap[k];
+  });
+  renderCfgRows();
+  showToast('配置已保存并热更新（单一保存路径，无四重告警）');
+}
+document.querySelectorAll('#cfgNav .cfg-nav-btn').forEach(b => b.addEventListener('click', () => {
+  activeCfgGroup = b.dataset.cfgGroup;
+  document.querySelectorAll('#cfgNav .cfg-nav-btn').forEach(x => x.classList.toggle('active', x === b));
+  renderCfgRows();
+}));
+
+/* ==================== 场景 5：场景模板 & 去紫 AI 弹窗 ==================== */
+const SCENARIOS = [
+  { cat: 'bi', name: '经营日报与异常归因', tag: '经营分析', desc: '自动对接销售与毛利宽表，每日 08:30 推送区域异常波动分析。', delivered: 9 },
+  { cat: 'bi', name: '供应链库存周转监控', tag: '经营分析', desc: '监测滞销 SKU 与安全库存水位，生成分仓补货优先级清单。', delivered: 5 },
+  { cat: 'kb', name: '制度与人事政策问答', tag: '知识问答', desc: '挂载企业员工手册与报销规范，支持条款原文高亮溯源。', delivered: 7 },
+  { cat: 'kb', name: '研发架构与排障助手', tag: '知识问答', desc: '串联内部技术文档库与值班 Runbook，快速定位故障根因。', delivered: 4 },
+  { cat: 'ops', name: '数据表结构漂移巡检', tag: '自动巡检', desc: '定时比对源库 Schema 变更，自动标记缺失备注与类型不匹配字段。', delivered: 2 },
+  { cat: 'ops', name: 'API 延迟与错误率日报', tag: '自动巡检', desc: '汇总近 24 小时工具调用 P95 延迟，异常超阈值即时通知负责人。', delivered: 1 }
+];
+const aiModalHtml = `
+  <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg-subtle);margin-bottom:14px">
+    <div style="font-size:12px;font-weight:600;color:var(--ink-1)">已选数据表（3 张）</div>
+    <div class="mono" style="font-size:11.5px;color:var(--ink-3);margin-top:4px">dws_sales_order_daily · dim_store · dwd_refund_detail</div>
+  </div>
+  <div style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><b style="color:var(--ink-1)">推荐指标候选</b><span style="color:var(--ink-3)">已自动校验字段血缘</span></div>
+    <label style="display:flex;gap:10px;padding:10px 12px;border:1px solid var(--brand-border);background:var(--brand-soft);border-radius:8px;margin-bottom:8px;cursor:pointer">
+      <input type="checkbox" checked style="margin-top:2px" />
+      <div><b style="font-size:12.5px;color:var(--ink-1)">净成交额（Net GMV）</b><div class="mono" style="font-size:11px;color:var(--ink-3);margin-top:2px">SUM(pay_amount) - SUM(refund_amount)</div></div>
+    </label>
+    <label style="display:flex;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer">
+      <input type="checkbox" checked style="margin-top:2px" />
+      <div><b style="font-size:12.5px;color:var(--ink-1)">退货率（Refund Rate）</b><div class="mono" style="font-size:11px;color:var(--ink-3);margin-top:2px">COUNT(refund_id) / NULLIF(COUNT(order_id), 0)</div></div>
+    </label>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:12px;border-top:1px solid var(--border)">
+    <button class="btn btn-default" onclick="closeDrawer()">取消</button>
+    <button class="btn btn-primary" onclick="closeDrawer();showToast('已保存 2 项业务指标（去紫化专业弹窗）')">保存选中指标</button>
+  </div>`;
+
+function renderScenarios(cat) {
+  const list = SCENARIOS.filter(s => cat === 'all' || s.cat === cat);
+  document.getElementById('scGrid').innerHTML = list.map(s => `
+    <article class="ds-card" style="display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span class="badge badge-neutral">${s.tag}</span>
+        <span style="font-size:11.5px;color:var(--ink-4)" class="num">已交付 ${s.delivered}</span>
+      </div>
+      <h4 style="margin:9px 0 5px;font-size:14px;font-weight:600;color:var(--ink-1)">${s.name}</h4>
+      <p style="margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.6;flex:1">${s.desc}</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9">
+        <button class="btn btn-ghost btn-sm" onclick="showToast('查看方案详情：${s.name}')">查看详情</button>
+        <button class="btn btn-default btn-sm" style="color:var(--brand);border-color:var(--brand-border)" onclick="showToast('进入交付向导：${s.name}')">立即部署</button>
+      </div>
+    </article>
+  `).join('');
+}
+document.querySelectorAll('#scChips .chip').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#scChips .chip').forEach(x => x.classList.toggle('active', x === b));
+  renderScenarios(b.dataset.sc);
+}));
+
+/* ==================== 场景 6：对话提问卡交互 ==================== */
+document.querySelectorAll('#qOptions .q-opt').forEach(opt => opt.addEventListener('click', () => {
+  document.querySelectorAll('#qOptions .q-opt').forEach(o => o.classList.remove('selected'));
+  opt.classList.add('selected');
+}));
+document.getElementById('qSubmitBtn').addEventListener('click', () => {
+  const badge = document.getElementById('qStatusBadge');
+  badge.className = 'badge badge-ok';
+  badge.textContent = '已提交';
+  showToast('已提交口径确认，智能体继续生成报表');
+});
+
+/* ==================== 场景 7：个人中心导航交互 ==================== */
+const PC_VIEWS = {
+  security: `
+    <h4 style="margin:0 0 4px;font-size:14.5px;font-weight:650">账号与安全</h4>
+    <p style="margin:0 0 14px;font-size:12px;color:var(--ink-3)">统一收敛登录密码、两步验证与 API Key 安全管理，无 Emoji 混排</p>
+    <div style="display:grid;gap:10px">
+      <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div><b style="font-size:13px">登录密码</b><div style="font-size:12px;color:var(--ink-3);margin-top:2px">上次修改于 2026-09-12 · 距离下次轮换还有 18 天</div></div>
+        <button class="btn btn-default btn-sm" onclick="showToast('打开修改密码弹窗')">修改密码</button>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div><b style="font-size:13px">Google 两步验证（2FA）</b><div style="font-size:12px;color:var(--ink-3);margin-top:2px">登录管理后台时要求输入 6 位动态口令</div></div>
+        <button class="btn btn-primary btn-sm" onclick="showToast('开启 2FA 绑定向导')">立即开启</button>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div><b style="font-size:13px">个人 API Key</b><div class="mono" style="font-size:11.5px;color:var(--ink-4);margin-top:2px">nz_live_••••••••••••8f2a</div></div>
+        <button class="btn btn-default btn-sm" onclick="showToast('已复制个人 API Key')">复制</button>
+      </div>
+    </div>`,
+  appearance: `<h4 style="margin:0 0 6px;font-size:14.5px;font-weight:650">界面与登录风格</h4><p style="margin:0;font-size:12.5px;color:var(--ink-3)">在此统一管理界面模式（用户模式 / 专业模式）、侧栏明暗主题与 8 套登录页视觉主题预览，去除永久「新」角标。</p>`,
+  perms: `<h4 style="margin:0 0 6px;font-size:14.5px;font-weight:650">我的权限与申请</h4><p style="margin:0 0 10px;font-size:12.5px;color:var(--ink-3)">单层分段切换「已授权资源 / 申请记录」，彻底消除旧版 3 级同名「权限清单」嵌套 Tab。</p><div class="chips"><span class="badge badge-brand">智能体 · 8 个</span><span class="badge badge-neutral">知识库 · 12 个</span><span class="badge badge-neutral">数据集 · 5 个</span></div>`,
+  notify: `<h4 style="margin:0 0 6px;font-size:14.5px;font-weight:650">消息通知</h4><p style="margin:0;font-size:12.5px;color:var(--ink-3)">配置定时任务失败提醒、企微/钉钉 Webhook 与站内信接收偏好。</p>`,
+  secrets: `<h4 style="margin:0 0 6px;font-size:14.5px;font-weight:650">我的凭据</h4><p style="margin:0;font-size:12.5px;color:var(--ink-3)">直接嵌入三栏 Master-Detail 凭据工作台，不再与顶层 10 个横排 Tab 抢占水平空间。</p>`,
+  usage: `<h4 style="margin:0 0 6px;font-size:14.5px;font-weight:650">个人 Token 消耗</h4><p style="margin:0;font-size:12.5px;color:var(--ink-3)">复用全站一体化指标条 + DateRangePicker，查看近 30 天输入/输出 Token 与智能体分布。</p>`
+};
+function renderPc(key) { document.getElementById('pcContent').innerHTML = PC_VIEWS[key] || PC_VIEWS.security; }
+document.querySelectorAll('#pcNav .pc-nav-item').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#pcNav .pc-nav-item').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  renderPc(b.dataset.pc);
+}));
+
+/* 初始化渲染 */
+renderMcp();
+renderSkills('platform');
+renderCfgRows();
+renderScenarios('all');
+renderPc('security');
+</script>
+</body>
+</html>

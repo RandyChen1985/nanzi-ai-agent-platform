@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ExclamationTriangleIcon } from "@heroicons/vue/24/outline";
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { metadataApi } from '../api/metadata'
@@ -256,7 +257,7 @@ const compareDatasets = (a: Dataset, b: Dataset): number => {
 const qualityBadgeClass = (score?: number | null): string => {
   if (score === undefined || score === null) return 'bg-gray-50 text-gray-400 border-gray-200'
   if (score >= 90) return 'bg-emerald-50 text-emerald-600 border-emerald-200'
-  if (score >= 75) return 'bg-blue-50 text-blue-600 border-blue-200'
+  if (score >= 75) return 'bg-primary/5 text-primary border-primary/20'
   if (score >= 60) return 'bg-amber-50 text-amber-600 border-amber-200'
   return 'bg-rose-50 text-rose-600 border-rose-200'
 }
@@ -266,7 +267,7 @@ const qualityTooltip = (ds: Dataset): string => {
   if (!b || !b.dimensions?.length) return '暂无质量评分，执行一次 Schema 巡检后生成'
   const lines: string[] = []
   if (b.degraded) {
-    lines.push(`⚠️ ${b.degraded_reason || '本次巡检未完整比对，分数仅供参考'}`)
+    lines.push(`[WARN] ${b.degraded_reason || '本次巡检未完整比对，分数仅供参考'}`)
   }
   lines.push(`质量治理分 ${b.score}（${b.level_label}）`)
   lines.push(...b.dimensions.map((d) => `${d.label} ${d.score} 分（问题 ${d.problem_count} 处）`))
@@ -625,7 +626,7 @@ const permissionToneClass = (ds: Dataset) => {
   const item = permissionItem(ds)
   if (!item || !item.total) return 'bg-gray-50 text-gray-500 border-gray-200'
   if (item.all) return 'bg-emerald-50 text-emerald-700 border-emerald-100'
-  return 'bg-sky-50 text-sky-700 border-sky-100'
+  return 'bg-sky-50 text-primary-dark border-sky-100'
 }
 const permissionTooltip = (ds: Dataset) => {
   const item = permissionItem(ds)
@@ -1166,7 +1167,7 @@ onMounted(async () => {
             <span
               v-if="!isLocalMode && engineStatus !== 'connected'"
               class="whitespace-nowrap text-xs font-medium"
-              :class="engineStatus === 'checking' ? 'text-blue-600' : 'text-amber-600'"
+              :class="engineStatus === 'checking' ? 'text-primary' : 'text-amber-600'"
             >
               引擎{{ engineStatusText }}
             </span>
@@ -1221,7 +1222,7 @@ onMounted(async () => {
             type="text"
             data-search-no-clear
             placeholder="搜索数据集名称、ID或描述..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary"
           />
           <!-- 自绘清空按钮：type="search" 的原生 ✕ 会挤掉右侧文字区，
                这里右边恒定留 pr-8，有没有按钮都不影响排版 -->
@@ -1240,7 +1241,7 @@ onMounted(async () => {
 
         <select
           v-model="statusFilter"
-          class="w-full shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto"
+          class="w-full shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
         >
           <option value="all">状态：全部</option>
           <option value="active">已启用</option>
@@ -1252,7 +1253,7 @@ onMounted(async () => {
             <button
               type="button"
               class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
               title="卡片视图"
               @click="viewMode = 'grid'"
             >
@@ -1263,7 +1264,7 @@ onMounted(async () => {
             <button
               type="button"
               class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
               title="列表视图"
               @click="viewMode = 'list'"
             >
@@ -1294,7 +1295,7 @@ onMounted(async () => {
             <button
               v-if="hasPermission('element:metadata:edit')"
               type="button"
-              class="flex flex-1 items-center justify-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98] sm:flex-none"
+              class="flex flex-1 items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-dark active:scale-[0.98] sm:flex-none"
               title="新建数据集"
               @click="showCreateModal = true; showCreateMenu = false"
             >
@@ -1307,7 +1308,7 @@ onMounted(async () => {
               v-else
               v-has-perm="'element:metadata:import'"
               type="button"
-              class="flex flex-1 items-center justify-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98] sm:flex-none"
+              class="flex flex-1 items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-dark active:scale-[0.98] sm:flex-none"
               @click="showImportModal = true; showCreateMenu = false"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1318,7 +1319,7 @@ onMounted(async () => {
             <button
               v-if="hasPermission('element:metadata:edit') && hasPermission('element:metadata:import')"
               type="button"
-              class="border-l border-blue-500 bg-blue-600 px-2 text-white transition-colors hover:bg-blue-700"
+              class="border-l border-primary bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
               title="更多操作与创建方式"
               @click="showCreateMenu = !showCreateMenu"
             >
@@ -1415,9 +1416,7 @@ onMounted(async () => {
       class="relative rounded-2xl border border-amber-300/90 bg-gradient-to-r from-amber-50 via-orange-50/40 to-amber-50 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-amber-950/30 p-3.5 sm:p-4 text-xs sm:text-sm text-amber-900 dark:text-amber-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
     >
       <div class="flex items-start gap-3">
-        <div class="w-8 h-8 rounded-xl bg-amber-200/70 dark:bg-amber-900/60 flex items-center justify-center shrink-0 text-base shadow-2xs">
-          ⚠️
-        </div>
+        <div class="w-8 h-8 rounded-xl bg-amber-200/70 dark:bg-amber-900/60 flex items-center justify-center shrink-0 text-base shadow-2xs"><ExclamationTriangleIcon class="h-5 w-5" aria-hidden="true" /></div>
         <div>
           <div class="font-bold text-amber-950 dark:text-amber-100 flex items-center gap-2 flex-wrap">
             <span>Schema 结构漂移待办提醒</span>
@@ -1437,7 +1436,7 @@ onMounted(async () => {
           class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white rounded-lg font-semibold text-xs transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
           @click="openFirstDriftDataset"
         >
-          <span>📋</span> 查看待处置详情
+          查看待处置详情
         </button>
         <button
           type="button"
@@ -1487,7 +1486,7 @@ onMounted(async () => {
     <!-- Loading State：首帧即显示，避免请求较慢时列表区整块空白 -->
     <div v-if="loading" class="space-y-4" role="status" aria-live="polite" aria-busy="true">
       <div class="flex items-center gap-2 text-xs text-gray-400">
-        <svg class="h-3.5 w-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+        <svg class="h-3.5 w-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
@@ -1512,7 +1511,7 @@ onMounted(async () => {
       <button
         type="button"
         @click="searchQuery = ''; statusFilter = 'all'; groupFilter = 'all'"
-        class="mt-4 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors"
+        class="mt-4 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg border border-primary/20 transition-colors"
       >
         清除筛选
       </button>
@@ -1523,7 +1522,7 @@ onMounted(async () => {
       <div 
         v-for="ds in visibleDatasets" 
         :key="ds.id"
-        class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group flex flex-col relative"
+        class="bg-white rounded-xl border border-gray-200 hover:border-primary/25 hover:shadow-md transition-all duration-200 cursor-pointer group flex flex-col relative"
         @click="goToTables(ds.id)"
       >
         <!-- RAG Sync Badge -->
@@ -1532,7 +1531,7 @@ onMounted(async () => {
           class="absolute top-3 right-3 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border shadow-sm z-10"
           :class="{
             'bg-green-50 text-green-600 border-green-200': ds.rag_sync_status === 2,
-            'bg-blue-50 text-blue-600 border-blue-200 animate-pulse': ds.rag_sync_status === 1,
+            'bg-primary/5 text-primary border-primary/20 animate-pulse': ds.rag_sync_status === 1,
             'bg-red-50 text-red-600 border-red-200': ds.rag_sync_status === -1,
             'bg-amber-50 text-amber-600 border-amber-200': ds.rag_sync_status === 3
           }"
@@ -1544,11 +1543,11 @@ onMounted(async () => {
         <div class="p-4 flex-1 min-w-0">
           <div class="flex items-start gap-3 pr-10">
             <div class="w-9 h-9 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-lg border border-gray-100">
-              <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
+              <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-primary" />
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5 min-w-0">
-                <h3 class="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors truncate">
+                <h3 class="text-sm font-bold text-gray-900 group-hover:text-primary transition-colors truncate">
                   {{ ds.display_name }}
                 </h3>
                 <span 
@@ -1576,13 +1575,13 @@ onMounted(async () => {
 
           <!-- 统计：行内芯片，替代三块大色块 -->
           <div class="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-100 font-medium">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/5 text-primary-dark border border-primary/10 font-medium">
               表 <b>{{ ds.table_count || 0 }}</b>
             </span>
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-100 font-medium">
               指标 <b>{{ ds.metric_count || 0 }}</b>
             </span>
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-100 font-medium">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/5 text-primary-dark border border-primary/10 font-medium">
               关系 <b>{{ ds.relationship_count || 0 }}</b>
             </span>
             <span
@@ -1591,7 +1590,7 @@ onMounted(async () => {
               :title="qualityTooltip(ds)"
             >
               质量分 <b>{{ ds.quality_score ?? '—' }}</b>
-              <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500" title="本次巡检未完整比对，分数仅供参考">⚠</span>
+              <span v-if="ds.quality_breakdown?.degraded" class="inline-flex text-amber-500" title="本次巡检未完整比对，分数仅供参考"><ExclamationTriangleIcon class="h-3.5 w-3.5" aria-hidden="true" /></span>
             </span>
             <span
               v-if="canSeePermissionSummary"
@@ -1604,7 +1603,7 @@ onMounted(async () => {
             </span>
             <span
               v-if="canSeePermissionSummary && permissionItem(ds)?.column_rules"
-              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-100 font-medium"
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/5 text-primary-dark border border-primary/10 font-medium"
               :title="columnScopeTooltip(ds)"
             >
               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
@@ -1624,7 +1623,7 @@ onMounted(async () => {
             <button
               v-if="toolGroupName(ds)"
               type="button"
-              class="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+              class="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary-dark transition-colors hover:bg-primary/10"
               :title="`只看「${toolGroupName(ds)}」分组的数据集`"
               @click.stop="groupFilter = toolGroupName(ds)"
             >
@@ -1650,7 +1649,7 @@ onMounted(async () => {
               <span
                 v-for="tag in ds.tags.slice(0, 2)"
                 :key="tag"
-                class="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium border border-blue-100 truncate max-w-[5.5rem]"
+                class="px-1.5 py-0.5 bg-primary/5 text-primary rounded font-medium border border-primary/10 truncate max-w-[5.5rem]"
               >
                 {{ tag }}
               </span>
@@ -1728,7 +1727,7 @@ onMounted(async () => {
                 :disabled="!isEngineReady || ds.status !== 1 || isLocalMode || syncingId === ds.id || ds.rag_sync_status === 1"
                 :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
               >
-                <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="h-4 w-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="h-4 w-4 animate-spin text-primary" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                 <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
                 {{ (syncingId === ds.id || ds.rag_sync_status === 1) ? '同步中…' : '同步到 RAGFlow' }}
               </button>
@@ -1764,9 +1763,9 @@ onMounted(async () => {
                 v-if="hasPermission('element:metadata:edit')"
                 type="button"
                 @click="closeCardMenus(); openCopyWizard(ds)"
-                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 cursor-pointer"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-primary transition-colors hover:bg-primary/5 cursor-pointer"
               >
-                <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z"/></svg>
+                <svg class="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z"/></svg>
                 复制新建
               </button>
               <template v-if="hasPermission('element:metadata:delete')">
@@ -1792,10 +1791,10 @@ onMounted(async () => {
        <!-- 批量操作条：选中才出现，避免常态占用高度 -->
        <div
          v-if="selectedCount"
-         class="flex flex-wrap items-center gap-3 border-b border-blue-100 bg-blue-50/70 px-6 py-2"
+         class="flex flex-wrap items-center gap-3 border-b border-primary/10 bg-primary/5 px-6 py-2"
        >
-         <span class="text-xs font-medium text-blue-700">已选 <b>{{ selectedCount }}</b> 个数据集</span>
-         <button type="button" class="text-xs text-blue-600 hover:underline" @click="clearSelection">取消选择</button>
+         <span class="text-xs font-medium text-primary-dark">已选 <b>{{ selectedCount }}</b> 个数据集</span>
+         <button type="button" class="text-xs text-primary hover:underline" @click="clearSelection">取消选择</button>
          <button
            type="button"
            class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
@@ -1812,7 +1811,7 @@ onMounted(async () => {
             v-if="canBatchDelete"
             ref="selectAllRef"
             type="checkbox"
-            class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-primary focus:ring-primary"
             title="全选当前列表"
             :checked="allVisibleSelected"
             @change="toggleSelectAllVisible"
@@ -1867,7 +1866,7 @@ onMounted(async () => {
              v-for="ds in visibleDatasets" 
              :key="ds.id" 
              class="grid grid-cols-12 gap-4 px-6 py-4 items-center transition-colors cursor-pointer group"
-             :class="isSelected(ds.id) ? 'bg-blue-50/50' : 'hover:bg-gray-50'"
+             :class="isSelected(ds.id) ? 'bg-primary/5' : 'hover:bg-gray-50'"
              @click="goToTables(ds.id)"
           >
              <!-- Name & Meta -->
@@ -1875,14 +1874,14 @@ onMounted(async () => {
                 <input
                    v-if="canBatchDelete"
                    type="checkbox"
-                   class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                   class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-primary focus:ring-primary"
                    :checked="isSelected(ds.id)"
                    :aria-label="`选择数据集 ${ds.display_name}`"
                    @click.stop
                    @change="toggleSelect(ds.id)"
                 />
                 <div class="w-10 h-10 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-xl border border-gray-100">
-                   <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
+                   <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-primary" />
                 </div>
                 <div class="min-w-0">
                    <div class="flex items-center gap-2">
@@ -1902,7 +1901,7 @@ onMounted(async () => {
                       <!-- 锁定分组时不再显示：整列都是同一个组 -->
                       <span
                         v-if="groupFilter === 'all' && toolGroupName(ds)"
-                        class="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 truncate max-w-[7rem]"
+                        class="inline-flex items-center rounded-full border border-primary/10 bg-primary/5 px-1.5 py-0.5 text-[10px] font-semibold text-primary-dark truncate max-w-[7rem]"
                         :title="`业务分组：${toolGroupName(ds)}`"
                       >
                         {{ toolGroupName(ds) }}
@@ -1927,21 +1926,21 @@ onMounted(async () => {
                       :class="ds.status === 1 ? 'translate-x-4.5' : 'translate-x-0.5'"
                     />
                   </div>
-                  <span class="text-[10px] font-bold uppercase tracking-wider" :class="ds.status === 1 ? 'text-green-600' : 'text-gray-400'">
-                    {{ ds.status === 1 ? 'Active' : 'Off' }}
+                  <span class="text-[11px] font-medium" :class="ds.status === 1 ? 'text-emerald-600' : 'text-gray-400'">
+                    {{ ds.status === 1 ? '已启用' : '已禁用' }}
                   </span>
                 </div>
              </div>
              <!-- Stats -->
              <div class="col-span-2 flex items-center gap-3">
                 <div class="text-center">
-                   <div class="text-[9px] text-gray-400 uppercase">Tables</div>
-                   <div class="font-bold text-gray-700 text-xs">{{ ds.table_count || 0 }}</div>
+                   <div class="text-[10px] text-gray-400">数据表</div>
+                   <div class="font-semibold text-gray-700 text-xs tabular-nums">{{ ds.table_count || 0 }}</div>
                 </div>
                 <div class="w-px h-4 bg-gray-100"></div>
                 <div class="text-center">
-                   <div class="text-[9px] text-gray-400 uppercase">Metrics</div>
-                   <div class="font-bold text-gray-700 text-xs">{{ ds.metric_count || 0 }}</div>
+                   <div class="text-[10px] text-gray-400">指标</div>
+                   <div class="font-semibold text-gray-700 text-xs tabular-nums">{{ ds.metric_count || 0 }}</div>
                 </div>
              </div>
 
@@ -1953,7 +1952,7 @@ onMounted(async () => {
                    :title="qualityTooltip(ds)"
                 >
                    {{ ds.quality_score ?? '—' }}
-                   <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500 ml-0.5">⚠</span>
+                   <ExclamationTriangleIcon v-if="ds.quality_breakdown?.degraded" class="ml-0.5 h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
                 </span>
              </div>
 
@@ -1961,15 +1960,15 @@ onMounted(async () => {
              <div class="col-span-1">
                 <span 
                    v-if="!isLocalMode && ds.rag_sync_status !== undefined && ds.rag_sync_status !== 0"
-                   class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border"
+                   class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border"
                    :class="{
-                      'bg-green-50 text-green-600 border-green-100': ds.rag_sync_status === 2,
-                      'bg-blue-50 text-blue-600 border-blue-100 animate-pulse': ds.rag_sync_status === 1,
-                      'bg-red-50 text-red-600 border-red-100': ds.rag_sync_status === -1,
-                      'bg-amber-50 text-amber-600 border-amber-100': ds.rag_sync_status === 3
+                      'bg-emerald-50 text-emerald-700 border-emerald-200': ds.rag_sync_status === 2,
+                      'bg-primary/10 text-primary border-primary/20': ds.rag_sync_status === 1,
+                      'bg-red-50 text-red-600 border-red-200': ds.rag_sync_status === -1,
+                      'bg-amber-50 text-amber-700 border-amber-200': ds.rag_sync_status === 3
                    }"
                 >
-                   {{ ds.rag_sync_status === 2 ? 'Synced' : (ds.rag_sync_status === 1 ? 'Syncing' : (ds.rag_sync_status === 3 ? 'Modified' : 'Failed')) }}
+                   {{ ds.rag_sync_status === 2 ? '已同步' : (ds.rag_sync_status === 1 ? '同步中' : (ds.rag_sync_status === 3 ? '待同步' : '失败')) }}
                 </span>
                 <span v-else class="text-[10px] text-gray-300">-</span>
              </div>
@@ -2070,10 +2069,10 @@ onMounted(async () => {
           <button
             v-if="hasPermission('element:metadata:edit')"
             type="button"
-            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-primary transition-colors hover:bg-primary/5"
             @click="withRowMenu((d) => openCopyWizard(d))"
           >
-            <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z" /></svg>
+            <svg class="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z" /></svg>
             复制新建
           </button>
           <template v-if="hasPermission('element:metadata:delete')">
@@ -2095,7 +2094,7 @@ onMounted(async () => {
     <div v-if="!loading && hasMoreDatasets" class="flex flex-col items-center gap-1.5 pt-2">
       <button
         type="button"
-        class="px-4 py-2 text-xs font-semibold text-blue-600 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+        class="px-4 py-2 text-xs font-semibold text-primary bg-white border border-primary/20 rounded-lg hover:bg-primary/5 transition-colors"
         @click="loadMoreDatasets"
       >
         加载更多（已显示 {{ visibleDatasets.length }} / {{ displayDatasets.length }}）
@@ -2178,8 +2177,8 @@ onMounted(async () => {
       <div v-if="showSyncConfirmModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSyncConfirmModal = false">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
           <div class="p-6 text-center">
-             <div class="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-100">
-                <svg class="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+             <div class="w-16 h-16 bg-primary/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-primary/10">
+                <svg class="w-8 h-8 text-primary" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
              </div>
              <h3 class="text-lg font-bold text-gray-900 mb-2">同步到 RAGFlow?</h3>
              <p class="text-sm text-gray-500 mb-6 leading-relaxed">
@@ -2188,7 +2187,7 @@ onMounted(async () => {
              </p>
              <div class="flex gap-3 justify-center">
                 <button @click="showSyncConfirmModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-                <button @click="confirmSync" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-indigo-500/30">确认同步</button>
+                <button @click="confirmSync" class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-primary/30">确认同步</button>
              </div>
           </div>
         </div>
@@ -2410,9 +2409,9 @@ onMounted(async () => {
       <div v-if="showSpecModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecModal = false">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-primary/5">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center border border-purple-200">
+               <div class="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
                </div>
                <div>
@@ -2425,7 +2424,7 @@ onMounted(async () => {
                 v-if="!showFlowGuide"
                 type="button"
                 @click="restoreFlowGuide"
-                class="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-100/70 hover:bg-purple-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 text-xs font-medium text-primary-dark bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 <span>恢复顶部流程提示</span>
@@ -2443,7 +2442,7 @@ onMounted(async () => {
                :key="tab"
                @click="activeSpecTab = tab"
                class="px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize cursor-pointer"
-               :class="activeSpecTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+               :class="activeSpecTab === tab ? 'border-primary text-primary-dark' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
              >
                {{ tab === 'flow' ? '全流程指引 (Workflow)' :
                   tab === 'concept' ? '核心理念 (Concepts)' : 
@@ -2457,9 +2456,9 @@ onMounted(async () => {
            
              <!-- Tab 0: Workflow Flow -->
              <div v-if="activeSpecTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-lg shadow-2xs">
-                   <h3 class="font-bold text-blue-900 mb-1">从数据源到 AI 智能体的端到端流程</h3>
-                   <p class="text-xs text-blue-700 leading-relaxed">
+                <div class="bg-gradient-to-r from-primary/5 to-primary/5 border-l-4 border-primary p-4 rounded-r-lg shadow-2xs">
+                   <h3 class="font-bold text-primary-dark mb-1">从数据源到 AI 智能体的端到端流程</h3>
+                   <p class="text-xs text-primary-dark leading-relaxed">
                       遵循标准 4 步流程：先连接摸排数据源，再通过 AI 智能解析表结构与枚举，继而完善指标与跨库实体关系，最后同步至向量库供 ChatBI 与 Agent 消费。
                    </p>
                 </div>
@@ -2468,7 +2467,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">1</span>
                             <h4 class="font-bold text-gray-900 text-sm">连接与摸排数据源</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -2479,7 +2478,7 @@ onMounted(async () => {
                          <button
                             type="button"
                             @click="showSpecModal = false; router.push('/dashboard/data-sources')"
-                            class="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium inline-flex items-center gap-1 cursor-pointer"
                          >
                             前往数据源管理 &rarr;
                          </button>
@@ -2489,7 +2488,7 @@ onMounted(async () => {
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
                       <div>
                          <div class="flex items-center gap-2 mb-2">
-                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">智能导入与 AI 语义解析</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
@@ -2500,7 +2499,7 @@ onMounted(async () => {
                          <button
                             type="button"
                             @click="showSpecModal = false; showImportModal = true"
-                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                            class="text-xs text-primary hover:text-primary-dark font-medium inline-flex items-center gap-1 cursor-pointer"
                          >
                             向导新建数据集 &rarr;
                          </button>
@@ -2541,9 +2540,9 @@ onMounted(async () => {
 
              <!-- Tab 1: Concepts -->
              <div v-if="activeSpecTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
-                   <h3 class="font-bold text-blue-800 mb-2">为什么需要 Semantic Layer?</h3>
-                   <p class="text-sm text-blue-700 leading-relaxed">
+                <div class="bg-primary/5 border-l-4 border-primary p-4 rounded-r-lg">
+                   <h3 class="font-bold text-primary-dark mb-2">为什么需要 Semantic Layer?</h3>
+                   <p class="text-sm text-primary-dark leading-relaxed">
                       单纯依赖数据库 Schema (DDL) 是不够的。大模型不知道 "pue" 代表 "能源利用效率"，也不知道 "status=1" 代表 "正常"。
                       元数据层通过注入<b>业务语义</b>、<b>枚举含义</b>和<b>计算逻辑</b>，弥补了这一鸿沟。
                    </p>
@@ -2556,7 +2555,7 @@ onMounted(async () => {
                       <p class="text-xs text-gray-500">不仅提供表名，还提供通俗易懂的业务术语和描述。例如：将 `metrics_table` 标记为 "实时能耗监控表"。</p>
                    </div>
                    <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                      <div class="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 mb-3 font-bold">2</div>
+                      <div class="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center text-primary mb-3 font-bold">2</div>
                       <h4 class="font-bold text-gray-900 mb-2">有哪些值? (Enums)</h4>
                       <p class="text-xs text-gray-500">对于分类字段（Status/Type），显式列出所有可能的枚举值及其含义。防止 AI 幻觉生成不存在的状态码。</p>
                    </div>
@@ -2629,22 +2628,22 @@ onMounted(async () => {
                       <tbody class="divide-y divide-gray-100">
                          <tr class="hover:bg-gray-50">
                             <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Entity (Table)</td>
-                            <td class="px-6 py-3 font-mono text-purple-600">name</td>
+                            <td class="px-6 py-3 font-mono text-primary">name</td>
                             <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
                             <td class="px-6 py-3 text-gray-500">数据库物理表名 (e.g. `t_users`)</td>
                          </tr>
                          <tr class="hover:bg-gray-50">
-                            <td class="px-6 py-3 font-mono text-purple-600">term</td>
+                            <td class="px-6 py-3 font-mono text-primary">term</td>
                             <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
                             <td class="px-6 py-3 text-gray-500">业务通用名称 (e.g. "用户表")</td>
                          </tr>
                          <tr class="hover:bg-gray-50">
-                            <td class="px-6 py-3 font-mono text-purple-600">description</td>
+                            <td class="px-6 py-3 font-mono text-primary">description</td>
                             <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
                             <td class="px-6 py-3 text-gray-500">详细描述，包含数据粒度、更新频率等</td>
                          </tr>
                          <tr class="hover:bg-gray-50">
-                            <td class="px-6 py-3 font-mono text-purple-600">synonyms</td>
+                            <td class="px-6 py-3 font-mono text-primary">synonyms</td>
                             <td class="px-6 py-3 text-gray-400">No</td>
                             <td class="px-6 py-3 text-gray-500">同义词列表，用于增强 RAG 检索命中率</td>
                          </tr>
@@ -2652,22 +2651,22 @@ onMounted(async () => {
                          <!-- Columns -->
                          <tr class="hover:bg-gray-50 bg-gray-50/30">
                             <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Column</td>
-                            <td class="px-6 py-3 font-mono text-blue-600">name / term</td>
+                            <td class="px-6 py-3 font-mono text-primary">name / term</td>
                             <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
                             <td class="px-6 py-3 text-gray-500">物理列名与业务列名</td>
                          </tr>
                          <tr class="hover:bg-gray-50 bg-gray-50/30">
-                            <td class="px-6 py-3 font-mono text-blue-600">enums</td>
+                            <td class="px-6 py-3 font-mono text-primary">enums</td>
                             <td class="px-6 py-3 text-amber-500 font-bold">Vital</td>
                             <td class="px-6 py-3 text-gray-500">枚举值列表。极大地帮助 LLM 生成正确的 WHERE 条件。</td>
                          </tr>
                          <tr class="hover:bg-gray-50 bg-gray-50/30">
-                            <td class="px-6 py-3 font-mono text-blue-600">examples</td>
+                            <td class="px-6 py-3 font-mono text-primary">examples</td>
                             <td class="px-6 py-3 text-gray-400">No</td>
                             <td class="px-6 py-3 text-gray-500">典型值示例 (Few-shot)，防止幻觉。</td>
                          </tr>
                          <tr class="hover:bg-gray-50 bg-gray-50/30">
-                            <td class="px-6 py-3 font-mono text-blue-600">foreign_key</td>
+                            <td class="px-6 py-3 font-mono text-primary">foreign_key</td>
                             <td class="px-6 py-3 text-gray-400">No</td>
                             <td class="px-6 py-3 text-gray-500">显式关联指针 (e.g. `other_table.id`)</td>
                          </tr>
@@ -2696,8 +2695,8 @@ onMounted(async () => {
                          <div class="flex-1 bg-red-50 p-3 rounded border border-red-100">
                             <h5 class="font-bold text-xs text-red-400 uppercase mb-2">避免</h5>
                             <ul class="text-sm text-gray-700 space-y-1">
-                               <li>🚫 整个库一个大文件 (Too large)</li>
-                               <li>🚫 一表一个文件 (Fragmented)</li>
+                               <li>整个库一个大文件 (Too large)</li>
+                               <li>一表一个文件 (Fragmented)</li>
                             </ul>
                          </div>
                       </div>
@@ -2705,26 +2704,26 @@ onMounted(async () => {
                 </section>
 
                 <section>
-                   <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><CpuChipIcon class="w-5 h-5 text-indigo-600" /> RAG 检索策略</h3>
-                   <div class="bg-indigo-50 p-5 rounded-xl border border-indigo-100">
-                      <ol class="relative border-l border-indigo-200 ml-3 space-y-6">
+                   <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><CpuChipIcon class="w-5 h-5 text-primary" /> RAG 检索策略</h3>
+                   <div class="bg-primary/5 p-5 rounded-xl border border-primary/10">
+                      <ol class="relative border-l border-primary/20 ml-3 space-y-6">
                          <li class="ml-6">
-                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">1</span>
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-primary/10 rounded-full -left-3 ring-4 ring-white text-primary font-bold text-xs">1</span>
                             <h4 class="font-bold text-gray-900 text-sm">User Query</h4>
                             <p class="text-xs text-gray-500 mt-1">用户提问："帮我查一下上海机房昨天的 PUE"</p>
                          </li>
                          <li class="ml-6">
-                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">2</span>
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-primary/10 rounded-full -left-3 ring-4 ring-white text-primary font-bold text-xs">2</span>
                             <h4 class="font-bold text-gray-900 text-sm">Vector Search (Retrieval)</h4>
                             <p class="text-xs text-gray-500 mt-1">系统在向量库中检索关键词 "机房", "PUE"。命中 `res_room` 和 `metrics_pue` 两张表。</p>
                          </li>
                          <li class="ml-6">
-                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">3</span>
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-primary/10 rounded-full -left-3 ring-4 ring-white text-primary font-bold text-xs">3</span>
                             <h4 class="font-bold text-gray-900 text-sm">Prompt Injection</h4>
                             <p class="text-xs text-gray-500 mt-1">
                                系统仅将 <b>命中的这 2 张表</b> 的 YAML 片段注入到 LLM 上下文。
                                <br>
-                               <span class="inline-block mt-1 bg-white px-2 py-0.5 rounded border border-indigo-100 text-indigo-600">精简上下文 = 更高准确率 + 更低成本</span>
+                               <span class="inline-block mt-1 bg-white px-2 py-0.5 rounded border border-primary/10 text-primary">精简上下文 = 更高准确率 + 更低成本</span>
                             </p>
                          </li>
                       </ol>
@@ -2752,11 +2751,11 @@ onMounted(async () => {
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
-                <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. nanzi_resources">
+                <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. nanzi_resources">
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-                <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+                <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. 资源数据集">
               </div>
             </div>
             <div>
@@ -2768,7 +2767,7 @@ onMounted(async () => {
               </label>
               <select
                 v-model="newDataset.data_source"
-                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">使用系统默认（{{ defaultDataSource }}）</option>
                 <option v-for="conn in dbConnections" :key="conn.id" :value="conn.name">
@@ -2781,7 +2780,7 @@ onMounted(async () => {
               </select>
               <p class="mt-1 text-xs text-gray-400">
                 只能从「数据源管理」里已配置的数据源中选择；留空则使用系统默认（{{ defaultDataSource }}）。
-                <button type="button" class="font-medium text-blue-600 hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
+                <button type="button" class="font-medium text-primary hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
               </p>
             </div>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -2795,7 +2794,7 @@ onMounted(async () => {
                   list="dataset-group-options"
                   type="text"
                   maxlength="64"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
                   placeholder="如 财务核算（留空 = 未分组）"
                 />
                 <p class="text-xs text-gray-400 mt-1">单选。决定这个数据集出现在哪个分组页签；不参与数据权限。</p>
@@ -2807,24 +2806,24 @@ onMounted(async () => {
                   <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
                 </label>
                 <div class="flex gap-2 mb-2">
-                  <input v-model="tagInput" @keyup.enter="addTag(newDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+                  <input v-model="tagInput" @keyup.enter="addTag(newDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="输入标签并回车">
                 </div>
                 <div class="flex flex-wrap gap-2">
-                  <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                  <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-primary/5 text-primary-dark text-xs rounded-full flex items-center gap-1 border border-primary/10">
                     {{ tag }}
-                    <button @click="removeTag(newDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                    <button @click="removeTag(newDataset, i as number)" class="text-primary hover:text-red-500 ml-1">&times;</button>
                   </span>
                 </div>
               </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
-              <textarea v-model="newDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
+              <textarea v-model="newDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="描述该数据集包含的内容..."></textarea>
             </div>
           </div>
           <div class="flex shrink-0 justify-end gap-3 border-t border-gray-100 bg-gray-50 px-6 py-3">
             <button @click="showCreateModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
-            <button @click="handleCreate" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认创建</button>
+            <button @click="handleCreate" class="bg-primary hover:bg-primary-dark text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认创建</button>
           </div>
         </div>
       </div>
@@ -2849,7 +2848,7 @@ onMounted(async () => {
     <Teleport to="body">
       <div v-if="showEditDatasetModal" class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 backdrop-blur-sm p-4 sm:items-center">
         <div class="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl">
-          <div class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-blue-50/30 px-6 py-4">
+          <div class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-primary/5 px-6 py-4">
             <h2 class="text-lg font-bold text-gray-900">编辑数据集</h2>
             <button @click="showEditDatasetModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -2863,7 +2862,7 @@ onMounted(async () => {
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-                <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+                <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. 资源数据集">
               </div>
             </div>
             <div>
@@ -2875,7 +2874,7 @@ onMounted(async () => {
               </label>
               <select
                 v-model="editingDataset.data_source"
-                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">使用系统默认（{{ defaultDataSource }}）</option>
                 <option v-for="conn in dbConnections" :key="conn.id" :value="conn.name">
@@ -2888,7 +2887,7 @@ onMounted(async () => {
               </select>
               <p class="mt-1 text-xs text-gray-400">
                 只能从「数据源管理」里已配置的数据源中选择；留空则使用系统默认（{{ defaultDataSource }}）。
-                <button type="button" class="font-medium text-blue-600 hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
+                <button type="button" class="font-medium text-primary hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
               </p>
             </div>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -2902,7 +2901,7 @@ onMounted(async () => {
                   list="dataset-group-options"
                   type="text"
                   maxlength="64"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
                   placeholder="如 财务核算（留空 = 未分组）"
                 />
                 <p class="text-xs text-gray-400 mt-1">单选。决定这个数据集出现在哪个分组页签；不参与数据权限。</p>
@@ -2913,12 +2912,12 @@ onMounted(async () => {
                   <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
                 </label>
                 <div class="flex gap-2 mb-2">
-                  <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+                  <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="输入标签并回车">
                 </div>
                 <div class="flex flex-wrap gap-2">
-                  <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                  <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-primary/5 text-primary-dark text-xs rounded-full flex items-center gap-1 border border-primary/10">
                     {{ tag }}
-                    <button @click="removeTag(editingDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                    <button @click="removeTag(editingDataset, i as number)" class="text-primary hover:text-red-500 ml-1">&times;</button>
                   </span>
                 </div>
               </div>
@@ -2929,19 +2928,19 @@ onMounted(async () => {
                 <button 
                   @click="handleEnhanceMetadata(editingDataset.id)"
                   :disabled="enhancing"
-                  class="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
+                  class="text-[10px] bg-primary/5 text-primary hover:bg-primary/10 px-2 py-0.5 rounded border border-primary/10 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
                 >
                   <svg v-if="enhancing" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                   <SparklesIcon v-else class="w-3 h-3" />
                   AI 辅助生成 (基于表信息)
                 </button>
               </div>
-              <textarea v-model="editingDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
+              <textarea v-model="editingDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="描述该数据集包含的内容..."></textarea>
             </div>
           </div>
           <div class="flex shrink-0 justify-end gap-3 border-t border-gray-100 bg-gray-50 px-6 py-3">
             <button @click="showEditDatasetModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
-            <button @click="handleUpdateDataset" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认更新</button>
+            <button @click="handleUpdateDataset" class="bg-primary hover:bg-primary-dark text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认更新</button>
           </div>
         </div>
       </div>
@@ -2983,7 +2982,7 @@ onMounted(async () => {
         <div class="px-5 py-4 border-b border-gray-100 space-y-3">
           <div class="flex items-center justify-between text-xs">
             <span class="text-gray-500">状态</span>
-            <span :class="syncLogStatus === 'completed' ? 'text-emerald-600' : syncLogStatus === 'failed' ? 'text-red-600' : syncLogStatus === 'disconnected' ? 'text-amber-600' : 'text-blue-600'" class="font-semibold">
+            <span :class="syncLogStatus === 'completed' ? 'text-emerald-600' : syncLogStatus === 'failed' ? 'text-red-600' : syncLogStatus === 'disconnected' ? 'text-amber-600' : 'text-primary'" class="font-semibold">
               {{ syncLogStatus === 'completed' ? '已完成' : syncLogStatus === 'failed' ? '失败' : syncLogStatus === 'disconnected' ? '连接中断' : '同步中' }}
             </span>
           </div>
@@ -2996,7 +2995,7 @@ onMounted(async () => {
             <span class="text-gray-800 font-semibold">已完成 {{ syncLogCompletedDocuments ?? 0 }} / {{ syncLogTotalDocuments }} 个文档</span>
           </div>
           <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
-            <div class="h-full bg-blue-500 transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>
+            <div class="h-full bg-primary transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>
           </div>
           <div class="flex justify-between text-[11px] text-gray-400 gap-3">
             <span class="truncate">{{ syncLogMessage }}</span>
@@ -3004,7 +3003,7 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <div v-for="(entry, index) in syncLogEntries" :key="`${entry.stage}-${index}`" class="relative pl-4 border-l-2" :class="entry.event === 'failed' ? 'border-red-300' : entry.event === 'completed' ? 'border-emerald-300' : 'border-blue-200'">
+          <div v-for="(entry, index) in syncLogEntries" :key="`${entry.stage}-${index}`" class="relative pl-4 border-l-2" :class="entry.event === 'failed' ? 'border-red-300' : entry.event === 'completed' ? 'border-emerald-300' : 'border-primary/20'">
             <div class="text-xs font-medium text-gray-800">{{ entry.message }}</div>
             <div class="mt-1 text-[11px] text-gray-400 flex justify-between gap-2">
               <span>{{ entry.stage }}</span><span>{{ entry.elapsed_ms ?? 0 }} ms</span>

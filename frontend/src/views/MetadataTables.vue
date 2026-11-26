@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ExclamationTriangleIcon } from "@heroicons/vue/24/outline";
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from '../utils/axios'
@@ -705,7 +706,7 @@ defineExpose({ fetchMetrics })
     <!-- RAG Pending Warning Banner -->
     <div 
       v-if="!isLocalMode && dataset?.rag_sync_status === 3" 
-      class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center justify-between shadow-xs animate-pulse-slow"
+      class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center justify-between shadow-xs"
     >
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200">
@@ -731,15 +732,12 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Header Card -->
-    <div :class="['bg-white rounded-xl shadow-xs border border-gray-100 relative overflow-hidden transition-all duration-300', isHeaderCollapsed ? 'px-4 py-2.5' : 'px-5 py-3.5']">
-      <!-- Decoration Top -->
-      <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-primary"></div>
-      
+    <div :class="['bg-white rounded-xl shadow-xs border border-gray-200 relative overflow-hidden transition-all duration-300', isHeaderCollapsed ? 'px-4 py-2.5' : 'px-5 py-3.5']">
       <!-- Collapsed Compact View -->
       <div v-if="isHeaderCollapsed" class="flex flex-wrap justify-between items-center gap-3 relative z-10">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center text-xl shadow-inner border border-gray-100 shrink-0">
-            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-blue-600" />
+            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-primary" />
           </div>
           <div class="flex items-center gap-2.5 min-w-0">
             <h1 class="text-lg font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
@@ -775,11 +773,11 @@ defineExpose({ fetchMetrics })
             v-if="hasPermission('element:metadata:edit')"
             @click="openAiEnhanceConfirm"
             :disabled="enhancingDataset"
-            class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm h-8 disabled:opacity-50"
+            class="bg-primary/5 hover:bg-primary/10 text-primary-dark border border-primary/20 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm h-8 disabled:opacity-50"
             title="基于现有表结构智能生成/润色数据集业务描述和标签"
           >
             <svg v-if="enhancingDataset" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <SparklesIcon v-else class="w-3.5 h-3.5 text-indigo-600" />
+            <SparklesIcon v-else class="w-3.5 h-3.5 text-primary" />
             <span>{{ enhancingDataset ? '生成中...' : 'AI 补全描述' }}</span>
           </button>
           <button 
@@ -787,7 +785,7 @@ defineExpose({ fetchMetrics })
             @click="fetchYaml"
             class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-8 whitespace-nowrap"
           >
-            <svg class="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            <svg class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
             查看&导出 AI YAML
           </button>
           <button 
@@ -815,7 +813,7 @@ defineExpose({ fetchMetrics })
         <div class="flex items-start gap-4 relative min-w-0 flex-1">
           <!-- Emoji -->
           <div class="w-14 h-14 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 shrink-0">
-            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-blue-600" />
+            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-primary" />
           </div>
           
           <div class="max-w-2xl min-w-0 flex-1">
@@ -851,11 +849,11 @@ defineExpose({ fetchMetrics })
                 v-if="hasPermission('element:metadata:edit')"
                 @click="openAiEnhanceConfirm"
                 :disabled="enhancingDataset"
-                class="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-0.5 rounded-full border border-indigo-200/80 inline-flex items-center gap-1 font-bold transition-all shadow-sm disabled:opacity-50"
+                class="text-xs bg-primary/5 text-primary-dark hover:bg-primary/10 px-2.5 py-0.5 rounded-full border border-primary/20 inline-flex items-center gap-1 font-bold transition-all shadow-sm disabled:opacity-50"
                 title="基于现有表结构智能生成/润色数据集业务描述和标签"
               >
                 <svg v-if="enhancingDataset" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <SparklesIcon v-else class="w-3 h-3 text-indigo-600" />
+                <SparklesIcon v-else class="w-3 h-3 text-primary" />
                 <span>{{ enhancingDataset ? 'AI 生成中...' : 'AI 补全描述' }}</span>
               </button>
             </div>
@@ -893,7 +891,7 @@ defineExpose({ fetchMetrics })
             @click="fetchYaml"
             class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-9 whitespace-nowrap shadow-sm"
           >
-            <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
             查看&导出 AI YAML
           </button>
           <button 
@@ -922,53 +920,53 @@ defineExpose({ fetchMetrics })
       <nav class="-mb-px flex space-x-6" aria-label="Tabs">
         <button
           @click="activeTab = 'tables'"
-          :class="[activeTab === 'tables' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'tables' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           数据表
           <span 
-            :class="[activeTab === 'tables' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-bold transition-colors']"
+            :class="[activeTab === 'tables' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-semibold transition-colors']"
           >{{ tables.length }}</span>
         </button>
         <button
           @click="activeTab = 'metrics'"
-          :class="[activeTab === 'metrics' ? 'border-amber-500 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'metrics' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           业务指标
           <span 
-             :class="[activeTab === 'metrics' ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-400', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-bold transition-colors']"
+             :class="[activeTab === 'metrics' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-semibold transition-colors']"
           >{{ dataset?.metric_count || 0 }}</span>
         </button>
         <button
           @click="activeTab = 'relationships'"
-          :class="[activeTab === 'relationships' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'relationships' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           实体关系
           <span 
-             :class="[activeTab === 'relationships' ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-bold transition-colors']"
+             :class="[activeTab === 'relationships' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-semibold transition-colors']"
           >{{ dataset?.relationship_count || 0 }}</span>
         </button>
         <button
           @click="activeTab = 'visualization'"
-          :class="[activeTab === 'visualization' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'visualization' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
           可视化
         </button>
         <button
           @click="activeTab = 'changelog'"
-          :class="[activeTab === 'changelog' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'changelog' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           变更日志
         </button>
         <button
           @click="activeTab = 'permissions'"
-          :class="[activeTab === 'permissions' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'permissions' ? 'border-primary text-primary font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
           权限管理
           <span 
-             :class="[activeTab === 'permissions' ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-bold transition-colors']"
+             :class="[activeTab === 'permissions' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500', 'ml-1 py-0.5 px-2 rounded-full text-[10px] font-semibold transition-colors']"
           >{{ datasetPermissions.users.length + datasetPermissions.roles.length }}</span>
         </button>
       </nav>
@@ -984,7 +982,7 @@ defineExpose({ fetchMetrics })
                  :checked="isAllFilteredTablesSelected"
                  :indeterminate="isSomeFilteredTablesSelected"
                  @change="toggleSelectAllFilteredTables"
-                 class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                 class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary cursor-pointer"
                />
                <span>全选</span>
             </label>
@@ -1002,7 +1000,7 @@ defineExpose({ fetchMetrics })
          </div>
          <div class="flex items-center gap-3">
             <div v-if="selectedTableNames.length > 0" class="flex items-center gap-2">
-               <span class="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-bold border border-blue-100">
+               <span class="text-xs bg-primary/5 text-primary-dark px-2.5 py-1 rounded-full font-bold border border-primary/10">
                   已选择 {{ selectedTableNames.length }} 张表
                </span>
                <button 
@@ -1020,7 +1018,7 @@ defineExpose({ fetchMetrics })
             <button 
                v-has-perm="'element:metadata:edit_table'"
                @click="openCreateTableModal"
-               class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-bold h-9"
+               class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-bold h-9"
             >
                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                新建数据表
@@ -1040,7 +1038,7 @@ defineExpose({ fetchMetrics })
             <button v-else @click="showImportModal = true" class="mt-4 text-primary text-sm font-medium hover:underline">立即导入</button>
          </div>
          
-         <div v-for="table in filteredTables" :key="table.physical_name" :class="['bg-white rounded-xl border overflow-hidden hover:shadow-md transition-all group', selectedTableNames.includes(table.physical_name) ? 'border-blue-300 ring-2 ring-blue-100/70 shadow-sm' : 'border-gray-100']">
+         <div v-for="table in filteredTables" :key="table.physical_name" :class="['bg-white rounded-xl border overflow-hidden hover:shadow-md transition-all group', selectedTableNames.includes(table.physical_name) ? 'border-primary/25 ring-2 ring-primary/10 shadow-sm' : 'border-gray-100']">
             <div class="p-5">
               <div class="flex justify-between items-start mb-3 gap-3">
                 <div class="flex items-start gap-3 flex-1 min-w-0">
@@ -1049,7 +1047,7 @@ defineExpose({ fetchMetrics })
                        type="checkbox" 
                        :checked="selectedTableNames.includes(table.physical_name)"
                        @change="toggleSelectTable(table.physical_name)"
-                       class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                       class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary cursor-pointer"
                      />
                   </div>
                   <div class="flex-1 min-w-0 cursor-pointer" @click="toggleTableExpand(table.physical_name)">
@@ -1088,7 +1086,7 @@ defineExpose({ fetchMetrics })
                     </button>
                     <button 
                       @click.stop="openSmartMetricModalForTable(table.physical_name)"
-                      class="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 hover:bg-indigo-50 rounded-md"
+                      class="text-gray-400 hover:text-primary transition-colors p-1.5 hover:bg-primary/5 rounded-md"
                       title="为此表智能发现推荐指标"
                     >
                        <SparklesIcon class="w-4 h-4" />
@@ -1102,7 +1100,7 @@ defineExpose({ fetchMetrics })
                   <KeyIcon v-if="col.is_primary" class="w-3.5 h-3.5 text-amber-500" title="Primary Key" />
                   <span class="text-slate-600 font-bold">{{ col.physical_name }}</span>
                   <span class="text-slate-300">/</span>
-                  <span class="text-blue-500">{{ col.term || '?' }}</span>
+                  <span class="text-primary">{{ col.term || '?' }}</span>
                 </div>
                 <div v-if="table.columns.length > 10" class="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[10px] text-gray-400 font-medium">
                   +{{ table.columns.length - 10 }} 更多字段
@@ -1111,7 +1109,7 @@ defineExpose({ fetchMetrics })
                   v-if="table.columns.length > 0"
                   type="button"
                   @click="toggleTableExpand(table.physical_name)"
-                  class="px-2 py-0.5 text-[10px] text-blue-500 hover:bg-blue-50 rounded-md border border-transparent hover:border-blue-100 transition-colors"
+                  class="px-2 py-0.5 text-[10px] text-primary hover:bg-primary/5 rounded-md border border-transparent hover:border-primary/10 transition-colors"
                 >
                   展开字段画像
                 </button>
@@ -1216,8 +1214,8 @@ defineExpose({ fetchMetrics })
           <!-- Header -->
           <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center border border-indigo-100">
-                  <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+               <div class="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center border border-primary/10">
+                  <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                </div>
                <div>
                  <h2 class="text-xl font-bold text-gray-900">编辑元数据定义</h2>
@@ -1235,23 +1233,23 @@ defineExpose({ fetchMetrics })
              <div class="grid grid-cols-2 gap-6">
                 <div class="space-y-2">
                    <label class="text-sm font-bold text-gray-700">业务名称 (Term)</label>
-                   <input v-model="editingTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="例如：用户订单表">
+                   <input v-model="editingTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100" placeholder="例如：用户订单表">
                 </div>
                 <div class="space-y-2">
                    <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-                   <input v-model="editingTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="简要描述表的用途...">
+                   <input v-model="editingTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100" placeholder="简要描述表的用途...">
                 </div>
              </div>
 
                 <div class="grid grid-cols-2 gap-6">
                   <div class="space-y-2">
                     <label class="text-sm font-bold text-gray-700">分区字段</label>
-                    <input :value="optimizationFieldsText(editingTable.partition_fields)" @input="setOptimizationFields(editingTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：event_date, tenant_id">
+                    <input :value="optimizationFieldsText(editingTable.partition_fields)" @input="setOptimizationFields(editingTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary outline-none" placeholder="例如：event_date, tenant_id">
                     <p class="text-xs text-gray-400">涉及时间或范围查询时，智能体会优先使用这些字段裁剪分区。</p>
                   </div>
                   <div class="space-y-2">
                     <label class="text-sm font-bold text-gray-700">索引字段</label>
-                    <input :value="optimizationFieldsText(editingTable.index_fields)" @input="setOptimizationFields(editingTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：tenant_id, user_id">
+                    <input :value="optimizationFieldsText(editingTable.index_fields)" @input="setOptimizationFields(editingTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary outline-none" placeholder="例如：tenant_id, user_id">
                     <p class="text-xs text-gray-400">等值过滤、范围过滤和 JOIN 会优先参考这些字段。</p>
                   </div>
                 </div>
@@ -1259,12 +1257,12 @@ defineExpose({ fetchMetrics })
              <div class="border-t border-gray-100 pt-6">
                 <div class="flex justify-between items-center mb-4">
                   <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
-                     <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                     <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
                      字段定义 (Columns)
                   </h3>
                   <button 
                     @click="addColumn"
-                    class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition-colors flex items-center gap-1 font-bold"
+                    class="text-xs bg-primary/5 text-primary px-3 py-1.5 rounded-lg border border-primary/10 hover:bg-primary/10 transition-colors flex items-center gap-1 font-bold"
                   >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     添加字段
@@ -1282,10 +1280,10 @@ defineExpose({ fetchMetrics })
                    </div>
 
                    <!-- Rows -->
-                   <div v-for="(col, index) in editingTable.columns" :key="index" class="p-2 bg-gray-50 rounded-lg border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all space-y-1">
+                   <div v-for="(col, index) in editingTable.columns" :key="index" class="p-2 bg-gray-50 rounded-lg border border-transparent hover:border-primary/10 hover:bg-white hover:shadow-sm transition-all space-y-1">
                       <div class="grid grid-cols-12 gap-4 items-center">
                          <div class="col-span-3">
-                            <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
+                            <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-primary outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
                          </div>
                          <div class="col-span-2">
                             <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
@@ -1298,17 +1296,17 @@ defineExpose({ fetchMetrics })
                             </select>
                          </div>
                          <div class="col-span-3">
-                            <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
+                            <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-primary outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
                          </div>
                          <div class="col-span-3">
-                            <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
+                            <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-primary outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
                          </div>
                          <div class="col-span-1 flex justify-end items-center gap-1.5">
                             <button
                               type="button"
                               :disabled="!col.physical_name || !col.physical_name.trim()"
                               @click="openColumnAiRecommendation(col, editingTable)"
-                              class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              class="p-1 text-primary hover:text-primary-dark hover:bg-primary/5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                               :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
                             >
                                <SparklesIcon class="w-4 h-4" />
@@ -1332,11 +1330,11 @@ defineExpose({ fetchMetrics })
                          </div>
                          <div class="col-span-5 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none'">
                             <span class="text-[10px] text-gray-400 shrink-0">层级组</span>
-                            <input v-model="col.hierarchy_group" maxlength="100" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
+                            <input v-model="col.hierarchy_group" maxlength="100" class="w-full bg-transparent border-b border-gray-200 focus:border-primary outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
                          </div>
                          <div class="col-span-2 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none' && col.hierarchy_group">
                             <span class="text-[10px] text-gray-400 shrink-0">序号</span>
-                            <input v-model.number="col.hierarchy_order" type="number" min="1" class="w-12 bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="1">
+                            <input v-model.number="col.hierarchy_order" type="number" min="1" class="w-12 bg-transparent border-b border-gray-200 focus:border-primary outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="1">
                          </div>
                       </div>
                    </div>
@@ -1347,7 +1345,7 @@ defineExpose({ fetchMetrics })
           <!-- Footer -->
           <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
              <button @click="showEditModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
-             <button @click="handleUpdateTable" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2">
+             <button @click="handleUpdateTable" class="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/30 transition-all flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 保存修改
              </button>
@@ -1363,8 +1361,8 @@ defineExpose({ fetchMetrics })
           <!-- Header -->
           <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center border border-blue-100">
-                  <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+               <div class="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center border border-primary/10">
+                  <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                </div>
                <div>
                  <h2 class="text-xl font-bold text-gray-900">手动创建新表</h2>
@@ -1381,27 +1379,27 @@ defineExpose({ fetchMetrics })
              <div class="grid grid-cols-2 gap-6">
                 <div class="space-y-2">
                    <label class="text-sm font-bold text-gray-700">物理名称 (Physical Name) *</label>
-                   <input v-model="newTable.physical_name" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono disabled:bg-gray-100" placeholder="例如：t_orders">
+                   <input v-model="newTable.physical_name" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none font-mono disabled:bg-gray-100" placeholder="例如：t_orders">
                 </div>
                 <div class="space-y-2">
                    <label class="text-sm font-bold text-gray-700">业务名称 (Term) *</label>
-                   <input v-model="newTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="例如：订单表">
+                   <input v-model="newTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100" placeholder="例如：订单表">
                 </div>
              </div>
              <div class="space-y-2">
                 <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-                <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
+                <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
              </div>
 
               <div class="grid grid-cols-2 gap-6">
                 <div class="space-y-2">
                   <label class="text-sm font-bold text-gray-700">分区字段</label>
-                  <input :value="optimizationFieldsText(newTable.partition_fields)" @input="setOptimizationFields(newTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：event_date, tenant_id">
+                  <input :value="optimizationFieldsText(newTable.partition_fields)" @input="setOptimizationFields(newTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary outline-none" placeholder="例如：event_date, tenant_id">
                   <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
                 </div>
                 <div class="space-y-2">
                   <label class="text-sm font-bold text-gray-700">索引字段</label>
-                  <input :value="optimizationFieldsText(newTable.index_fields)" @input="setOptimizationFields(newTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：tenant_id, user_id">
+                  <input :value="optimizationFieldsText(newTable.index_fields)" @input="setOptimizationFields(newTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary outline-none" placeholder="例如：tenant_id, user_id">
                   <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
                 </div>
               </div>
@@ -1409,12 +1407,12 @@ defineExpose({ fetchMetrics })
              <div class="border-t border-gray-100 pt-6">
                 <div class="flex justify-between items-center mb-4">
                   <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
-                     <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                     <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
                      字段定义 (Columns)
                   </h3>
                   <button 
                     @click="newTable.columns.push({ physical_name: '', term: '', type: 'String', description: '' })"
-                    class="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1 font-bold"
+                    class="text-xs bg-primary/5 text-primary px-3 py-1.5 rounded-lg border border-primary/10 hover:bg-primary/10 transition-colors flex items-center gap-1 font-bold"
                   >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     添加字段
@@ -1430,9 +1428,9 @@ defineExpose({ fetchMetrics })
                       <div class="col-span-1"></div>
                    </div>
 
-                   <div v-for="(col, index) in newTable.columns" :key="index" class="grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg border border-transparent hover:border-blue-100 hover:bg-white transition-all">
+                   <div v-for="(col, index) in newTable.columns" :key="index" class="grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg border border-transparent hover:border-primary/10 hover:bg-white transition-all">
                       <div class="col-span-3">
-                         <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="字段名">
+                         <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-primary outline-none text-xs font-mono px-1 py-0.5" placeholder="字段名">
                       </div>
                       <div class="col-span-2">
                          <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
@@ -1445,17 +1443,17 @@ defineExpose({ fetchMetrics })
                          </select>
                       </div>
                       <div class="col-span-3">
-                         <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm px-1 py-0.5" placeholder="业务名">
+                         <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-primary outline-none text-sm px-1 py-0.5" placeholder="业务名">
                       </div>
                       <div class="col-span-3">
-                         <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
+                         <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-primary outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
                       </div>
                       <div class="col-span-1 flex justify-end items-center gap-1.5">
                          <button
                            type="button"
                            :disabled="!col.physical_name || !col.physical_name.trim()"
                            @click="openColumnAiRecommendation(col, newTable)"
-                           class="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                           class="p-1 text-primary hover:text-primary-dark hover:bg-primary/5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                            :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
                          >
                             <SparklesIcon class="w-4 h-4" />
@@ -1472,7 +1470,7 @@ defineExpose({ fetchMetrics })
           <!-- Footer -->
           <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
              <button @click="showCreateTableModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
-             <button @click="handleCreateTable" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
+             <button @click="handleCreateTable" class="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/20 transition-all flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 立即创建
              </button>
@@ -1508,8 +1506,8 @@ defineExpose({ fetchMetrics })
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-100">
           <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
             <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center border border-purple-100">
-                  <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+               <div class="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center border border-primary/10">
+                  <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
                </div>
                <div>
                  <h2 class="text-xl font-bold text-gray-900">AI 元数据预览 (YAML)</h2>
@@ -1521,10 +1519,10 @@ defineExpose({ fetchMetrics })
             </button>
           </div>
           <div class="flex-1 overflow-auto bg-slate-900 p-0">
-            <pre class="p-6 text-sm font-mono text-cyan-400 leading-relaxed">{{ yamlContent }}</pre>
+            <pre class="p-6 text-sm font-mono text-primary leading-relaxed">{{ yamlContent }}</pre>
           </div>
           <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-             <button @click="exportMarkdown" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 flex items-center gap-2 transition-all shadow-sm shadow-purple-500/20">
+             <button @click="exportMarkdown" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary-dark flex items-center gap-2 transition-all shadow-sm shadow-primary/30">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 导出为 Markdown
              </button>
@@ -1590,7 +1588,7 @@ defineExpose({ fetchMetrics })
       <div v-if="showFullDescription" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showFullDescription = false">
          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
             <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-               <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
+               <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
                   <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                   数据集描述详情
                </h3>
@@ -1599,7 +1597,7 @@ defineExpose({ fetchMetrics })
                </button>
             </div>
             <div class="p-8 overflow-y-auto max-h-[60vh]">
-               <div class="bg-blue-50/30 p-6 rounded-xl border border-blue-50">
+               <div class="bg-primary/5 p-6 rounded-xl border border-primary/5">
                   <p class="text-gray-700 text-base leading-relaxed whitespace-pre-wrap select-text">{{ dataset?.description }}</p>
                </div>
             </div>
@@ -1617,9 +1615,9 @@ defineExpose({ fetchMetrics })
       <div v-if="showAiEnhanceModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showAiEnhanceModal = false">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-primary/5 to-primary/5">
             <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
-              <span class="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+              <span class="p-1.5 bg-primary/10 text-primary-dark rounded-lg">
                 <SparklesIcon class="w-4 h-4" />
               </span>
               AI 智能生成数据集描述与标签
@@ -1631,7 +1629,7 @@ defineExpose({ fetchMetrics })
 
           <!-- Body -->
           <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-            <div class="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-100 text-xs text-indigo-700 flex items-start gap-2 leading-relaxed">
+            <div class="bg-primary/5 p-3.5 rounded-xl border border-primary/10 text-xs text-primary-dark flex items-start gap-2 leading-relaxed">
               <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               <span>已基于当前数据集所包含的数据表、字段画像及业务指标深度提炼生成。您可以在下方直接编辑微调，确认无误后点击保存。</span>
             </div>
@@ -1641,7 +1639,7 @@ defineExpose({ fetchMetrics })
               <textarea 
                 v-model="aiGeneratedDesc" 
                 rows="4" 
-                class="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 leading-relaxed transition-all"
+                class="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary leading-relaxed transition-all"
                 placeholder="请输入或微调数据集描述..."
               ></textarea>
             </div>
@@ -1653,7 +1651,7 @@ defineExpose({ fetchMetrics })
                   v-model="aiTagInput" 
                   @keyup.enter="addAiTag" 
                   type="text" 
-                  class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
+                  class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary" 
                   placeholder="输入标签并按回车添加..."
                 >
                 <button 
@@ -1668,10 +1666,10 @@ defineExpose({ fetchMetrics })
                 <span 
                   v-for="(tag, i) in aiGeneratedTags" 
                   :key="i" 
-                  class="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg flex items-center gap-1.5 border border-indigo-100 font-medium"
+                  class="px-2.5 py-1 bg-primary/5 text-primary-dark text-xs rounded-lg flex items-center gap-1.5 border border-primary/10 font-medium"
                 >
                   # {{ tag }}
-                  <button @click="removeAiTag(i)" class="text-indigo-400 hover:text-red-500 transition-colors font-bold">&times;</button>
+                  <button @click="removeAiTag(i)" class="text-primary hover:text-red-500 transition-colors font-bold">&times;</button>
                 </span>
                 <span v-if="aiGeneratedTags.length === 0" class="text-xs text-gray-400 py-0.5">暂无标签</span>
               </div>
@@ -1690,7 +1688,7 @@ defineExpose({ fetchMetrics })
             <button 
               @click="saveAiEnhance" 
               :disabled="savingAiEnhance"
-              class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+              class="px-5 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-sm font-bold shadow-md shadow-primary/30 transition-all flex items-center gap-2 disabled:opacity-50"
             >
               <svg v-if="savingAiEnhance" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
               <span>{{ savingAiEnhance ? '正在保存...' : '应用并保存' }}</span>
@@ -1729,7 +1727,7 @@ defineExpose({ fetchMetrics })
         <div class="px-5 py-4 border-b border-gray-100 space-y-3">
           <div class="flex items-center justify-between text-xs">
             <span class="text-gray-500">状态</span>
-            <span :class="syncLogStatus === 'completed' ? 'text-emerald-600' : syncLogStatus === 'failed' ? 'text-red-600' : syncLogStatus === 'disconnected' ? 'text-amber-600' : 'text-blue-600'" class="font-semibold">
+            <span :class="syncLogStatus === 'completed' ? 'text-emerald-600' : syncLogStatus === 'failed' ? 'text-red-600' : syncLogStatus === 'disconnected' ? 'text-amber-600' : 'text-primary'" class="font-semibold">
               {{ syncLogStatus === 'completed' ? '已完成' : syncLogStatus === 'failed' ? '失败' : syncLogStatus === 'disconnected' ? '连接中断' : '同步中' }}
             </span>
           </div>
@@ -1738,7 +1736,7 @@ defineExpose({ fetchMetrics })
             <span class="text-gray-800 font-medium">{{ syncLogStage }}</span>
           </div>
           <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
-            <div class="h-full bg-blue-500 transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>
+            <div class="h-full bg-primary transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>
           </div>
           <div class="flex justify-between text-[11px] text-gray-400">
             <span>{{ syncLogMessage }}</span>
@@ -1746,7 +1744,7 @@ defineExpose({ fetchMetrics })
           </div>
         </div>
         <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <div v-for="(entry, index) in syncLogEntries" :key="`${entry.stage}-${index}`" class="relative pl-4 border-l-2" :class="entry.event === 'failed' ? 'border-red-300' : entry.event === 'completed' ? 'border-emerald-300' : 'border-blue-200'">
+          <div v-for="(entry, index) in syncLogEntries" :key="`${entry.stage}-${index}`" class="relative pl-4 border-l-2" :class="entry.event === 'failed' ? 'border-red-300' : entry.event === 'completed' ? 'border-emerald-300' : 'border-primary/20'">
             <div class="text-xs font-medium text-gray-800">{{ entry.message }}</div>
             <div class="mt-1 text-[11px] text-gray-400 flex justify-between gap-2">
               <span>{{ entry.stage }}</span><span>{{ entry.elapsed_ms ?? 0 }} ms</span>
@@ -1780,22 +1778,22 @@ defineExpose({ fetchMetrics })
       >
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
           <!-- Header -->
-          <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+          <div class="p-5 border-b border-gray-200 flex justify-between items-center bg-gray-50/70">
             <div class="flex items-center gap-3">
-              <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
+              <div class="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
                 <SparklesIcon class="w-5 h-5" />
               </div>
               <div>
-                <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                <h3 class="text-base font-semibold text-gray-900 flex items-center gap-2">
                   AI 字段语义推荐
-                  <span v-if="columnAiTargetCol?.physical_name" class="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  <span v-if="columnAiTargetCol?.physical_name" class="font-mono text-xs font-medium px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
                     {{ columnAiTargetCol.physical_name }}
                   </span>
                 </h3>
                 <p class="text-xs text-gray-500">基于物理源表结构、原生注释与数据采样智能推断业务语义</p>
               </div>
             </div>
-            <button @click="closeColumnAiModal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-white/50 cursor-pointer">
+            <button @click="closeColumnAiModal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 cursor-pointer">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
@@ -1804,8 +1802,8 @@ defineExpose({ fetchMetrics })
           <div class="p-6 space-y-4 overflow-y-auto">
             <!-- 正在分析状态 -->
             <div v-if="columnAiLoading" class="py-12 text-center space-y-3">
-              <div class="text-4xl animate-pulse">🧠</div>
-              <div class="text-sm font-bold text-gray-800">正在分析源表并采样数据...</div>
+              <div class="mx-auto h-8 w-8 rounded-full border-2 border-gray-200 border-t-primary animate-spin"></div>
+              <div class="text-sm font-semibold text-gray-800">正在分析源表并采样数据...</div>
               <div class="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
                 正在直连数据源获取字段原生注释、提取前 3 条真实采样数据，并结合同表上下文推断业务语义
               </div>
@@ -1814,7 +1812,7 @@ defineExpose({ fetchMetrics })
             <!-- 物理字段不存在或失败 -->
             <div v-else-if="columnAiResult && !columnAiResult.physical_exists" class="py-4 space-y-3">
               <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-3">
-                <span class="text-xl shrink-0">⚠️</span>
+                <span class="text-xl shrink-0"><ExclamationTriangleIcon class="h-5 w-5" aria-hidden="true" /></span>
                 <div class="space-y-1">
                   <div class="font-bold">源表中不存在此字段，无法推荐语义</div>
                   <div class="text-xs text-amber-700 leading-relaxed">
@@ -1833,12 +1831,12 @@ defineExpose({ fetchMetrics })
               <!-- 物理源定义与采样卡片 -->
               <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600">
-                  <span>📦 数据集: <strong class="text-slate-800">{{ columnAiResult.dataset_name || dataset?.name || '-' }}</strong></span>
-                  <span>📋 源表: <strong class="text-slate-800 font-mono">{{ columnAiResult.table_name }}</strong></span>
-                  <span>🔤 物理类型: <strong class="text-slate-800 font-mono">{{ columnAiResult.physical_type || '-' }}</strong></span>
+                  <span>数据集: <strong class="text-slate-800">{{ columnAiResult.dataset_name || dataset?.name || '-' }}</strong></span>
+                  <span>源表: <strong class="text-slate-800 font-mono">{{ columnAiResult.table_name }}</strong></span>
+                  <span>物理类型: <strong class="text-slate-800 font-mono">{{ columnAiResult.physical_type || '-' }}</strong></span>
                 </div>
                 <div v-if="columnAiResult.comment" class="text-slate-600 flex items-start gap-1">
-                  <span class="shrink-0">🗒️ 物理库注释:</span>
+                  <span class="shrink-0">物理库注释:</span>
                   <span class="text-slate-800 font-medium">{{ columnAiResult.comment }}</span>
                 </div>
                 <div v-if="columnAiResult.sample_values && columnAiResult.sample_values.length > 0" class="text-slate-600">
@@ -1857,7 +1855,7 @@ defineExpose({ fetchMetrics })
                   </div>
                 </div>
                 <div v-if="columnAiResult.sibling_terms && columnAiResult.sibling_terms.length > 0" class="text-slate-600">
-                  <span>🧬 同表兄弟字段参考:</span>
+                  <span>同表兄弟字段参考:</span>
                   <span class="text-slate-800 ml-1">{{ columnAiResult.sibling_terms.slice(0, 5).join('、') }}</span>
                 </div>
               </div>
@@ -1871,7 +1869,7 @@ defineExpose({ fetchMetrics })
                   <input
                     v-model="columnAiTerm"
                     type="text"
-                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
                     placeholder="例如：员工年龄"
                   />
                 </div>
@@ -1882,7 +1880,7 @@ defineExpose({ fetchMetrics })
                   <textarea
                     v-model="columnAiDesc"
                     rows="3"
-                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none leading-relaxed"
                     placeholder="说明该字段存储什么、代表什么业务含义、口径..."
                   ></textarea>
                 </div>
@@ -1893,7 +1891,7 @@ defineExpose({ fetchMetrics })
                   <input
                     v-model="columnAiSynonymsInput"
                     type="text"
-                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
                     placeholder="如：age, 周岁, 实际年龄"
                   />
                 </div>
@@ -1919,7 +1917,7 @@ defineExpose({ fetchMetrics })
                 v-if="columnAiResult?.physical_exists"
                 :disabled="!columnAiTerm.trim()"
                 @click="applyColumnAiRecommendation"
-                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                class="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-bold shadow-md shadow-primary/30 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <SparklesIcon class="w-3.5 h-3.5" />
                 应用到表单
@@ -1933,13 +1931,6 @@ defineExpose({ fetchMetrics })
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(20px) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
 
 .animate-pulse-slow {
   animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;

@@ -25,8 +25,8 @@ def test_visibility_is_a_badge_next_to_the_title():
     assert "visibilityBadgeClass(selectedDataset)" in page
     assert "visibilityLabel(selectedDataset)" in page
     # 三档配色与下拉图标色、权限页徽标统一
-    assert "bg-blue-50 text-blue-600 border-blue-100" in page
-    assert "bg-violet-50 text-violet-600 border-violet-100" in page
+    assert "bg-primary/5 text-primary border-primary/10" in page
+    assert "bg-primary/5 text-primary border-primary/10" in page
     assert "bg-amber-50 text-amber-700 border-amber-100" in page
 
 

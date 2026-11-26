@@ -85,7 +85,8 @@ def test_version_diff_covers_allow_model_switch():
 
 def test_list_view_renders_expert_team_badge():
     source = _read("frontend/src/views/AgentManagement.vue")
-    assert source.count("👥 专家团") >= 2, "网格视图有专家团徽标，列表视图也必须有"
+    # 图标从 emoji 换成 UserGroupIcon，但「两个视图各有一枚徽标」的强度必须保住
+    assert source.count("UserGroupIcon") >= 2, "网格视图有专家团徽标，列表视图也必须有"
 
 
 def test_drawer_modals_guard_stale_responses_and_timer():

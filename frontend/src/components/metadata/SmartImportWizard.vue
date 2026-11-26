@@ -378,7 +378,7 @@ const applyImportPreview = (data: any) => {
 }
 
 const handleCancelAnalyze = () => {
-  console.info('⏹️ [元数据智能导入] 用户点击【取消识别】，正在中止 AI 分析请求...')
+  console.info('⏹ [元数据智能导入] 用户点击【取消识别】，正在中止 AI 分析请求...')
   if (analyzeAbortController.value) {
     analyzeAbortController.value.abort()
     analyzeAbortController.value = null
@@ -436,7 +436,7 @@ const handleAnalyze = async () => {
       e?.name === 'CanceledError' ||
       e?.name === 'AbortError'
     ) {
-      console.info('⏹️ [元数据智能导入] AI 分析请求已被成功中止/取消。')
+      console.info('⏹ [元数据智能导入] AI 分析请求已被成功中止/取消。')
       return
     }
 
@@ -552,7 +552,7 @@ const handleSave = async () => {
 
 const handleClose = () => {
   if (analyzing.value && analyzeAbortController.value) {
-    console.info('⏹️ [元数据智能导入] 用户关闭向导弹窗，正在中止进行中的分析请求...')
+    console.info('⏹ [元数据智能导入] 用户关闭向导弹窗，正在中止进行中的分析请求...')
     analyzeAbortController.value.abort()
     analyzeAbortController.value = null
   }
@@ -621,11 +621,11 @@ const normalizeType = (rawType: string): string => {
       
         <!-- Header -->
         <div
-          class="border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50 shrink-0 px-5 py-3"
+          class="border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-primary/5 to-primary/5 shrink-0 px-5 py-3"
         >
           <div class="flex items-center gap-3">
              <div
-               class="rounded-xl bg-white shadow-sm flex items-center justify-center text-blue-600 border border-blue-100 shrink-0 w-9 h-9"
+               class="rounded-xl bg-white shadow-sm flex items-center justify-center text-primary border border-primary/10 shrink-0 w-9 h-9"
              >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
              </div>
@@ -633,9 +633,9 @@ const normalizeType = (rawType: string): string => {
                <h2 class="font-bold text-gray-900 text-lg">智能元数据导入向导</h2>
                <div class="flex items-center gap-2 mt-0.5">
                   <!-- Step 1 -->
-                  <div class="flex items-center gap-2" :class="step >= 1 ? 'text-blue-600' : 'text-gray-400'">
+                  <div class="flex items-center gap-2" :class="step >= 1 ? 'text-primary' : 'text-gray-400'">
                     <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors"
-                         :class="step >= 1 ? 'border-current bg-blue-50' : 'border-gray-200'">
+                         :class="step >= 1 ? 'border-current bg-primary/5' : 'border-gray-200'">
                        1
                     </div>
                     <span class="text-sm font-medium">输入定义</span>
@@ -643,13 +643,13 @@ const normalizeType = (rawType: string): string => {
                 
                   <!-- Arrow/Line -->
                   <div class="w-8 h-0.5 bg-gray-200 relative">
-                     <div class="absolute inset-y-0 left-0 bg-blue-600 transition-all duration-300" :style="{ width: step >= 2 ? '100%' : '0%' }"></div>
+                     <div class="absolute inset-y-0 left-0 bg-primary transition-all duration-300" :style="{ width: step >= 2 ? '100%' : '0%' }"></div>
                   </div>
                 
                   <!-- Step 2 -->
-                  <div class="flex items-center gap-2" :class="step >= 2 ? 'text-blue-600' : 'text-gray-400'">
+                  <div class="flex items-center gap-2" :class="step >= 2 ? 'text-primary' : 'text-gray-400'">
                     <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors"
-                         :class="step >= 2 ? 'border-current bg-blue-50' : 'border-gray-200'">
+                         :class="step >= 2 ? 'border-current bg-primary/5' : 'border-gray-200'">
                        2
                     </div>
                     <span class="text-sm font-medium">预览确认</span>
@@ -666,19 +666,19 @@ const normalizeType = (rawType: string): string => {
         <div v-if="step === 1" class="flex-1 flex flex-col min-h-0 overflow-hidden">
           <!-- 智能分析执行方提示：让用户知道模型从哪来、去哪里改 -->
           <div v-if="aiAnalysisConfig" class="shrink-0 px-5 pt-4">
-            <div class="flex items-start gap-2.5 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
-              <svg class="w-4 h-4 shrink-0 text-blue-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="flex items-start gap-2.5 rounded-lg border border-primary/10 bg-primary/5 px-3 py-2">
+              <svg class="w-4 h-4 shrink-0 text-primary mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z"/>
               </svg>
               <div class="flex-1 min-w-0 text-xs leading-relaxed">
-                <p class="font-bold text-blue-900">{{ aiAnalysisSummary?.title }}</p>
-                <p class="mt-0.5 text-blue-600/90">{{ aiAnalysisSummary?.hint }}</p>
+                <p class="font-bold text-primary-dark">{{ aiAnalysisSummary?.title }}</p>
+                <p class="mt-0.5 text-primary/90">{{ aiAnalysisSummary?.hint }}</p>
               </div>
               <button
                 v-if="canManageAgent"
                 type="button"
                 @click="openAgentManagement"
-                class="shrink-0 self-center rounded-md border border-blue-200 bg-white px-2.5 py-1 text-[11px] font-bold text-blue-600 transition-colors hover:bg-blue-100 cursor-pointer"
+                class="shrink-0 self-center rounded-md border border-primary/20 bg-white px-2.5 py-1 text-[11px] font-bold text-primary transition-colors hover:bg-primary/10 cursor-pointer"
               >
                 去配置
               </button>
@@ -701,7 +701,7 @@ const normalizeType = (rawType: string): string => {
                :disabled="analyzing"
                @dragover.prevent
                @drop.prevent="handleFileDrop"
-               class="w-full h-full bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-5 pr-52 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+               class="w-full h-full bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary p-5 pr-52 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
                placeholder="请在此粘贴 SQL DDL (CREATE TABLE...)、导出的 YAML/Markdown 结构或业务需求文档... 也可直接点击右上角导入文件或拖拽文件至此。&#10;&#10;示例:&#10;CREATE TABLE orders (id int, user_id int); -- 订单表&#10;CREATE TABLE users (id int, name varchar); -- 用户表&#10;-- 用户表和订单表是一对多关系"
              ></textarea>
               <div class="absolute top-12 right-3.5 z-10 flex flex-col items-stretch gap-2 w-48">
@@ -709,7 +709,7 @@ const normalizeType = (rawType: string): string => {
                    type="button"
                    @click="showDbImportModal = true"
                    :disabled="analyzing"
-                   class="w-full bg-white/95 backdrop-blur border border-gray-200 text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center justify-start gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                   class="w-full bg-white/95 backdrop-blur border border-gray-200 text-primary hover:text-primary-dark hover:bg-primary/5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center justify-start gap-2 transition-all disabled:opacity-50 cursor-pointer"
                  >
                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                    <span class="truncate">从数据库加载 (DB)</span>
@@ -718,10 +718,10 @@ const normalizeType = (rawType: string): string => {
                    type="button"
                    @click="triggerFileUpload"
                    :disabled="analyzing"
-                   class="w-full bg-white/95 backdrop-blur border border-purple-200 text-purple-700 hover:text-purple-800 hover:bg-purple-50 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center justify-start gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                   class="w-full bg-white/95 backdrop-blur border border-primary/20 text-primary-dark hover:text-primary hover:bg-primary/5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center justify-start gap-2 transition-all disabled:opacity-50 cursor-pointer"
                    title="导入 Markdown (.md)、SQL (.sql)、YAML 或文本定义文件"
                  >
-                   <svg class="w-4 h-4 shrink-0 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                   <svg class="w-4 h-4 shrink-0 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                    <span class="truncate">导入文件 (.sql/yaml)</span>
                  </button>
               </div>
@@ -737,7 +737,7 @@ const normalizeType = (rawType: string): string => {
              <button 
                v-if="currentTraceId"
                @click="showLogs = true"
-               class="text-xs text-gray-400 hover:text-blue-600 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100"
+               class="text-xs text-gray-400 hover:text-primary transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100"
                title="查看执行过程日志"
              >
                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
@@ -757,11 +757,11 @@ const normalizeType = (rawType: string): string => {
                <button
                   @click="handleAnalyze"
                   :disabled="analyzing || !ddlText"
-                  class="px-5 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden min-w-[140px] justify-center"
+                  class="px-5 py-1.5 text-sm bg-primary hover:bg-primary-dark text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden min-w-[140px] justify-center"
                 >
                   <div 
                     v-if="analyzing" 
-                    class="absolute left-0 top-0 bottom-0 bg-blue-800/50 transition-all duration-300 ease-linear"
+                    class="absolute left-0 top-0 bottom-0 bg-primary-dark/50 transition-all duration-300 ease-linear"
                     :style="{ width: `${progress}%` }"
                   ></div>
                   <div class="relative flex items-center gap-2 z-10">
@@ -820,11 +820,11 @@ const normalizeType = (rawType: string): string => {
                     >
                   </div>
                 </div>
-                <div v-else class="p-2.5 bg-blue-50 border border-blue-100 rounded-lg space-y-1">
-                  <div class="text-[10px] font-bold text-blue-800 uppercase tracking-wider">追加到现有数据集</div>
-                  <div class="text-xs font-bold text-blue-700 break-words" :title="datasetDisplayName">{{ datasetDisplayName || '当前数据集' }}</div>
-                  <div class="text-[10px] text-blue-500 font-mono flex flex-col gap-0.5">
-                    <span class="bg-blue-100 px-1.5 py-0.5 rounded w-fit">#{{ datasetPhysicalName }}</span>
+                <div v-else class="p-2.5 bg-primary/5 border border-primary/10 rounded-lg space-y-1">
+                  <div class="text-[10px] font-bold text-primary-dark uppercase tracking-wider">追加到现有数据集</div>
+                  <div class="text-xs font-bold text-primary-dark break-words" :title="datasetDisplayName">{{ datasetDisplayName || '当前数据集' }}</div>
+                  <div class="text-[10px] text-primary font-mono flex flex-col gap-0.5">
+                    <span class="bg-primary/10 px-1.5 py-0.5 rounded w-fit">#{{ datasetPhysicalName }}</span>
                     <span>ID: {{ datasetId }}</span>
                   </div>
                 </div>
@@ -872,7 +872,7 @@ const normalizeType = (rawType: string): string => {
               <!-- Tables Section -->
               <section v-if="previewData.tables.length > 0">
                  <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
-                   <span class="w-1.5 h-5 bg-blue-500 rounded-full"></span>
+                   <span class="w-1.5 h-5 bg-primary rounded-full"></span>
                    识别到的表结构
                    <span class="text-[11px] font-normal text-gray-400">物理表名只读，虚线框可编辑</span>
                  </h3>
@@ -937,7 +937,7 @@ const normalizeType = (rawType: string): string => {
                              >
                                 <span class="text-slate-600 font-bold">{{ col.physical_name }}</span>
                                 <span class="text-slate-300">/</span>
-                                <span class="text-blue-500">{{ col.term || '?' }}</span>
+                                <span class="text-primary">{{ col.term || '?' }}</span>
                              </div>
                              <div
                                 v-if="table.columns.length > 10"
@@ -949,7 +949,7 @@ const normalizeType = (rawType: string): string => {
                                 v-if="table.columns.length > 0"
                                 type="button"
                                 @click="togglePreviewTableExpand(idx)"
-                                class="px-2 py-0.5 text-[10px] text-blue-500 hover:bg-blue-50 rounded-md border border-transparent hover:border-blue-100 transition-colors"
+                                class="px-2 py-0.5 text-[10px] text-primary hover:bg-primary/5 rounded-md border border-transparent hover:border-primary/10 transition-colors"
                              >
                                 展开字段画像
                              </button>
@@ -1047,7 +1047,7 @@ const normalizeType = (rawType: string): string => {
               <!-- Relationships Section -->
               <section v-if="previewData.relationships.length > 0">
                  <h3 class="text-base font-bold text-gray-900 mb-2 flex items-center gap-2">
-                   <span class="w-1.5 h-5 bg-purple-500 rounded-full"></span>
+                   <span class="w-1.5 h-5 bg-primary rounded-full"></span>
                    实体关系 (Relationships)
                  </h3>
                  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1063,11 +1063,11 @@ const normalizeType = (rawType: string): string => {
                        </thead>
                        <tbody class="divide-y divide-gray-100">
                           <tr v-for="(rel, idx) in previewData.relationships" :key="idx" class="group hover:bg-gray-50">
-                             <td class="px-3 py-2 font-mono text-blue-600 font-bold">{{ rel.source_table }}</td>
+                             <td class="px-3 py-2 font-mono text-primary font-bold">{{ rel.source_table }}</td>
                              <td class="px-3 py-2 text-center">
-                                <span class="px-2 py-0.5 bg-purple-50 text-purple-600 rounded text-xs border border-purple-100">{{ rel.type }}</span>
+                                <span class="px-2 py-0.5 bg-primary/5 text-primary rounded text-xs border border-primary/10">{{ rel.type }}</span>
                              </td>
-                             <td class="px-3 py-2 font-mono text-blue-600 font-bold">{{ rel.target_table }}</td>
+                             <td class="px-3 py-2 font-mono text-primary font-bold">{{ rel.target_table }}</td>
                              <td class="px-3 py-2 font-mono text-xs text-gray-500">{{ rel.condition }}</td>
                              <td class="px-3 py-2 text-right">
                                 <button @click="removeRel(idx)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1126,13 +1126,6 @@ const normalizeType = (rawType: string): string => {
 </template>
 
 <style scoped>
-.animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out;
-}
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 
 :deep(input[class*="border-dashed"]::placeholder),
 :deep(textarea[class*="border-dashed"]::placeholder) {
