@@ -556,9 +556,12 @@ const panelSubtitle = computed(() => {
     }
     // 只有一种登录方式时切换器不渲染，副标题再让用户「选择」就自相矛盾了
     if (loginTabs.value.length === 1) {
-        return loginTabs.value[0].id === 'password'
-            ? '使用本地账号进入智能体平台'
-            : `使用 ${loginTabs.value[0].name} 进入智能体平台`
+        const onlyTab = loginTabs.value[0]
+        if (onlyTab) {
+            return onlyTab.id === 'password'
+                ? '使用本地账号进入智能体平台'
+                : `使用 ${onlyTab.name} 进入智能体平台`
+        }
     }
     return '选择认证方式以进入智能体平台'
 })
