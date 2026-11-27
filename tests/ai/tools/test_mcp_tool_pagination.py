@@ -115,7 +115,13 @@ def _sync_db(server, cached_tools):
     cached_result = MagicMock()
     cached_result.scalars.return_value.all.return_value = cached_tools
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[server_result, cached_result])
+    # sync_tools 后续的 stale/pending 写入不关心返回值，需兜底而不是耗尽 side_effect
+    queue = [server_result, cached_result]
+
+    async def _execute(*args, **kwargs):
+        return queue.pop(0) if queue else MagicMock()
+
+    db.execute = AsyncMock(side_effect=_execute)
     db.commit = AsyncMock()
     context = AsyncMock()
     context.__aenter__.return_value = db

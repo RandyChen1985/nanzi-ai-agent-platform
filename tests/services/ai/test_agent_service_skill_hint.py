@@ -614,7 +614,12 @@ async def test_chat_stream_awaits_audit_before_completion():
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
-async def test_chat_stream_skips_audit_on_external_execution_required():
+async def test_chat_stream_audits_external_execution_required_on_pause():
+    """外部执行挂起当下就要落审计（AUDIT_DEFERRED_STATUSES 已清空）。
+
+    原断言「挂起时不审计」对应的是延后审计的旧实现；现在挂起态立即写历史与前半段
+    trace，恢复轮再按同一 trace_id 更新终态，否则用户放弃外部执行时该轮会凭空消失。
+    """
     service = AgentService()
     agent_config = ChatConfig(
         agent_id="agent-1",
@@ -685,7 +690,9 @@ async def test_chat_stream_skips_audit_on_external_execution_required():
             chunks.append(chunk)
 
     assert any(chunk.get("type") == "external_execution_required" for chunk in chunks)
-    assert audit_calls == []
+    assert len(audit_calls) == 1
+    # log_transaction 的位置参数：0=trace_id, 1=config, 2=question, 3=answer, 4=user_info, 5=status
+    assert audit_calls[0][5] == "awaiting_external_execution"
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,17 @@ from app.services.ai.tools.mcp_client import McpClientService
 pytestmark = pytest.mark.no_infrastructure
 
 
+def _sequenced_execute(*results):
+    """按顺序返回预置结果；`sync_tools` 后续还会写 stale 密钥、pending 变更，
+    这些语句不关心返回值，统一兜底成空 MagicMock（原来写死长度会耗尽 side_effect）。"""
+    queue = list(results)
+
+    async def _execute(*args, **kwargs):
+        return queue.pop(0) if queue else MagicMock()
+
+    return AsyncMock(side_effect=_execute)
+
+
 @pytest.mark.asyncio
 async def test_sync_tools_unpublishes_tools_removed_from_remote_server():
     server = McpServer(
@@ -41,7 +52,7 @@ async def test_sync_tools_unpublishes_tools_removed_from_remote_server():
     db = MagicMock()
     db.execute = AsyncMock()
     db.commit = AsyncMock()
-    db.execute.side_effect = [server_result, cached_result]
+    db.execute = _sequenced_execute(server_result, cached_result)
     db_context = AsyncMock()
     db_context.__aenter__.return_value = db
     db_context.__aexit__.return_value = None
@@ -83,7 +94,7 @@ async def test_sync_tools_does_not_reenable_disabled_server():
     cached_result = MagicMock()
     cached_result.scalars.return_value.all.return_value = []
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[server_result, cached_result])
+    db.execute = _sequenced_execute(server_result, cached_result)
     db.commit = AsyncMock()
     db_context = AsyncMock()
     db_context.__aenter__.return_value = db

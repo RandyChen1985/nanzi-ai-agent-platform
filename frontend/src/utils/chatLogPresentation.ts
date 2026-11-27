@@ -236,7 +236,9 @@ export function formatDurationMs(ms?: number | null): string {
   if (ms == null || Number.isNaN(Number(ms))) return '-'
   const rounded = Math.round(Number(ms))
   if (rounded >= 10000) {
-    return `${(rounded / 1000).toFixed(1)}s`
+    // 先按整数换算到 0.1s 再格式化：直接写 (12450/1000).toFixed(1) 会因 12.45 的
+    // 二进制表示略小于 12.45 而得到 "12.4"，与「12.45s 应显示 12.5s」的直觉不符。
+    return `${(Math.round(rounded / 100) / 10).toFixed(1)}s`
   }
   return `${rounded}ms`
 }

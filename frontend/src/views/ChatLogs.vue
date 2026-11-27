@@ -920,6 +920,7 @@ onMounted(() => {
           <input
             v-model="filters.keyword"
             type="text"
+            data-search-no-clear
             placeholder="搜索问题、回复或智能体名称，回车查询…"
             class="w-full h-8 pl-8 pr-7 text-xs border border-gray-200 rounded-lg bg-slate-50/80 text-slate-800 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-primary/15 focus:border-primary outline-none transition-all"
             @keyup.enter="applyFilters"
