@@ -158,27 +158,119 @@ def _required_names(schema: Dict[str, Any]) -> set:
     return {str(item) for item in required if isinstance(item, str)}
 
 
-def _param_snapshot(prop: Any, required: bool) -> Dict[str, Any]:
-    """参数快照：只保留会影响调用的字段，避免描述里的排版噪音变成差异。"""
+def _schema_defs(schema: Dict[str, Any]) -> Dict[str, Any]:
+    defs: Dict[str, Any] = {}
+    for key in ("definitions", "$defs"):
+        block = schema.get(key)
+        if isinstance(block, dict):
+            defs.update(block)
+    return defs
+
+
+def _resolve_ref_node(
+    node: Any,
+    defs: Dict[str, Any],
+    *,
+    seen: Optional[set] = None,
+    depth: int = 0,
+) -> Any:
+    """展开 JSON Schema 的本地 ``$ref``（如 ``#/$defs/MyModel``），供参数差异比对使用。
+
+    加环检测与深度上限，避免自引用树形模型导致无限递归。
+    """
+    if depth > 12:
+        # 上限存在的意义只是防环自爆；定成 6 会让「$ref 落在第 7 层」这类正常模型
+        # 停在 {"$ref": ...} 字面量上——指纹变了却报不出任何差异，变更永远不进待办。
+        return node
+    if isinstance(node, list):
+        return [_resolve_ref_node(item, defs, seen=seen, depth=depth + 1) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/"):
+        visited = set(seen or ())
+        if ref not in visited:
+            parts = ref[2:].split("/")
+            target: Any = None
+            if len(parts) == 2 and parts[0] in ("$defs", "definitions"):
+                target = defs.get(parts[1])
+            if isinstance(target, dict):
+                visited.add(ref)
+                merged = dict(target)
+                for k, v in node.items():
+                    if k != "$ref":
+                        merged[k] = v
+                return _resolve_ref_node(merged, defs, seen=visited, depth=depth + 1)
+
+    resolved: Dict[str, Any] = {}
+    for k, v in node.items():
+        if k in ("properties", "items", "anyOf", "oneOf", "allOf", "additionalProperties"):
+            if k == "properties" and isinstance(v, dict):
+                resolved[k] = {
+                    pk: _resolve_ref_node(pv, defs, seen=seen, depth=depth + 1)
+                    for pk, pv in v.items()
+                }
+            else:
+                resolved[k] = _resolve_ref_node(v, defs, seen=seen, depth=depth + 1)
+        else:
+            resolved[k] = v
+    return resolved
+
+
+def _param_snapshot(
+    prop: Any,
+    required: bool,
+    *,
+    defs: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """参数快照：保留所有影响调用契约的字段（含嵌套结构与 ``$ref`` 展开结果）。"""
     if not isinstance(prop, dict):
         return {"required": required}
+    effective = _resolve_ref_node(prop, defs or {}) if defs else prop
+    if not isinstance(effective, dict):
+        effective = prop
     snapshot: Dict[str, Any] = {
-        "type": prop.get("type"),
+        "type": effective.get("type"),
         "required": required,
     }
-    # anyOf / oneOf / const 必须一起采：Pydantic v2 生成的 schema 里 ``Optional[str]``
-    # 是 ``anyOf: [{type: string}, {type: null}]``、``type`` 为 None，只比 ``type``
-    # 时「Optional[str] 改成 Optional[int]」会被当成「没有差异」直接漏掉。
+    # anyOf / oneOf / allOf / $ref / properties / required / additionalProperties 必须一起采：
+    # FastMCP / Pydantic v2 的 Optional、Enum、嵌套对象参数依赖这些字段表达约束，
+    # 漏采会让破坏性嵌套结构变更被指纹感知却产出空 diff。
     for key in (
         "enum", "items", "default", "format", "minimum", "maximum",
-        "anyOf", "oneOf", "const",
+        "anyOf", "oneOf", "allOf", "const",
+        "$ref", "properties", "additionalProperties",
+        "pattern", "minLength", "maxLength",
     ):
-        if key in prop:
-            snapshot[key] = prop.get(key)
-    description = prop.get("description")
+        if key in effective:
+            snapshot[key] = effective.get(key)
+    if "required" in effective and isinstance(effective.get("required"), list):
+        snapshot["nested_required"] = sorted(
+            str(item) for item in effective["required"] if isinstance(item, str)
+        )
+    description = effective.get("description")
     if isinstance(description, str) and description.strip():
         snapshot["description"] = description.strip()
     return snapshot
+
+
+def _strip_descriptions(value: Any) -> Any:
+    """递归剥掉 ``description``，用于区分「嵌套字段只是改了说明」与「结构真变了」。
+
+    快照里现在带着整棵 ``properties``（含每个子字段的 description）。不剥的话，
+    远端给某个子字段补一句说明就会被判成 ``param_type`` / ``breaking``——纯文档
+    改动进「破坏性变更」统计，人工确认队列会被淹没，红标也失去意义。
+    """
+    if isinstance(value, dict):
+        return {
+            key: _strip_descriptions(item)
+            for key, item in value.items()
+            if key != "description"
+        }
+    if isinstance(value, list):
+        return [_strip_descriptions(item) for item in value]
+    return value
 
 
 def _param_summary(kind: str, name: str, before: Optional[dict], after: Optional[dict]) -> str:
@@ -202,9 +294,17 @@ def _param_summary(kind: str, name: str, before: Optional[dict], after: Optional
             return f"参数 {name} 类型 {before_type} → {after_type}"
         labels = {
             "items": "子结构",
+            "properties": "嵌套字段",
+            "nested_required": "嵌套必填项",
+            "additionalProperties": "扩展字段策略",
+            "$ref": "引用类型",
+            "allOf": "组合类型",
             "format": "格式",
             "minimum": "最小值",
             "maximum": "最大值",
+            "minLength": "最小长度",
+            "maxLength": "最大长度",
+            "pattern": "正则约束",
             "default": "默认值",
             "anyOf": "类型",
             "oneOf": "类型",
@@ -212,16 +312,26 @@ def _param_summary(kind: str, name: str, before: Optional[dict], after: Optional
         }
         changed = [
             labels.get(key, key)
-            for key in ("items", "format", "minimum", "maximum", "default", "anyOf", "oneOf", "const")
+            for key in (
+                "items", "properties", "nested_required", "additionalProperties",
+                "$ref", "allOf", "anyOf", "oneOf", "const",
+                "format", "minimum", "maximum", "minLength", "maxLength", "pattern", "default",
+            )
             if (before or {}).get(key) != (after or {}).get(key)
         ]
         # type 相同却走到这里，说明是约束变了；再说「类型 integer → integer」纯属噪音
         return f"参数 {name} " + "、".join(dict.fromkeys(changed) or ["约束"]) + "变更"
     if kind == "param_description":
+        # 顶层 description 没变、变的是嵌套字段的说明时，说成「描述变更」会让人
+        # 以为是这个参数自己的描述被改了，找不到改在哪一层。
+        if (before or {}).get("description") == (after or {}).get("description"):
+            return f"参数 {name} 的嵌套字段说明变更"
         return f"参数 {name} 描述变更"
     if kind == "param_enum":
-        before_enum = (before or {}).get("enum") or []
-        after_enum = (after or {}).get("enum") or []
+        raw_before = (before or {}).get("enum")
+        raw_after = (after or {}).get("enum")
+        before_enum = raw_before if isinstance(raw_before, list) else []
+        after_enum = raw_after if isinstance(raw_after, list) else []
         added = [v for v in after_enum if v not in before_enum]
         removed = [v for v in before_enum if v not in after_enum]
         parts = []
@@ -239,8 +349,10 @@ def _enum_change_severity(before: Optional[dict], after: Optional[dict]) -> str:
     「原来不限取值、现在给出白名单」同样是收紧——老调用传任何别的值都会被拒——
     按「removed 为空 = safe」判会把它误标成安全。
     """
-    before_enum = (before or {}).get("enum") or []
-    after_enum = (after or {}).get("enum") or []
+    raw_before = (before or {}).get("enum")
+    raw_after = (after or {}).get("enum")
+    before_enum = raw_before if isinstance(raw_before, list) else []
+    after_enum = raw_after if isinstance(raw_after, list) else []
     # 两个方向都要单独判：只看「有没有移除取值」时，
     #   无枚举 → 有枚举（收紧）与 有枚举 → 无枚举（放宽）都是 removed 为空/非空的反面，
     # 漏掉任何一边都会把兼容性变化标反。
@@ -264,6 +376,8 @@ def diff_parameter_schemas(
     """
     before = canonical_schema(before_schema)
     after = canonical_schema(after_schema)
+    before_defs = _schema_defs(before)
+    after_defs = _schema_defs(after)
     before_props = _schema_properties(before)
     after_props = _schema_properties(after)
     before_required = _required_names(before)
@@ -272,7 +386,7 @@ def diff_parameter_schemas(
     changes: List[Dict[str, Any]] = []
 
     for name in sorted(set(after_props) - set(before_props)):
-        snapshot = _param_snapshot(after_props[name], name in after_required)
+        snapshot = _param_snapshot(after_props[name], name in after_required, defs=after_defs)
         kind = "param_required" if name in after_required else "param_added_optional"
         severity = "breaking" if name in after_required else "safe"
         changes.append(
@@ -289,7 +403,7 @@ def diff_parameter_schemas(
         )
 
     for name in sorted(set(before_props) - set(after_props)):
-        snapshot = _param_snapshot(before_props[name], name in before_required)
+        snapshot = _param_snapshot(before_props[name], name in before_required, defs=before_defs)
         changes.append(
             {
                 "kind": "param_removed",
@@ -302,8 +416,8 @@ def diff_parameter_schemas(
         )
 
     for name in sorted(set(before_props) & set(after_props)):
-        before_snapshot = _param_snapshot(before_props[name], name in before_required)
-        after_snapshot = _param_snapshot(after_props[name], name in after_required)
+        before_snapshot = _param_snapshot(before_props[name], name in before_required, defs=before_defs)
+        after_snapshot = _param_snapshot(after_props[name], name in after_required, defs=after_defs)
         if before_snapshot == after_snapshot:
             continue
 
@@ -317,12 +431,25 @@ def diff_parameter_schemas(
             detected.append(("param_required", "breaking" if became_required else "notice"))
         if before_snapshot.get("enum") != after_snapshot.get("enum"):
             detected.append(("param_enum", _enum_change_severity(before_snapshot, after_snapshot)))
-        for key in ("items", "anyOf", "oneOf", "const"):
+        for key in (
+            "items", "anyOf", "oneOf", "allOf", "const",
+            "$ref", "nested_required", "additionalProperties",
+        ):
             if before_snapshot.get(key) != after_snapshot.get(key):
                 # 子结构 / 联合类型变了：调用方按旧类型传值会失败
                 detected.append(("param_type", "breaking"))
                 break
-        for key in ("format", "minimum", "maximum", "default"):
+        if before_snapshot.get("properties") != after_snapshot.get("properties"):
+            # 嵌套字段：结构变了才算破坏性，只剩 description 变了按「文档改动」处理。
+            # 不区分的话，远端给某个子字段补一句说明就会被标成 breaking，
+            # 「破坏性变更」统计与人工确认队列都会被纯文档改动刷屏。
+            if _strip_descriptions(before_snapshot.get("properties")) != _strip_descriptions(
+                after_snapshot.get("properties")
+            ):
+                detected.append(("param_type", "breaking"))
+            else:
+                detected.append(("param_description", "safe"))
+        for key in ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "default"):
             if before_snapshot.get(key) != after_snapshot.get(key):
                 # 约束/默认值变化不会让签名对不上，但会影响调用结果——标 notice 而不是
                 # 一律 breaking，否则「默认值改了一下」也会进「破坏性」统计。

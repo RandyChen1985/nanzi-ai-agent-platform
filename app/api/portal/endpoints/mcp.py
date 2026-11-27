@@ -43,6 +43,7 @@ from app.services.mcp.mcp_auth_policy import (
     mcp_auth_headers_configured,
     mcp_auth_headers_summary,
     resolve_mcp_auth_headers,
+    validate_mcp_header_pair,
 )
 from app.services.mcp.stale_tool_cleanup import (
     cleanup_stale_tools,
@@ -209,6 +210,25 @@ class McpServerWrite(McpServerBase):
     auth_source: Optional[Literal["token", "credential"]] = Field(default=None, exclude=True)
     auth_headers_patch: Optional[Dict[str, Optional[str]]] = None
 
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _validate_scope(cls, value: Any) -> str:
+        """``scope`` 必须归一成 ``global`` / ``personal`` 两个值之一。
+
+        归属判定全是「精确等于」的写法（``scope == "global"`` / ``== "personal"``），
+        一旦允许第三个取值落库，两道判定就都不命中 → 该行变成「任何登录用户都能
+        改/删/同步」。大小写与首尾空格同样会绕过 ``scope == "global"`` 的管理员闸门，
+        所以这里先 strip+lower 归一，再拒绝其它取值（422），而不是在读取侧猜。
+        """
+        if value is None:
+            return "global"
+        text = str(value).strip().lower()
+        if not text:
+            return "global"
+        if text not in ("global", "personal"):
+            raise ValueError("scope 只能是 global 或 personal")
+        return text
+
     @model_validator(mode="after")
     def validate_user_assertion_config(self):
         if str(self.user_assertion_header or "").strip().lower() == "authorization":
@@ -365,15 +385,28 @@ def _mcp_tool_payload_filter(server_name: str, tool_names: Any):
 
 
 def _rename_tool_reference(value: Any, old_prefix: str, new_prefix: str) -> Any:
-    """Rename one MCP server prefix while preserving tool config shape."""
+    """Rename one MCP server prefix while preserving tool config shape.
+
+    严格保留原始数据类型：只有当字符串本身是 JSON 数组/对象且内部确实命中旧前缀时才
+    反序列化改写并序列化回字符串，绝不把普通标量字符串（如 ``"123"`` / ``"true"``）
+    错转成 int/bool 写回数据库。
+    """
     if isinstance(value, str):
         if value.startswith(f"{old_prefix}:"):
             return f"{new_prefix}{value[len(old_prefix):]}"
+        stripped = value.strip()
+        if not stripped or stripped[0] not in ("[", "{"):
+            return value
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
             return value
-        return _rename_tool_reference(parsed, old_prefix, new_prefix)
+        if not isinstance(parsed, (list, dict)):
+            return value
+        renamed = _rename_tool_reference(parsed, old_prefix, new_prefix)
+        if renamed == parsed:
+            return value
+        return json.dumps(renamed, ensure_ascii=False)
     if isinstance(value, list):
         return [_rename_tool_reference(item, old_prefix, new_prefix) for item in value]
     if isinstance(value, dict):
@@ -389,8 +422,13 @@ async def _migrate_server_name_references(
     server_id: str,
     old_name: str,
     new_name: str,
+    merged_tool_ids: list[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Keep cached tools and all agent-version references valid after rename.
+
+    ``merged_tool_ids`` 收集「改名后与已有同名缓存行合并、因此被删掉」的工具 id：
+    这些行在会话（Redis）里还挂着，必须由调用方摘除，否则会出现「清单里有、
+    调用时未注册」的幽灵工具。
 
     Returns:
         ［(tool_cache_id, new_tool_name)］：供调用方同步会话资源里的旧引用。
@@ -417,6 +455,9 @@ async def _migrate_server_name_references(
                 existing.tool_description = tool.tool_description
             if not existing.parameter_schema:
                 existing.parameter_schema = tool.parameter_schema
+            if merged_tool_ids is not None:
+                # 被合并掉的那一行在会话里仍按 id 挂着，把 id 交给调用方摘除
+                merged_tool_ids.append(str(tool.id))
             await db.delete(tool)
             continue
         cached_by_name.pop(tool.tool_name, None)
@@ -438,8 +479,12 @@ async def _migrate_server_name_references(
         if change.tool_name.startswith(old_prefix):
             change.tool_name = f"{new_name}{change.tool_name[len(old_name):]}"
 
-    # 只取 (id, tools)：全字段加载会把每个版本的提示词/模型配置都读进内存。
-    version_result = await db.execute(select(AIAgentVersion.id, AIAgentVersion.tools))
+    # 先按旧服务名前缀在 SQL 侧粗筛，再在 Python 侧精确改写，避免无条件全表扫描。
+    version_result = await db.execute(
+        select(AIAgentVersion.id, AIAgentVersion.tools).where(
+            _mcp_tool_payload_filter(old_name, [tool.tool_name for tool in cached_tools])
+        )
+    )
     for version_id, tools_config in version_result.all():
         renamed_version_tools = _rename_tool_reference(tools_config, old_name, new_name)
         if renamed_version_tools != tools_config:
@@ -476,7 +521,19 @@ async def _sync_renamed_tools_to_conversations(
             pass
 
 
+def _ensure_known_server_scope(server: McpServer) -> None:
+    """归属类型只允许 ``global`` / ``personal``，其它取值一律按无权处理。
+
+    下面几处归属判定写的都是「精确等于」的两条黑名单；库里若存在第三种取值
+    （历史行、或绕过写入校验的行），两条判定都不命中 → 静默放行，等于把这条服务
+    交给任何登录用户。所以每个判定前先确认取值合法，fail-closed 而不是 fail-open。
+    """
+    if server.scope not in ("global", "personal"):
+        raise HTTPException(status_code=403, detail="MCP 服务的归属类型不合法，请联系管理员")
+
+
 def _ensure_server_control_access(server: McpServer, user: Dict) -> None:
+    _ensure_known_server_scope(server)
     is_admin = user.get("role") == "admin"
     if server.scope == "global" and not is_admin:
         raise HTTPException(status_code=403, detail="只有系统管理员才能管理平台公共 MCP 服务")
@@ -491,6 +548,7 @@ def _ensure_server_read_access(server: McpServer, user: Dict) -> None:
     凭据、同步、清理与日志，直接放开它会把写能力一起放出去。平台 MCP 页签现在
     对所有登录用户可见（只读模式），因此「看服务与工具清单」需要一道更松的闸门。
     """
+    _ensure_known_server_scope(server)
     is_admin = user.get("role") == "admin"
     if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
         raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 服务")
@@ -543,7 +601,10 @@ def _apply_mcp_auth_update(
 
     if not has_patch and not has_authorization_control and not reset_credentials:
         if has_explicit_headers:
-            server.auth_headers = encrypt_mcp_auth_headers(data.auth_headers)
+            try:
+                server.auth_headers = encrypt_mcp_auth_headers(data.auth_headers)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         return
 
     if reset_credentials:
@@ -553,8 +614,13 @@ def _apply_mcp_auth_update(
             if not looks_like_credential_header(key)
         }
         server.fixed_token_encrypted = None
-        if has_explicit_headers and _parse_auth_headers(data.auth_headers or "{}"):
-            headers = _parse_auth_headers(data.auth_headers)
+        if has_explicit_headers:
+            try:
+                parsed_explicit = _parse_auth_headers(data.auth_headers or "{}")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if parsed_explicit:
+                headers = parsed_explicit
     else:
         headers = resolve_mcp_auth_headers(server)
 
@@ -567,7 +633,11 @@ def _apply_mcp_auth_update(
         if value is None:
             _remove_header_case_insensitive(headers, normalized_key)
         else:
-            _set_header_case_insensitive(headers, normalized_key, str(value))
+            try:
+                clean_key, clean_val = validate_mcp_header_pair(normalized_key, str(value))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _set_header_case_insensitive(headers, clean_key, clean_val)
 
     if data.authorization_enabled is False or data.auth_source == "credential":
         _remove_header_case_insensitive(headers, "Authorization")
@@ -586,7 +656,10 @@ def _apply_mcp_auth_update(
 
     if server.fixed_token_encrypted:
         _remove_header_case_insensitive(headers, "Authorization")
-    server.auth_headers = encrypt_mcp_auth_headers(headers)
+    try:
+        server.auth_headers = encrypt_mcp_auth_headers(headers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _load_verify_saved_server(
@@ -604,6 +677,10 @@ async def _load_verify_saved_server(
     ).scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404, detail="Server not found")
+    # 个人 MCP 凭据属于私密资产，与编辑/删除保持同一口径：即便是管理员也不能借
+    # `/verify` 复用其他用户私有 MCP 中已保存的 Token（尤其在改目标地址时）。
+    if server.scope == "personal" and server.user_id != _get_user_id(user):
+        raise HTTPException(status_code=403, detail="无法使用其他用户的私有 MCP 凭据进行探测")
     _ensure_server_control_access(server, user)
     return server
 
@@ -633,7 +710,10 @@ def _build_verify_auth_headers(
     这里只补一条告警日志，方便排查「凭据被发到了哪里」，不改变产品行为。
     """
     if server is None:
-        headers = _parse_auth_headers(data.auth_headers)
+        try:
+            headers = _parse_auth_headers(data.auth_headers)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     else:
         submitted_origin = _url_origin(getattr(data, "sse_url", None))
         saved_origin = _url_origin(server.sse_url)
@@ -645,7 +725,12 @@ def _build_verify_auth_headers(
             )
         headers = resolve_mcp_auth_headers(server)
         if "auth_headers" in data.model_fields_set and data.auth_headers:
-            headers.update(_parse_auth_headers(data.auth_headers))
+            try:
+                parsed_extra = _parse_auth_headers(data.auth_headers)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            for k, v in parsed_extra.items():
+                _set_header_case_insensitive(headers, k, v)
 
     for key, value in (data.auth_headers_patch or {}).items():
         normalized_key = str(key).strip()
@@ -656,7 +741,11 @@ def _build_verify_auth_headers(
         if value is None:
             _remove_header_case_insensitive(headers, normalized_key)
         else:
-            _set_header_case_insensitive(headers, normalized_key, str(value))
+            try:
+                clean_key, clean_val = validate_mcp_header_pair(normalized_key, str(value))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _set_header_case_insensitive(headers, clean_key, clean_val)
 
     if data.authorization_enabled is False:
         _remove_header_case_insensitive(headers, "Authorization")
@@ -898,31 +987,41 @@ async def verify_mcp_server(
 
     temp_id = f"verify_{uuid.uuid4().hex[:8]}"
     McpClientService._sessions[temp_id] = McpSseSession(temp_id, data.sse_url, auth_headers)
-    
+
     try:
         tools = await McpClientService.list_remote_tools(temp_id)
-        if temp_id in McpClientService._sessions:
-            await McpClientService._sessions[temp_id].close()
-            del McpClientService._sessions[temp_id]
-            
         return {
             "status": "success",
             "tools": [
-                {"name": t.name if hasattr(t, 'name') else t.get('name'), 
-                 "description": t.description if hasattr(t, 'description') else t.get('description')} 
+                {"name": t.name if hasattr(t, 'name') else t.get('name'),
+                 "description": t.description if hasattr(t, 'description') else t.get('description')}
                 for t in tools
             ]
         }
     except Exception as e:
-        if temp_id in McpClientService._sessions:
-            await McpClientService._sessions[temp_id].close()
-            del McpClientService._sessions[temp_id]
-        # 原始异常可能带内部地址/HTTP 响应，不能直接回给客户端；详情只落服务端日志。
-        logger.warning("MCP verify failed for %s: %s", data.sse_url, e, exc_info=True)
+        # 原始异常与 traceback 可能带凭据中心注入的 token 或内网响应，脱敏且不打原始堆栈。
+        from app.services.secrets.redact import redact_value
+
+        safe_err = str(redact_value(str(e), where="MCP 连接测试"))
+        logger.warning(
+            "MCP verify failed for %s: %s: %s",
+            _url_origin(data.sse_url) or data.sse_url,
+            type(e).__name__,
+            safe_err,
+        )
         raise HTTPException(
             status_code=400,
             detail="连接失败：请检查服务地址、网络连通性与认证配置",
         )
+    finally:
+        # 必须放在 finally：asyncio.CancelledError 等 BaseException 不会进 except Exception，
+        # 不在此回收会把带明文凭据的临时会话永久留在 _sessions 中。
+        session_mgr = McpClientService._sessions.pop(temp_id, None)
+        if session_mgr is not None:
+            try:
+                await session_mgr.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 def _get_user_id(user: Dict) -> Optional[int]:
     val = user.get("user_id") if user.get("user_id") is not None else user.get("id")
@@ -1033,7 +1132,7 @@ async def list_mcp_servers(
         owner_name, owner_display = owner_profiles.get(int(s.user_id), (None, None)) if s.user_id else (None, None)
         item.owner_user_name = owner_name
         item.owner_display_name = owner_display
-        if not is_admin:
+        if not is_admin and s.scope == "global":
             _mask_platform_server_for_read_only(item)
         res.append(item)
     return res
@@ -1533,6 +1632,7 @@ async def update_mcp_server_group(
     server = (await db.execute(select(McpServer).where(McpServer.id == server_id))).scalar_one_or_none()
     if not server:
         raise HTTPException(status_code=404, detail="MCP 服务不存在")
+    _ensure_known_server_scope(server)
     if server.scope == "global" and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有系统管理员才能修改平台公共 MCP 服务的分组")
     if server.scope == "personal" and server.user_id != _get_user_id(user):
@@ -1575,7 +1675,10 @@ async def create_mcp_server(
     user_id = _get_user_id(user) if target_scope == "personal" else None
     server_id = str(uuid.uuid4())
     server_data = data.model_dump(exclude={"fixed_token", "authorization_enabled", "auth_headers_patch", "auth_source"})
-    auth_headers = _parse_auth_headers(data.auth_headers)
+    try:
+        auth_headers = _parse_auth_headers(data.auth_headers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     raw_authorization = next(
         (
             value
@@ -1590,13 +1693,16 @@ async def create_mcp_server(
         _remove_header_case_insensitive(auth_headers, "Authorization")
     elif data.authorization_enabled is True and not raw_authorization:
         raise HTTPException(status_code=400, detail="开启 Authorization 后请输入 Token")
-    server_data["auth_headers"] = encrypt_mcp_auth_headers(auth_headers)
+    try:
+        server_data["auth_headers"] = encrypt_mcp_auth_headers(auth_headers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     server_data["server_name"] = server_name
     server_data["remark"] = _normalized_remark(data.remark)
     server_data["scope"] = target_scope
     server_data["user_id"] = user_id
     
-    if data.fixed_token and data.auth_source != "credential":
+    if data.fixed_token and data.authorization_enabled is not False and data.auth_source != "credential":
         server_data["fixed_token_encrypted"] = get_api_key_manager().encrypt_api_key(data.fixed_token)
     if data.user_assertion_enabled:
         server_data["user_assertion_audience"] = (
@@ -1620,7 +1726,35 @@ async def create_mcp_server(
     try:
         await McpClientService.sync_tools(server_id, user_info=_mcp_user_context(user))
     except Exception as e:
-        logger.warning(f"Initial sync failed for new server {server_id}: {e}")
+        # 异常文本可能含凭据中心注入的 token 或内网响应体：本批已把 /sync、
+        # /verify 的同类日志改成先脱敏再打，创建路径不能漏。
+        from app.services.secrets.redact import redact_value
+
+        logger.warning(
+            "Initial sync failed for new server %s: %s",
+            server_id,
+            redact_value(str(e), where="MCP 新建后同步"),
+        )
+
+    tool_count = 0
+    published_tool_count = 0
+    stale_tool_count = 0
+    owner_user_name = None
+    owner_display_name = None
+    if isinstance(db, AsyncSession):
+        try:
+            await db.refresh(new_server)
+            synced_item = await _server_response_with_counts(db, new_server)
+            tool_count = synced_item.tool_count
+            published_tool_count = synced_item.published_tool_count
+            stale_tool_count = synced_item.stale_tool_count
+            owner_profiles = await _mcp_owner_profiles(
+                db, {new_server.user_id} if new_server.user_id else set()
+            )
+            if new_server.user_id and int(new_server.user_id) in owner_profiles:
+                owner_user_name, owner_display_name = owner_profiles[int(new_server.user_id)]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Refreshing newly created MCP server %s skipped: %s", server_id, e)
 
     authorization_configured, masked_auth_headers = mcp_auth_headers_summary(new_server)
     return {
@@ -1628,6 +1762,7 @@ async def create_mcp_server(
         "sse_url": data.sse_url,
         "enabled_status": data.enabled_status,
         "scope": target_scope,
+        "user_id": user_id,
         "remark": server_data["remark"],
         "group_name": new_server.group_name,
         "credential_mode": data.credential_mode,
@@ -1640,9 +1775,12 @@ async def create_mcp_server(
         "authorization_configured": authorization_configured,
         "masked_auth_headers": masked_auth_headers,
         "id": server_id,
-        "tool_count": 0,
-        "published_tool_count": 0,
-        "stale_tool_count": 0,
+        "tool_count": tool_count,
+        "published_tool_count": published_tool_count,
+        "stale_tool_count": stale_tool_count,
+        "last_sync_at": new_server.last_sync_at,
+        "owner_user_name": owner_user_name,
+        "owner_display_name": owner_display_name,
     }
 
 @router.put("/servers/{server_id}", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
@@ -1656,6 +1794,7 @@ async def update_mcp_server(
     server = (await db.execute(stmt)).scalar_one_or_none()
     if not server: raise HTTPException(status_code=404, detail="Server not found")
     
+    _ensure_known_server_scope(server)
     is_admin = user.get("role") == "admin"
     if server.scope == "global" and not is_admin:
         raise HTTPException(status_code=403, detail="只有系统管理员才能编辑平台公共 MCP 服务")
@@ -1682,10 +1821,11 @@ async def update_mcp_server(
         raise HTTPException(status_code=400, detail=f"服务显示名称 '{server_name}' 已存在，请修改名称后保存")
 
     renamed_tools: list[tuple[str, str]] = []
+    merged_tool_ids: list[str] = []
     rename_owner_id = server.user_id if server.scope == "personal" else None
     if server.server_name != server_name:
         renamed_tools = await _migrate_server_name_references(
-            db, server_id, server.server_name, server_name
+            db, server_id, server.server_name, server_name, merged_tool_ids=merged_tool_ids
         )
     server.server_name = server_name
     server.sse_url = data.sse_url
@@ -1732,6 +1872,18 @@ async def update_mcp_server(
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Syncing renamed tools to conversations failed for {server_id}: {e}")
+    if merged_tool_ids:
+        try:
+            from app.services.conversation_resource_service import ConversationResourceService
+
+            await ConversationResourceService.remove_mcp_tools(
+                owner_id=rename_owner_id,
+                tool_ids=merged_tool_ids,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Removing merged tools from conversations failed for {server_id}: {e}"
+            )
 
     # 会话在建立时缓存了 sse_url 与解密后的 Header，唯一兜底是 300s 空闲回收；
     # 改了地址 / Token / 断言配置后必须先淘汰，否则接下来的同步与调用还在用旧连接。
@@ -1746,8 +1898,22 @@ async def update_mcp_server(
         try:
             await McpClientService.sync_tools(server_id, user_info=_mcp_user_context(user))
         except Exception as e:
-            logger.warning(f"Sync failed during update for server {server_id}: {e}")
+            from app.services.secrets.redact import redact_value
+
+            logger.warning(
+                "Sync failed during update for server %s: %s",
+                server_id,
+                redact_value(str(e), where="MCP 编辑后同步"),
+            )
     
+    # sync_tools 在独立会话中更新了 last_sync_at 与工具表；真实 AsyncSession 上先 refresh，
+    # 兼容仅 mock execute/commit 的单元测试假对象，并保留 response_data 完整字段与计数查询。
+    if isinstance(db, AsyncSession):
+        try:
+            await db.refresh(server)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Refreshing updated MCP server %s skipped: %s", server_id, e)
+
     # Return with updated counts
     count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id)
     total = (await db.execute(count_stmt.where(McpToolCache.is_available == True))).scalar() or 0
@@ -1762,9 +1928,10 @@ async def update_mcp_server(
         McpToolCache.is_published == True,
     )
     pub = (await db.execute(pub_stmt)).scalar() or 0
-    
+
     response_data = data.model_dump(exclude={"fixed_token", "auth_headers", "auth_source"})
     response_data["server_name"] = server_name
+    response_data["remark"] = server.remark
     response_data["user_assertion_audience"] = server.user_assertion_audience
     response_data["user_assertion_key_id"] = server.user_assertion_key_id
     response_data["user_assertion_issuer"] = server.user_assertion_issuer
@@ -1773,9 +1940,6 @@ async def update_mcp_server(
     response_data["authorization_configured"], response_data["masked_auth_headers"] = (
         mcp_auth_headers_summary(server)
     )
-    # 与 ``_server_response_with_counts`` 保持同一字段集：前端目前是逐字段取值、
-    # 不做整体替换，少几个字段不会立刻出事；但两个接口返同一资源却给出不同形状，
-    # 谁哪天改成「用返回值覆盖列表项」，角标和探测信息就会凭空归零。
     pending_changes = (
         await db.execute(
             select(func.count())
@@ -1795,6 +1959,7 @@ async def update_mcp_server(
         "published_tool_count": pub,
         "stale_tool_count": stale,
         "pending_change_count": int(pending_changes or 0),
+        "last_sync_at": server.last_sync_at,
         "last_probe_at": server.last_probe_at,
         "last_probe_status": server.last_probe_status,
         "probe_failure_count": int(server.probe_failure_count or 0),
@@ -1812,6 +1977,7 @@ async def delete_mcp_server(
     if not server: raise HTTPException(status_code=404, detail="Server not found")
 
     is_admin = user.get("role") == "admin"
+    _ensure_known_server_scope(server)
     if server.scope == "global" and not is_admin:
         raise HTTPException(status_code=403, detail="只有系统管理员才能删除平台公共 MCP 服务")
     if server.scope == "personal" and server.user_id != _get_user_id(user):
@@ -1924,6 +2090,7 @@ async def sync_mcp_tools(
     if not server: raise HTTPException(status_code=404, detail="Server not found")
 
     is_admin = user.get("role") == "admin"
+    _ensure_known_server_scope(server)
     if server.scope == "global" and not is_admin:
         raise HTTPException(status_code=403, detail="只有系统管理员才能同步平台公共 MCP 服务")
     if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
@@ -1952,7 +2119,15 @@ async def sync_mcp_tools(
     except McpCredentialDeniedError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:
-        logger.warning("MCP sync failed for server %s: %s", server_id, e, exc_info=True)
+        from app.services.secrets.redact import redact_value
+
+        safe_err = str(redact_value(str(e), where="MCP 工具同步"))
+        logger.warning(
+            "MCP sync failed for server %s: %s: %s",
+            server_id,
+            type(e).__name__,
+            safe_err,
+        )
         raise HTTPException(
             status_code=502,
             detail="工具同步失败：请检查远端服务状态与认证配置",
@@ -2394,17 +2569,21 @@ async def get_mcp_server_outbound_logs(
 
     from datetime import datetime, timedelta
     now = datetime.utcnow()
-    if range == "24h":
+    start_time: Optional[datetime]
+    if range == "all":
+        start_time = None
+    elif range == "24h":
         start_time = now - timedelta(hours=24)
     elif range == "30d":
         start_time = now - timedelta(days=30)
     else:
         start_time = now - timedelta(days=7)
 
-    filters = [
-        McpOutboundAuditLog.server_id == server_id,
-        McpOutboundAuditLog.created_at >= start_time,
-    ]
+    base_filters = [McpOutboundAuditLog.server_id == server_id]
+    if start_time is not None:
+        base_filters.append(McpOutboundAuditLog.created_at >= start_time)
+
+    filters = list(base_filters)
     if tool_name:
         # 与全平台日志同一口径：库里存的是裸工具名，但用户常按片段搜索，
         # 精确匹配会让「输一半」看起来像没日志。
@@ -2418,7 +2597,7 @@ async def get_mcp_server_outbound_logs(
         func.sum(case((McpOutboundAuditLog.status == "success", 1), else_=0)).label("success_count"),
         func.sum(case((McpOutboundAuditLog.status != "success", 1), else_=0)).label("failed_count"),
         func.avg(McpOutboundAuditLog.latency_ms).label("avg_latency"),
-    ).where(McpOutboundAuditLog.server_id == server_id, McpOutboundAuditLog.created_at >= start_time)
+    ).where(*base_filters)
 
     summary_row = (await db.execute(summary_stmt)).one()
     total_calls = summary_row.total or 0
@@ -2596,21 +2775,38 @@ async def get_my_mcp_outbound_summary(
         for row in per_tool_rows
     ]
 
-    day_label = func.date(McpOutboundAuditLog.created_at).label("day")
-    per_day_rows = (
+    # created_at 按 naive UTC 存储：直接 SQL func.date(created_at) 会按 UTC 切天，
+    # 东八区 00:00~08:00 的调用会被算进昨天。改按**平台业务时区**切天
+    # （兼容 MySQL/PG/SQLite，不用方言函数）。
+    #
+    # 不能用 ``datetime.now().astimezone()`` 拿宿主机时区：容器基础镜像是
+    # python:3.11-slim，TZ 默认 UTC，那样等于没改。平台时区是系统配置里的单一来源
+    # （platform_timezone，缺省 Asia/Shanghai），与调度、时间锚点同口径。
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    from app.services.platform_timezone import get_platform_timezone
+
+    try:
+        local_tz: Any = ZoneInfo(await get_platform_timezone())
+    except Exception:  # noqa: BLE001 - 时区库缺失/配置异常时退回 UTC，不影响统计可用性
+        local_tz = timezone.utc
+    # 按窗口取 created_at：上限就是 range 的时间窗（最长 30 天），不放任全表。
+    created_rows = (
         await db.execute(
-            select(day_label, total_label)
-            .where(*scope_filters)
-            .group_by(day_label)
-            .order_by(day_label)
+            select(McpOutboundAuditLog.created_at).where(*scope_filters)
         )
-    ).all()
+    ).scalars().all()
+    daily_counts: Dict[str, int] = {}
+    for ts in created_rows:
+        if ts is None:
+            continue
+        aware_utc = ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+        day_key = aware_utc.astimezone(local_tz).date().isoformat()
+        daily_counts[day_key] = daily_counts.get(day_key, 0) + 1
     daily = [
-        {
-            "date": str(row.day),
-            "total_calls": int(row.total_calls or 0),
-        }
-        for row in per_day_rows
+        {"date": day_key, "total_calls": daily_counts[day_key]}
+        for day_key in sorted(daily_counts)
     ]
 
     return {
@@ -2864,7 +3060,11 @@ async def list_mcp_received_shares(
     return {"status": "success", "data": data}
 
 
-@router.post("/shares/received/{share_id}/accept", summary="接受 MCP 分享并安装到我的 MCP")
+@router.post(
+    "/shares/received/{share_id}/accept",
+    summary="接受 MCP 分享并安装到我的 MCP",
+    dependencies=[Depends(require_permission("element", "element:mcp_management:create"))],
+)
 async def accept_mcp_received_share(
     share_id: str,
     data: Optional[McpShareAcceptRequest] = None,
@@ -2881,6 +3081,7 @@ async def accept_mcp_received_share(
             remark=overrides.remark,
             sse_url=overrides.sse_url,
         )
+        _clear_runtime_tool_cache()
         return {"status": "success", "data": result}
     except Exception as exc:
         _raise_if_share_error(exc)

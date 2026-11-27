@@ -165,28 +165,41 @@ const formatTime = (value?: string | null) => {
   })
 }
 
+let fetchSeq = 0
+
 const fetchChanges = async () => {
-  if (!props.serverId) return
+  const targetServerId = props.serverId
+  if (!targetServerId) return
+  const seq = ++fetchSeq
   loading.value = true
   loadError.value = ''
   try {
     const res = await axios.get('/api/portal/mcp/changes', {
-      params: { server_id: props.serverId, status: 'all', days: 90, limit: 200 },
+      params: { server_id: targetServerId, status: 'all', days: 90, limit: 200 },
     })
+    if (seq !== fetchSeq || props.serverId !== targetServerId) return
     items.value = Array.isArray(res.data?.items) ? res.data.items : []
-    counts.value = {
-      pending: items.value.filter((i) => i.status === 'pending').length,
-      applied: items.value.filter((i) => i.status === 'applied').length,
-      dismissed: items.value.filter((i) => i.status === 'dismissed').length,
-    }
+    const backendCounts = res.data?.counts
+    counts.value = backendCounts
+      ? {
+          pending: Number(backendCounts.pending || 0),
+          applied: Number(backendCounts.applied || 0),
+          dismissed: Number(backendCounts.dismissed || 0),
+        }
+      : {
+          pending: items.value.filter((i) => i.status === 'pending').length,
+          applied: items.value.filter((i) => i.status === 'applied').length,
+          dismissed: items.value.filter((i) => i.status === 'dismissed').length,
+        }
     picked.value = new Set()
     // 打开就能看到差异，不用先点一下展开——默认收起会让抽屉看起来是空的。
     const firstPending = items.value.find((i) => i.status === 'pending')
     expanded.value = new Set(firstPending ? [firstPending.id] : [])
   } catch (error) {
+    if (seq !== fetchSeq || props.serverId !== targetServerId) return
     loadError.value = apiMessage(error, '加载定义变更记录失败')
   } finally {
-    loading.value = false
+    if (seq === fetchSeq) loading.value = false
   }
 }
 
@@ -196,7 +209,8 @@ const fetchChanges = async () => {
  * 单独给这个入口是因为「重新同步」会直接改本地定义，而人只想先看清楚远端现在长什么样——
  * 如果唯一的检查手段是同步，那检查就等于应用。
  */
-const probing = ref(false)
+const probingServerId = ref('')
+const probing = computed(() => Boolean(props.serverId && probingServerId.value === props.serverId))
 
 const PROBE_MESSAGES: Record<string, string> = {
   ok: '远端定义与本地一致',
@@ -206,30 +220,43 @@ const PROBE_MESSAGES: Record<string, string> = {
 }
 
 const probeNow = async () => {
-  if (probing.value || !props.serverId) return
-  probing.value = true
+  const targetServerId = props.serverId
+  if (probing.value || !targetServerId) return
+  // 探测期间可能切到别的服务，名字要在发起时抓住（切走后 props 已经是别人的）
+  const targetName = props.serverName || targetServerId
+  probingServerId.value = targetServerId
   try {
-    const res = await axios.post(`/api/portal/mcp/servers/${props.serverId}/probe`)
+    const res = await axios.post(`/api/portal/mcp/servers/${targetServerId}/probe`)
     const status = String(res.data?.status || '')
     const newChanges = Number(res.data?.new_changes || 0)
     const baselineTools = Number(res.data?.baseline_tools || 0)
+    const detailError = String(res.data?.error || '').trim()
+    // 探测期间切到别的服务：结论只属于发起时那个服务，挂到当前服务上会指错对象。
+    const stillOnTarget = props.serverId === targetServerId
+    const prefix = stillOnTarget ? '' : `${targetName}：`
     if (status === 'changed') {
       showToast(
-        newChanges > 0 ? `发现 ${newChanges} 处新变更` : '远端定义与本地已不一致（差异已在列表中）',
+        newChanges > 0 ? `${prefix}发现 ${newChanges} 处新变更` : `${prefix}远端定义与本地已不一致（差异已在列表中）`,
         'warning',
       )
+    } else if (status === 'unreachable') {
+      showToast(prefix + (detailError || PROBE_MESSAGES.unreachable), 'error')
+    } else if (status === 'needs_user' || status === 'skipped_disabled') {
+      showToast(prefix + (detailError || PROBE_MESSAGES[status]), 'warning')
     } else if (status === 'ok' && baselineTools > 0) {
       // 首次探测不算「一致」，而是「刚建立基线」——说成一致会让人以为比对过一轮。
-      showToast(`已为 ${baselineTools} 个工具建立基线，之后的变化才会被报出来`, 'success')
+      showToast(`${prefix}已为 ${baselineTools} 个工具建立基线，之后的变化才会被报出来`, 'success')
     } else {
-      showToast(PROBE_MESSAGES[status] || '探测完成', 'success')
+      showToast(prefix + (PROBE_MESSAGES[status] || '探测完成'), 'success')
     }
-    await fetchChanges()
-    emit('changed')
+    if (stillOnTarget) {
+      await fetchChanges()
+      emit('changed')
+    }
   } catch (error) {
     showToast(apiMessage(error, '探测失败'), 'error')
   } finally {
-    probing.value = false
+    if (probingServerId.value === targetServerId) probingServerId.value = ''
   }
 }
 
@@ -250,12 +277,20 @@ const applyChange = async (ids: string[]) => {
   acting.value = true
   try {
     const res = await axios.post('/api/portal/mcp/changes/apply', { change_ids: ids })
-    const applied = Number(res.data?.applied || 0)
+    const applied = Number(res.data?.applied ?? 0)
     const errors = Array.isArray(res.data?.errors) ? res.data.errors : []
     if (errors.length) {
-      showToast(`部分服务应用失败：${errors[0]?.error || '未知原因'}`, 'error')
+      // 后端是「逐服务循环」：可能一部分服务已应用、另一部分失败。只说「失败」会让
+      // 用户去重试已经生效的那部分，所以有 applied 时必须把成功条数一起说清。
+      const reason = errors[0]?.error || '未知原因'
+      showToast(
+        applied > 0 ? `已应用 ${applied} 项，另有服务同步失败：${reason}` : `应用变更失败：${reason}`,
+        applied > 0 ? 'warning' : 'error',
+      )
+    } else if (applied > 0) {
+      showToast(`已应用 ${applied} 项变更`, 'success')
     } else {
-      showToast(`已应用 ${applied || ids.length} 项变更`, 'success')
+      showToast('没有可应用的待确认变更（可能已被他人处理）', 'warning')
     }
     await fetchChanges()
     emit('changed')
@@ -271,7 +306,12 @@ const dismissChange = async (ids: string[]) => {
   acting.value = true
   try {
     const res = await axios.post('/api/portal/mcp/changes/dismiss', { change_ids: ids })
-    showToast(`已忽略 ${Number(res.data?.dismissed || ids.length)} 项变更`, 'success')
+    const dismissed = Number(res.data?.dismissed ?? 0)
+    if (dismissed > 0) {
+      showToast(`已忽略 ${dismissed} 项变更`, 'success')
+    } else {
+      showToast('没有可忽略的待确认变更（可能已被他人处理）', 'warning')
+    }
     await fetchChanges()
     emit('changed')
   } catch (error) {
@@ -283,8 +323,16 @@ const dismissChange = async (ids: string[]) => {
 
 watch(
   () => [props.visible, props.serverId] as const,
-  ([visible]) => {
-    if (visible) fetchChanges()
+  ([visible, serverId], prev) => {
+    if (serverId !== prev?.[1]) {
+      fetchSeq += 1
+      items.value = []
+      counts.value = { pending: 0, applied: 0, dismissed: 0 }
+      picked.value = new Set()
+      expanded.value = new Set()
+      loadError.value = ''
+    }
+    if (visible && serverId) fetchChanges()
   },
   { immediate: true },
 )
@@ -367,7 +415,7 @@ watch(
             <div v-for="item in batch.items" :key="item.id" :class="item.status === 'pending' ? 'bg-violet-50/30' : 'bg-white'">
               <div class="flex items-start gap-2 px-3 py-2.5">
                 <input
-                  v-if="item.status === 'pending'"
+                  v-if="item.status === 'pending' && canManage"
                   type="checkbox"
                   class="mt-1 h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-violet-600 focus:ring-violet-400"
                   :checked="picked.has(item.id)"
@@ -416,8 +464,11 @@ watch(
                     @click="dismissChange([item.id])"
                   >忽略</button>
                 </div>
+                <div v-else-if="item.status !== 'pending'" class="mt-2 text-[10px] text-slate-400">
+                  {{ STATUS_LABELS[item.status] }}{{ formatTime(item.handled_at) ? `于 ${formatTime(item.handled_at)}` : '' }}
+                </div>
                 <div v-else class="mt-2 text-[10px] text-slate-400">
-                  {{ STATUS_LABELS[item.status] }}于 {{ formatTime(item.handled_at) }}
+                  待确认（需要同步权限方可应用或忽略）
                 </div>
               </div>
             </div>
@@ -426,11 +477,13 @@ watch(
       </div>
 
       <div class="flex items-center gap-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2.5 text-[11px]">
-        <span class="text-slate-500">
-          已选 <b class="text-slate-700">{{ picked.size }}</b> 项<template v-if="pickedBreaking.length">（含 <span class="text-red-600">{{ pickedBreaking.length }} 项破坏性</span>）</template>
-        </span>
-        <button type="button" class="text-violet-600 hover:underline" @click="pickAllPending">全选待确认</button>
-        <button v-if="picked.size" type="button" class="text-slate-400 hover:underline" @click="clearPicked">清空</button>
+        <template v-if="canManage">
+          <span class="text-slate-500">
+            已选 <b class="text-slate-700">{{ picked.size }}</b> 项<template v-if="pickedBreaking.length">（含 <span class="text-red-600">{{ pickedBreaking.length }} 项破坏性</span>）</template>
+          </span>
+          <button type="button" class="text-violet-600 hover:underline" @click="pickAllPending">全选待确认</button>
+          <button v-if="picked.size" type="button" class="text-slate-400 hover:underline" @click="clearPicked">清空</button>
+        </template>
         <div v-if="canManage" class="ml-auto flex gap-2">
           <button
             type="button"

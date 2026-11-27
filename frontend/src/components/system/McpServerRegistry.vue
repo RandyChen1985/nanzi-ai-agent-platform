@@ -210,14 +210,11 @@ const serversMatchingFilters = computed(() => {
     // 两个都不存在，按备注或地址搜索一律 0 结果。
     const descMatch = (s.remark || '').toLowerCase().includes(query)
     const urlMatch = (s.sse_url || '').toLowerCase().includes(query)
-    const toolMatch = Array.isArray(s.tools) && s.tools.some((t: any) =>
-      (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
-    )
     // 名字里只剩 base36 归属编码后，「谁建的」这条线索只能靠 owner 字段搜索补回来
     const ownerMatch =
       (s.owner_user_name || '').toLowerCase().includes(query) ||
       (s.owner_display_name || '').toLowerCase().includes(query)
-    return nameMatch || descMatch || urlMatch || toolMatch || ownerMatch
+    return nameMatch || descMatch || urlMatch || ownerMatch
   })
 })
 
@@ -293,6 +290,22 @@ const showMcpGroupTabs = computed(() => mcpGroupTabsAvailable.value && mcpGroupT
 watch(showMcpGroupTabs, (visible) => {
   if (!visible && mcpGroupFilter.value !== ALL_GROUP_KEY) {
     mcpGroupFilter.value = ALL_GROUP_KEY
+  }
+})
+
+/**
+ * 点卡片分组徽标切到具体分组时：
+ * - 若页签栏已被手动收起且存在多个分组，自动展开页签栏以便随时切回「全部」；
+ * - 若全局仅 1 个分组（页签栏不会出现），立即归位「全部」，避免锁死在无出口的筛选态。
+ */
+watch(mcpGroupFilter, (next) => {
+  if (next === ALL_GROUP_KEY) return
+  if (!mcpGroupTabsAvailable.value) {
+    mcpGroupFilter.value = ALL_GROUP_KEY
+    return
+  }
+  if (!mcpGroupTabsVisible.value) {
+    mcpGroupTabsVisible.value = true
   }
 })
 
@@ -649,14 +662,17 @@ const clearToolSelection = () => {
   selectedToolIds.value = new Set()
 }
 
+const batchUpdating = ref(false)
+
 const batchUpdateStatus = async (published: boolean) => {
+  if (batchUpdating.value) return
   const targetServerId = selectedServer.value?.id
   const ids = tools.value
     .filter(tool => selectedToolIds.value.has(tool.id) && tool.is_available !== false)
     .map(tool => tool.id)
   if (!canManageSelectedTools.value || ids.length === 0) return
 
-  loading.value = true
+  batchUpdating.value = true
   try {
     // 并行请求里部分失败是常态（并发上限、单个工具被远端删除），不能因为一个失败
     // 就丢掉其余成功结果、也不刷新界面。allSettled + 统一刷新。
@@ -679,7 +695,7 @@ const batchUpdateStatus = async (published: boolean) => {
     }
     selectedToolIds.value.clear()
   } finally {
-    loading.value = false
+    batchUpdating.value = false
   }
 }
 
@@ -753,6 +769,20 @@ const verifyAddressChanged = computed(() => (
   && newServer.value.sse_url.trim() !== savedSseUrl.value
 ))
 
+const clearPendingAuthBinding = () => {
+  if (editingId.value) return
+  if ('header:Authorization' in pendingBindings.value) {
+    const next = { ...pendingBindings.value }
+    delete next['header:Authorization']
+    pendingBindings.value = next
+  }
+  mcpBinding.value = null
+  mcpBindingSecretId.value = null
+  mcpBindingPicked.value = null
+  mcpBindingValuePath.value = ''
+  mcpBindingNeedsField.value = false
+}
+
 const updateAuthorizationEnabled = (enabled: boolean) => {
   authorizationEnabled.value = enabled
   if (enabled) {
@@ -760,6 +790,7 @@ const updateAuthorizationEnabled = (enabled: boolean) => {
   } else {
     authorizationEditing.value = false
     authorizationToken.value = ''
+    clearPendingAuthBinding()
   }
 }
 
@@ -788,6 +819,9 @@ const handleAuthorizationInput = (event: Event) => {
 const authSource = ref<'token' | 'credential'>('token')
 
 watch(authSource, (mode) => {
+  if (mode === 'token') {
+    clearPendingAuthBinding()
+  }
   if (
     mode === 'token'
     && authorizationEnabled.value
@@ -823,6 +857,12 @@ type HeaderBinding = {
    * 不带回的话提示会消失，用户以为配的是全平台共用的。
    */
   owner_scope?: string
+  /**
+   * 后端该条绑定实际落库的是全局层（true）还是本人层（false）。
+   * 平台 MCP 上选个人凭据会被后端降级为 is_global=false，解绑时必须回传
+   * 这条记录真实的 is_global，否则传 true 会删除 0 行导致永远解不掉。
+   */
+  is_global?: boolean
   /**
    * 多值配法的组标识。有值说明这条规则是「多值凭据」一次保存生成的
    * （N 个参数共用同一条规则、各取不同字段），不是单值页逐条配的。
@@ -939,10 +979,13 @@ async function loadMcpBinding() {
   // 下一次保存就会带着它——单值凭据会被后端判成「没有可选字段」直接 400。
   mcpBindingValuePath.value = ''
   mcpBindingNeedsField.value = false
+  // 先清空再请求：请求失败时 catch 什么也不做，如果留着上一条服务的绑定表，
+  // 界面会把「服务 A 的凭据」当成「服务 B 的绑定」显示，解绑还会带着 A 的
+  // is_global 去删 B 的绑定（可能删掉全平台那一条）。
+  headerBindings.value = {}
+  slotRules.value = {}
   if (!editingId.value) {
-    // 不清的话，从「编辑服务 A」跳到「添加」时，新向导会显示 A 的 header 绑定
-    headerBindings.value = {}
-    slotRules.value = {}
+    // 从「编辑服务 A」跳到「添加」时，新向导不能显示 A 的 header 绑定
     return
   }
   try {
@@ -954,7 +997,11 @@ async function loadMcpBinding() {
     if (editingId.value !== requestedId) return
     const map: Record<string, HeaderBinding> = {}
     const rules: Record<string, HeaderBinding> = {}
-    for (const row of res.data?.data || []) {
+    // 全局层在前、个人层在后：同一槽位同时存在全局与个人绑定时，让个人层稳定覆盖全局层（与运行时优先级一致）
+    const sortedRows = [...(res.data?.data || [])].sort(
+      (a: any, b: any) => (a?.is_global ? 0 : 1) - (b?.is_global ? 0 : 1),
+    )
+    for (const row of sortedRows) {
       // 平台 MCP：管理员设的全局绑定要算「已绑定」，别人的个人绑定看不见。
       // 个人 MCP：只有自己绑的才算——这里的「全局」对它没有意义。
       if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
@@ -970,6 +1017,7 @@ async function loadMcpBinding() {
         // 缺了它，后面 `mcpBindingPicked = { ..., owner_scope: hit.owner_scope }`
         // 和 `openHeaderBind` 拿到的永远是 undefined，「只对你生效」的提示不出现。
         owner_scope: row.owner_scope,
+        is_global: Boolean(row.is_global),
         value_format: row.value_format || 'text',
         value_template: row.value_template || null,
         binding_group_id: row.binding_group_id || null,
@@ -1017,21 +1065,31 @@ async function loadMcpBinding() {
  * ``valuePath``：只取凭据的某个字段。MCP 的 Header 值不在这个页面编辑，
  * 所以「取哪一部分」只能靠绑定记录表达。
  */
-async function writeBinding(slot: string, secretId: string | null, valuePath = '') {
+async function writeBinding(
+  slot: string,
+  secretId: string | null,
+  valuePath = '',
+  targetIsGlobal?: boolean,
+) {
   // 新建态：还没 id，无法落库。调用方负责写进 pendingBindings。
-  if (!editingId.value) return
+  if (!editingId.value) return null
   if (!secretId) {
-    await axios.delete('/api/portal/secrets/bindings', {
+    const resolvedIsGlobal =
+      typeof targetIsGlobal === 'boolean'
+        ? targetIsGlobal
+        : (typeof headerBindings.value[slot]?.is_global === 'boolean'
+            ? headerBindings.value[slot].is_global
+            : isGlobalBinding.value)
+    return axios.delete('/api/portal/secrets/bindings', {
       data: {
         consumer_type: 'mcp_server',
         consumer_id: editingId.value,
         slot,
-        is_global: isGlobalBinding.value,
+        is_global: resolvedIsGlobal,
       },
     })
-    return
   }
-  await axios.post('/api/portal/secrets/bindings', {
+  return axios.post('/api/portal/secrets/bindings', {
     secret_id: secretId,
     consumer_type: 'mcp_server',
     consumer_id: editingId.value,
@@ -1087,11 +1145,16 @@ async function saveMcpBinding() {
 
   try {
     if (!mcpBindingSecretId.value) {
-      await writeBinding('header:Authorization', null)
-      mcpBinding.value = null
-      mcpBindingPicked.value = null
-      authSource.value = 'token'
-      showToast('已解除凭据绑定', 'success')
+      const res = await writeBinding('header:Authorization', null)
+      const removed = Number(res?.data?.data?.removed ?? 1)
+      if (removed === 0) {
+        showToast('未找到可解除的绑定，已刷新最新状态', 'warning')
+      } else {
+        mcpBinding.value = null
+        mcpBindingPicked.value = null
+        authSource.value = 'token'
+        showToast('已解除凭据绑定', 'success')
+      }
     } else {
       const picked = mcpBindingPicked.value
       if (!picked) throw new Error('请选择凭据')
@@ -1119,6 +1182,7 @@ function openHeaderBind(key: string) {
   const existing = bindingOfHeader(name)
   headerBindSecretId.value = existing?.secret_id || null
   headerBindValuePath.value = existing?.value_path || ''
+  headerBindNeedsField.value = false
   // 形态必须一起带上：新建态下重开这个弹窗、不换凭据直接点保存时，
   // saveHeaderBind 会拿 picked 的字段写进 pendingBindings——缺了就等于
   // 把已经选好的「结构化 + 模板」洗成一条裸标识。
@@ -1195,9 +1259,18 @@ async function saveHeaderBind() {
 
   try {
     const picked = headerBindSecretId.value ? headerBindPicked.value : null
-    await writeBinding(`header:${headerBindSlot.value}`, picked?.id || null, headerBindValuePath.value)
-    if (picked) showToast(`已为 ${headerBindSlot.value} 绑定凭据`, 'success')
-    else showToast('已解除绑定', 'success')
+    const res = await writeBinding(
+      `header:${headerBindSlot.value}`,
+      picked?.id || null,
+      headerBindValuePath.value,
+    )
+    if (picked) {
+      showToast(`已为 ${headerBindSlot.value} 绑定凭据`, 'success')
+    } else if (Number(res?.data?.data?.removed ?? 1) === 0) {
+      showToast('未找到可解除的绑定，已刷新最新状态', 'warning')
+    } else {
+      showToast('已解除绑定', 'success')
+    }
     headerBindSlot.value = null
     await loadMcpBinding()
   } catch (e: any) {
@@ -1259,6 +1332,15 @@ const removeHeaderPair = (index: number) => {
     pair.changed = true
     pair.editing = false
     return
+  }
+  const removedKey = pair?.key?.trim()
+  if (removedKey && !editingId.value) {
+    const slot = `header:${removedKey}`
+    if (slot in pendingBindings.value) {
+      const next = { ...pendingBindings.value }
+      delete next[slot]
+      pendingBindings.value = next
+    }
   }
   headerPairs.value.splice(index, 1)
   if (headerPairs.value.length === 0) addHeaderPair()
@@ -1508,12 +1590,16 @@ const toggleHeaderMode = () => {
   }
 }
 
+let serversRequestSeq = 0
+
 const fetchServers = async () => {
+  const seq = ++serversRequestSeq
   loading.value = true
   try {
     const res = await axios.get('/api/portal/mcp/servers', {
       params: { scope: props.scope }
     })
+    if (seq !== serversRequestSeq) return
     servers.value = Array.isArray(res.data) ? res.data : []
     reconcileSelectedServer()
     emit('server-count-changed', {
@@ -1521,17 +1607,20 @@ const fetchServers = async () => {
       count: servers.value.length,
     })
     serversLoaded.value = true
-    // 列表刷新后角标是新的，当前服务的工具徽章也要跟着刷新
-    if (selectedServer.value?.id) fetchDefinitionChanges(selectedServer.value.id)
+    // 列表刷新后角标是新的，当前服务的工具徽章也要跟着刷新（只读平台页不发 403 请求）
+    if (canSave.value && canSyncMcp.value && selectedServer.value?.id) {
+      fetchDefinitionChanges(selectedServer.value.id)
+    }
     // 从「收到的分享」点「去我的 MCP 看看」时列表可能刚重建，加载完再落选中
     if (pendingFocusServerId && !tryResolvePendingFocus()) {
       settlePendingFocus(false)
     }
   } catch (e) {
+    if (seq !== serversRequestSeq) return
     settlePendingFocus(false)
     showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
-    loading.value = false
+    if (seq === serversRequestSeq) loading.value = false
   }
 }
 
@@ -1741,7 +1830,10 @@ async function loadBindingsFor(serverId: string) {
     if (paramMarkTarget.value?.tool?.server_id !== serverId) return
     const map: Record<string, HeaderBinding> = {}
     const rules: Record<string, HeaderBinding> = {}
-    for (const row of res.data?.data || []) {
+    const sortedRows = [...(res.data?.data || [])].sort(
+      (a: any, b: any) => (a?.is_global ? 0 : 1) - (b?.is_global ? 0 : 1),
+    )
+    for (const row of sortedRows) {
       // 别人的个人绑定看不见；平台 MCP 还要把全局绑定算进来
       if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
       const entry: HeaderBinding = {
@@ -1756,6 +1848,7 @@ async function loadBindingsFor(serverId: string) {
         // 缺了它，后面 `mcpBindingPicked = { ..., owner_scope: hit.owner_scope }`
         // 和 `openHeaderBind` 拿到的永远是 undefined，「只对你生效」的提示不出现。
         owner_scope: row.owner_scope,
+        is_global: Boolean(row.is_global),
         value_format: row.value_format || 'text',
         value_template: row.value_template || null,
         // 和 loadMcpBinding 那份 entry 必须一个字不差：这两个函数读的是同一个接口，
@@ -1870,6 +1963,7 @@ function openParamBind(tool: any, name: string) {
   const existing = bindingOfSlot(paramSlot(tool, name))
   paramBindSecretId.value = existing?.secret_id || null
   paramBindValuePath.value = existing?.value_path || ''
+  paramBindNeedsField.value = false
   // 形态与作用域一起带上：重开弹窗时徽标要显示、个人凭据要提示「只对你生效」
   paramBindPicked.value = existing
     ? {
@@ -1916,18 +2010,25 @@ async function saveParamBind() {
       })
       showToast(`已为 ${ctx.name} 绑定凭据`, 'success')
     } else {
-      await axios.delete('/api/portal/secrets/bindings', {
+      const existing = bindingOfSlot(slot)
+      const resolvedIsGlobal =
+        typeof existing?.is_global === 'boolean' ? existing.is_global : isGlobalBinding.value
+      const res = await axios.delete('/api/portal/secrets/bindings', {
         data: {
           consumer_type: 'mcp_server',
           consumer_id: serverId,
           slot,
-          is_global: isGlobalBinding.value,
+          is_global: resolvedIsGlobal,
         },
       })
-      // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
-      delete headerBindings.value[slot]
-      delete pendingBindings.value[slot]
-      showToast(`已解除 ${ctx.name} 的绑定`, 'success')
+      if (Number(res?.data?.data?.removed ?? 1) === 0) {
+        showToast('未找到可解除的绑定，已刷新最新状态', 'warning')
+      } else {
+        // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
+        delete headerBindings.value[slot]
+        delete pendingBindings.value[slot]
+        showToast(`已解除 ${ctx.name} 的绑定`, 'success')
+      }
     }
     paramBindCtx.value = null
     // 按工具所属服务重载，不能用 loadMcpBinding（它认 editingId）
@@ -2512,9 +2613,13 @@ const closeWizard = () => {
 
 const openAddModal = (initialTab: 'manual' | 'json' = 'manual') => {
   // 这条路径也被页面级引导入口（市场/JSON 粘贴）调用，不只是按钮点击，
-  // 所以权限在函数里再兜一次：没有 create 码直接提示，不打开向导。
+  // 所以权限在函数里再兜一次：无 create 码或只读平台视图均直接提示，不打开向导。
   if (!canCreateMcp.value) {
     showToast('没有创建 MCP 服务的权限', 'error')
+    return
+  }
+  if (!canSave.value) {
+    showToast('平台 MCP 为只读，无法在此新建服务', 'warning')
     return
   }
   resetWizard()
@@ -2876,14 +2981,17 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
 const addServer = async (options?: { closeAfterSave?: boolean }) => {
   // 按钮已用 savingServer 禁用，这里再兜一层：双击/回车连发不能变成两次 POST/PUT。
   if (savingServer.value) return false
-  // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）。
-  // 按钮隐藏 + openAddModal 守卫已挡一层，这里再兜底，避免任何入口绕到 403。
+  // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）；平台视图需 admin（canSave）。
   if (!isEditing.value && !canCreateMcp.value) {
     showToast('没有创建 MCP 服务的权限', 'error')
     return false
   }
   if (isEditing.value && !canEditMcp.value) {
     showToast('没有编辑 MCP 服务的权限', 'error')
+    return false
+  }
+  if (!canSave.value) {
+    showToast('当前视图为只读，无法保存修改', 'error')
     return false
   }
   const suffixError = serverNameSuffixError.value
@@ -2950,13 +3058,53 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
       return true
     }
 
+    // 发起 POST 前先按当前有效表单状态快照一份待写入凭据，避免保存过程中残留失效槽位或被关闭重置清空
+    const activeHeaderSlots = new Set(
+      headerPairs.value
+        .filter((pair) => !pair.removed && pair.key.trim())
+        .map((pair) => `header:${pair.key.trim()}`),
+    )
+    const pendingSnapshot: Record<string, HeaderBinding> = {}
+    for (const [slot, binding] of Object.entries(pendingBindings.value)) {
+      if (!binding?.secret_id) continue
+      // Authorization 有两条绑定入口：凭据中心单槽位，以及「自定义 Header」里手写
+      // 一行名为 Authorization 的 Header（saveHeaderBind 也写 pendingBindings）。
+      // 只认前一种会把后一种在保存时静默丢掉，所以两个条件取「或」。
+      const authorizationSlotActive =
+        (authorizationEnabled.value && authSource.value === 'credential')
+        || activeHeaderSlots.has(slot)
+      if (slot === 'header:Authorization') {
+        if (authorizationSlotActive) pendingSnapshot[slot] = binding
+      } else if (activeHeaderSlots.has(slot)) {
+        pendingSnapshot[slot] = binding
+      }
+    }
+
     const res = await axios.post('/api/portal/mcp/servers', payload)
     savedUserAssertionEnabled.value = Boolean(payload.user_assertion_enabled)
+    const newId = res.data?.id ? String(res.data.id) : ''
+    let boundCount = 0
+    if (newId) {
+      boundCount = await flushPendingBindings(newId, pendingSnapshot)
+      // 后端 POST /servers 内部首次同步早于凭据绑定落库；使用凭据中心鉴权新建时，
+      // 绑定完成后补一次同步，确保第 3 步工具列表与「一键全部发布」立即有数据。
+      if (boundCount > 0 && payload.enabled_status !== 0) {
+        try {
+          await axios.post(`/api/portal/mcp/servers/${newId}/sync`)
+        } catch (syncErr: any) {
+          // 不能只 console.warn：没有 sync 权限（403）或远端临时不通时，
+          // 用户看到的是一个「建好了但 0 个工具」的服务，必须说清原因和下一步。
+          const status = syncErr?.response?.status
+          showToast(
+            status === 403
+              ? '凭据已保存，但当前账号没有同步工具的权限，工具列表仍为空：请让管理员同步，或授予 element:mcp_management:sync'
+              : '凭据已保存，但首次同步工具失败，请在服务卡片上点「同步」重试',
+            status === 403 ? 'warning' : 'error',
+          )
+        }
+      }
+    }
     if (options?.closeAfterSave) {
-      // 补写必须在 closeWizard() 之前：它 → resetWizard() → 清空 pendingBindings，
-      // 先关就再也找不到「用户在这个向导里选过哪几条凭据」了。
-      const earlyId = res.data?.id
-      if (earlyId) await flushPendingBindings(String(earlyId))
       showToast(
         payload.user_assertion_enabled
           ? '已保存：用户身份传递已开启，签名密钥已生成；可在列表中编辑该服务测试连接'
@@ -2967,8 +3115,6 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
       fetchServers()
       return true
     }
-    const newId = res.data?.id
-    if (newId) await flushPendingBindings(newId)
     showToast('添加成功', 'success')
     createdServer.value = res.data
     await fetchServers()
@@ -2984,12 +3130,17 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
   }
 }
 
-/** 保存成功后，把新建态选的凭据真正绑上。 */
-async function flushPendingBindings(serverId: string) {
-  const entries = Object.entries(pendingBindings.value)
-  if (!entries.length) return
+/** 保存成功后，把新建态选的凭据真正绑上，返回成功写入的条数。 */
+async function flushPendingBindings(
+  serverId: string,
+  snapshot?: Record<string, HeaderBinding>,
+): Promise<number> {
+  const source = snapshot ?? pendingBindings.value
+  const entries = Object.entries(source)
+  if (!entries.length) return 0
   const failed: string[] = []
   const keep: Record<string, HeaderBinding> = {}
+  let succeeded = 0
   for (const [slot, binding] of entries) {
     try {
       await axios.post('/api/portal/secrets/bindings', {
@@ -3002,11 +3153,13 @@ async function flushPendingBindings(serverId: string) {
         value_path: binding.value_path || '',
         is_global: isGlobalBinding.value,
       })
+      succeeded += 1
     } catch {
       // 服务已经建好了，绑定失败不该让它回滚——但要让人知道，否则界面显示
       // 「已绑定」，实际调用却拿不到值。
       failed.push(slot.replace(/^header:/, ''))
-      // 失败的留在暂存里：清掉的话「哪些没绑上」既查不到也重试不了
+      // 失败的留在暂存里：目前向导里没有「重试」入口（关窗会走 resetWizard 清空），
+      // 留着是为了别在同一个会话里丢掉用户选过的凭据，真要重绑还是走编辑态。
       keep[slot] = binding
     }
   }
@@ -3016,6 +3169,7 @@ async function flushPendingBindings(serverId: string) {
   } else {
     showToast(`已绑定 ${entries.length} 条凭据`, 'success')
   }
+  return succeeded
 }
 
 /**
@@ -3282,6 +3436,7 @@ const clearSelectedServer = () => {
 
 const togglePublish = async (tool: any) => {
   if (!canManageTool(tool)) return
+  const targetServerId = selectedServer.value?.id
   try {
     const newStatus = !tool.is_published
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
@@ -3289,9 +3444,9 @@ const togglePublish = async (tool: any) => {
     showToast(newStatus ? '工具已发布' : '工具已下线', 'success')
     // 列表卡片上的“N 已发布”来自 server 记录；只改 tool 会留下旧计数。
     fetchServers()
-    if (selectedServer.value) {
-      fetchServerUsage(selectedServer.value.id).then((usage) => {
-        if (selectedServer.value) selectedServerUsage.value = usage
+    if (targetServerId) {
+      fetchServerUsage(targetServerId).then((usage) => {
+        if (selectedServer.value?.id === targetServerId) selectedServerUsage.value = usage
       })
     }
   } catch (e) {
@@ -3367,7 +3522,7 @@ onMounted(fetchServers)
             <input
               v-model="searchQuery"
               type="search"
-              placeholder="搜索服务或工具..."
+              placeholder="搜索服务名、备注、地址或创建人..."
               class="h-8 w-full rounded-md border border-gray-200 bg-white pl-8 pr-7 text-xs leading-none text-gray-700 shadow-sm transition-all placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
             />
             <button
@@ -3652,11 +3807,11 @@ onMounted(fetchServers)
         </div>
         <div v-else-if="filteredServers.length === 0" class="p-8 text-center">
           <p class="text-xs text-gray-400">
-            {{ searchQuery ? '未找到匹配的 MCP 服务' : '没有运行中的 MCP 服务' }}
+            当前筛选条件下没有匹配的 MCP 服务
           </p>
           <button
             type="button"
-            @click="searchQuery = ''; onlyRunning = false"
+            @click="searchQuery = ''; onlyRunning = false; todoFilter = ''; mcpGroupFilter = ALL_GROUP_KEY"
             class="mt-2 text-[11px] font-medium text-primary hover:underline"
           >
             清空搜索与筛选
@@ -4046,7 +4201,7 @@ onMounted(fetchServers)
             <button
               type="button"
               @click="batchUpdateStatus(true)"
-              :disabled="!canManageSelectedTools"
+              :disabled="!canManageSelectedTools || batchUpdating"
               class="inline-flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-green-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4058,7 +4213,7 @@ onMounted(fetchServers)
             <button
               type="button"
               @click="batchUpdateStatus(false)"
-              :disabled="!canManageSelectedTools"
+              :disabled="!canManageSelectedTools || batchUpdating"
               class="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4526,28 +4681,28 @@ onMounted(fetchServers)
                   <div class="flex items-center gap-2">
                     <span class="shrink-0 rounded border border-primary/10 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
                     <input
-                      :value="authorizationEditing ? authorizationToken : '********'"
+                      :value="(authorizationEditing || !hasSavedAuthorizationToken) ? authorizationToken : '********'"
                       type="password"
-                      :readonly="isEditing && !authorizationEditing"
+                      :readonly="isEditing && hasSavedAuthorizationToken && !authorizationEditing"
                       placeholder="请输入 Token"
                       aria-label="Authorization Token"
                       class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100"
                       @input="handleAuthorizationInput"
                     />
                     <button
-                      v-if="isEditing && !authorizationEditing"
+                      v-if="isEditing && hasSavedAuthorizationToken && !authorizationEditing"
                       type="button"
                       class="shrink-0 rounded border border-primary/20 bg-white px-2.5 py-2 text-[10px] font-semibold text-primary-dark hover:bg-primary/5"
                       @click="startAuthorizationEdit"
                     >编辑</button>
                     <button
-                      v-else-if="isEditing && authorizationEditing"
+                      v-else-if="isEditing && hasSavedAuthorizationToken && authorizationEditing"
                       type="button"
                       class="shrink-0 rounded border border-gray-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-gray-600 hover:bg-gray-50"
                       @click="cancelAuthorizationEdit"
                     >取消</button>
                   </div>
-                  <p v-if="isEditing" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
+                  <p v-if="isEditing && hasSavedAuthorizationToken" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
                   <p v-if="verifyReusesSavedAuth && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">“连接并发现工具”与保存都会沿用已保存的 Token。</p>
                   <p v-if="verifyAddressChanged && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址已变更，测试与保存会继续沿用已保存的 Token；如需更换请点击“编辑”。</p>
                   <!-- 二选一必须诚实：还有绑定在，实际走的就不是这个 Token -->
@@ -4605,13 +4760,18 @@ onMounted(fetchServers)
                     绑定后只对你自己生效。需要先到「个人中心 → 我的凭据」建一条允许 MCP 场景的凭据。
                   </p>
 
-                  <!-- 平台服务：这条绑定只属于你自己，别说成「给全平台配好了」 -->
-                  <div v-if="scope === 'global'" class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-800">
-                    <b>这是平台服务。</b>你绑的凭据只对<strong>你自己</strong>的调用生效，不会分发给其他人；
-                    他们仍会用上面的固定 Token，或者各自去「个人中心 → 我的 MCP → 平台服务」绑自己的。
-                    <template v-if="!authorizationToken && isEditing">
-                      如果你想让<strong>所有人</strong>共用一个 Token，请改用「固定 Token」。
-                    </template>
+                  <!-- 平台服务：按所选凭据作用域动态说明（系统共享凭据全平台生效；个人凭据仅本人可用） -->
+                  <div
+                    v-if="scope === 'global' && mcpBindingPicked?.owner_scope === 'system'"
+                    class="mt-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] leading-relaxed text-emerald-800"
+                  >
+                    <b>系统级全局绑定：</b>所选为系统共享凭据，保存后将作为全平台默认凭据对所有已授权用户的调用生效；个人用户仍可在「个人中心 → 我的 MCP → 平台服务」绑定自己的凭据覆盖。
+                  </div>
+                  <div
+                    v-else-if="scope === 'global' && !mcpPersonalScopeNotice"
+                    class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-800"
+                  >
+                    <b>这是平台服务。</b>选择<strong>系统共享凭据</strong>将作为全局绑定对全平台生效；若选择你自己的<strong>个人凭据</strong>，则仅对你自己的调用生效（别人拿不到值）。
                   </div>
                 </div>
               </template>
@@ -4859,10 +5019,12 @@ onMounted(fetchServers)
 
         <!-- Wizard Footer -->
         <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-          <button 
+          <button
             v-if="wizardStep !== 3"
-            @click="closeWizard" 
-            class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+            type="button"
+            :disabled="savingServer"
+            @click="closeWizard"
+            class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             取消
           </button>

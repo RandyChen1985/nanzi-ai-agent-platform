@@ -33,6 +33,7 @@ const keyword = ref('')
 const results = ref<ShareTarget[]>([])
 const selected = ref<ShareTarget[]>([])
 const searching = ref(false)
+const hasSearched = ref(false)
 const searchError = ref('')
 const message = ref('')
 const includeCredentials = ref(true)
@@ -52,22 +53,29 @@ const remaining = computed(() => MAX_MESSAGE - message.value.length)
 const urlEmbedsCredential = computed(() => {
   const url = String(props.server?.sse_url || '')
   if (!url) return false
-  const withoutOrigin = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
+  const withoutFragment = url.split('#')[0] || ''
+  const withoutOrigin = withoutFragment.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
   const [pathPart, queryPart = ''] = withoutOrigin.split('?')
   const looksSecret = (segment: string) =>
     /^[0-9a-f]{12,}$/i.test(segment) || /^[A-Za-z0-9_-]{24,}$/.test(segment)
   if ((pathPart ?? '').split('/').filter(Boolean).some(looksSecret)) return true
+  const secretQueryKeys = new Set([
+    'token', 'access_token', 'accesstoken', 'key', 'apikey', 'api_key', 'sig', 'signature',
+  ])
   const params = new URLSearchParams(queryPart)
-  for (const key of ['token', 'access_token', 'key', 'apikey', 'api_key', 'sig', 'signature']) {
-    if (params.get(key)) return true
+  for (const [k, v] of params.entries()) {
+    if (v && secretQueryKeys.has(k.toLowerCase())) return true
   }
   return false
 })
 
 function reset() {
+  searchSeq += 1
   keyword.value = ''
   results.value = []
   selected.value = []
+  searching.value = false
+  hasSearched.value = false
   searchError.value = ''
   message.value = ''
   includeCredentials.value = true
@@ -87,15 +95,24 @@ watch(() => props.visible, (visible) => {
     reset()
     window.addEventListener('keydown', handleKeydown)
   } else {
+    searchSeq += 1
+    searching.value = false
     window.removeEventListener('keydown', handleKeydown)
   }
 })
 
 watch(keyword, (value) => {
-  if (timer) clearTimeout(timer)
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
   const text = value.trim()
   if (!text) {
+    searchSeq += 1
     results.value = []
+    searching.value = false
+    hasSearched.value = false
+    searchError.value = ''
     return
   }
   timer = setTimeout(() => void runSearch(text), 300)
@@ -119,6 +136,7 @@ async function runSearch(text: string) {
     results.value = items.filter(
       (user) => !selected.value.some((item) => item.user_id === user.user_id),
     )
+    hasSearched.value = true
   } catch (error: any) {
     if (seq !== searchSeq) return
     searchError.value = error.response?.data?.detail || '搜索用户失败'
@@ -234,12 +252,12 @@ async function submit() {
             </div>
 
             <div
-              v-if="searching || results.length || searchError"
+              v-if="searching || results.length || searchError || (hasSearched && keyword.trim())"
               class="mt-2 max-h-44 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700"
             >
               <p v-if="searching" class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">搜索中…</p>
               <p v-else-if="searchError" class="px-3 py-2 text-xs text-red-600 dark:text-red-400">{{ searchError }}</p>
-              <p v-else-if="!results.length" class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">没有匹配的同事</p>
+              <p v-else-if="!results.length" class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">{{ selected.length ? '匹配的同事都已选中' : '没有匹配的同事' }}</p>
               <button
                 v-for="user in results"
                 :key="user.user_id"

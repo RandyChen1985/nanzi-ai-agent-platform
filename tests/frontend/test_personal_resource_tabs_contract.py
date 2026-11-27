@@ -6,10 +6,10 @@
 - 技能页：一级 Tab 行按 `!personalOnly` 渲染；「平台技能」对所有人可见，
   「待审核」「已发布」仍然只给 `element:skills:admin`；
 - MCP 页：一级 Tab 行按 `!personalOnly` 渲染；普通用户的二级视图（我的 MCP /
-  收到的分享 / 我的分享）继续用 `variant="tabs"` 顶部 tab，左侧栏与内容区胶囊
-  只在管理员出现；
-- 个人中心 / 嵌入式个人资源面板（`personalOnly`）下不出现一级 Tab 行，二级菜单
-  行为与改动前一致。
+  收到的分享 / 我的分享 / 平台服务）在控制台与个人中心（`personalOnly`）下统一用
+  `variant="tabs"` 顶部 tab，避免在个人中心被深链困在「收到的分享」；左侧栏与内容区
+  胶囊只在管理员出现；
+- 个人中心 / 嵌入式个人资源面板（`personalOnly`）下不出现一级 Tab 行。
 """
 
 from __future__ import annotations
@@ -69,8 +69,8 @@ def test_mcp_page_keeps_tab_bar_for_every_logged_in_user() -> None:
         'v-if="!personalOnly"\n      class="flex flex-shrink-0 items-center overflow-x-auto'
         in view
     )
-    # 普通用户在「我的 MCP」下用顶部 tabs 切二级视图
-    assert 'v-if="!personalOnly && !isAdmin && activeScope === \'personal\'"' in view
+    # 普通用户在「我的 MCP」（含 personalOnly 个人中心 / 嵌入弹窗）下用顶部 tabs 切二级视图
+    assert 'v-if="!isAdmin && activeScope === \'personal\'"' in view
     assert 'variant="tabs"' in view
     # 左侧栏与内容区胶囊都只在管理员出现，避免与顶部 tabs 重复
     assert view.count('v-if="isAdmin"') >= 2

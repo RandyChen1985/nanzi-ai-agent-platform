@@ -21,7 +21,7 @@ def test_list_header_drops_useless_title():
 
 def test_search_box_comes_before_other_controls():
     source = _source()
-    search_index = source.index('placeholder="搜索服务或工具..."')
+    search_index = source.index('placeholder="搜索服务名、备注、地址或创建人..."')
     # 用 title 定位，而不是「仅运行中」四个字：那个词在筛选链的注释里也会出现
     toggle_index = source.index('title="只显示已启用的 MCP 服务"')
     assert search_index < toggle_index, "搜索框应排在「仅运行中」左边"
@@ -47,6 +47,6 @@ def test_only_running_toggle_filters_disabled_servers():
 
 def test_empty_state_clears_both_filters():
     source = _source()
-    assert 'searchQuery ? \'未找到匹配的 MCP 服务\' : \'没有运行中的 MCP 服务\'' in source.replace('"', "'")
-    assert "searchQuery = ''; onlyRunning = false" in source
+    assert "当前筛选条件下没有匹配的 MCP 服务" in source
+    assert "searchQuery = ''; onlyRunning = false; todoFilter = ''; mcpGroupFilter = ALL_GROUP_KEY" in source
     assert "清空搜索与筛选" in source

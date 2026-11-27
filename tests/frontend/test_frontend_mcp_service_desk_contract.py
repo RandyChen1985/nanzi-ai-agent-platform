@@ -823,7 +823,8 @@ def test_mcp_server_registry_status_toggle_payload_contract():
     # 2. 验证已连接服务搜索框与清除按钮
     assert "searchQuery" in content
     assert "filteredServers" in content
-    assert "placeholder=\"搜索服务或工具...\"" in content
+    # 搜索框现在按服务名/备注/地址/创建人检索（工具名检索已随死代码一起移除）
+    assert "placeholder=\"搜索服务名" in content
 
     # 3. 列表头部不再有「已连接服务」小标题（2026-10-21 用户要求删除：
     #    列表就在正下方，标题不携带信息还占宽度），改为搜索前置 + 「仅运行中」筛选

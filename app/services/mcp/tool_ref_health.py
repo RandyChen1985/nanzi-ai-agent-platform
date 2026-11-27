@@ -190,21 +190,36 @@ async def _active_script_tool_names(db: AsyncSession, names: Set[str]) -> Set[st
     resolved = {
         name for name in names if any(item.name == name for item in BUILTIN_SCRIPT_TOOLS)
     }
+    begin_nested = getattr(db, "begin_nested", None)
     try:
-        rows = (
-            await db.execute(
-                select(SysScriptTool.name, SysScriptTool.is_active).where(
-                    SysScriptTool.name.in_(names)
+        # 真实 AsyncSession 使用 SAVEPOINT 隔离查询：PostgreSQL 下表未迁移导致查询报错时
+        # 只回滚该子事务，绝不回滚调用方外层事务里已挂起的业务写入；
+        # 轻量单测假对象无 begin_nested 时则退回直接执行并在异常时按需 rollback。
+        if callable(begin_nested):
+            async with begin_nested():
+                rows = (
+                    await db.execute(
+                        select(SysScriptTool.name, SysScriptTool.is_active).where(
+                            SysScriptTool.name.in_(names)
+                        )
+                    )
+                ).all()
+        else:
+            rows = (
+                await db.execute(
+                    select(SysScriptTool.name, SysScriptTool.is_active).where(
+                        SysScriptTool.name.in_(names)
+                    )
                 )
-            )
-        ).all()
+            ).all()
     except Exception:  # noqa: BLE001 - 表不存在（迁移未执行）时只保留内置兜底
-        # PostgreSQL 下查询失败会让事务进入 aborted 状态，不回滚的话同一请求里
-        # 后续的 attach_system_status 等查询会全部报 InFailedSqlTransaction。
-        try:
-            await db.rollback()
-        except Exception:  # noqa: BLE001 - 回滚本身失败时保持原有兜底，不掩盖主异常
-            pass
+        if not callable(begin_nested):
+            rollback = getattr(db, "rollback", None)
+            if callable(rollback):
+                try:
+                    await rollback()
+                except Exception:  # noqa: BLE001
+                    pass
         return resolved
 
     for name, is_active in rows:
