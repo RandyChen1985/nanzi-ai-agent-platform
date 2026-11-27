@@ -168,6 +168,8 @@ async def test_resolve_document_input_rejects_logical_workspace_escape(tmp_path,
         return str(workspace_root)
 
     monkeypatch.setattr(document_paths, "resolve_workspace_root", resolve_workspace_root)
+    # 越界判定要求「当前用户工作区」真实存在，否则会先命中「缺少工作目录」分支
+    (workspace_root / "ddd__15").mkdir(parents=True, exist_ok=True)
     other = workspace_root / "other__2" / "uploads" / "secret.docx"
     other.parent.mkdir(parents=True)
     other.write_bytes(b"secret")

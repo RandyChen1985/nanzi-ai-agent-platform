@@ -654,7 +654,11 @@ def test_dynamic_builder_uses_the_canonical_core_prompt_once():
         agent_config=SimpleNamespace(tools=[]),
     )
 
-    assert prompt.count("[NanZi智能体平台 · 全局守则]") == 1
+    # 品牌名可由品牌个性化配置覆盖，按实际生效值断言
+    from app.services.branding_settings_service import BrandingSettingsService
+
+    brand = BrandingSettingsService.get_prompt_brand_name()
+    assert prompt.count(f"[{brand} · 全局守则]") == 1
     assert prompt.count("## 权威与冲突") == 1
     assert prompt.endswith("Agent prompt")
 

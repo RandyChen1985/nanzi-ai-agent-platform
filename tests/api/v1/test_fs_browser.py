@@ -499,10 +499,16 @@ async def test_search_glob_pattern(db_session, valid_api_key):
 
 @pytest.mark.no_infrastructure
 def test_sanitize_workspace_recent_files_filters_invalid_paths():
+    """保留项要求文件仍存在（本批新增的过滤），所以真实造一个文件再校验。"""
     base = get_data_base_dir()
     user_info = {"user_id": 42, "username": "alice", "is_admin": False}
     workspace = get_user_private_workspace_root(user_info)
     allowed_file = os.path.join(workspace, "notes.md")
+    os.makedirs(workspace, exist_ok=True)
+    created = not os.path.exists(allowed_file)
+    if created:
+        with open(allowed_file, "wb") as fh:
+            fh.write(b"note")
     other_file = os.path.join(base, "agent_workspaces", "bob__99", "secret.txt")
     trash_file = os.path.join(workspace, ".trash", "old.md")
 
@@ -512,7 +518,11 @@ def test_sanitize_workspace_recent_files_filters_invalid_paths():
         WorkspaceRecentFileItem(path=trash_file, name="old.md", mtime=300),
         WorkspaceRecentFileItem(path=allowed_file, name="notes.md", mtime=400),
     ]
-    cleaned = _sanitize_workspace_recent_files(items, user_info)
+    try:
+        cleaned = _sanitize_workspace_recent_files(items, user_info)
+    finally:
+        if created:
+            os.remove(allowed_file)
     assert len(cleaned) == 1
     assert cleaned[0].path == os.path.normpath(allowed_file)
     assert cleaned[0].mtime == 100

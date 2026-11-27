@@ -7970,12 +7970,18 @@ async def normalize_runtime_messages_workspace_paths_for_sandbox(
         root = await resolve_workspace_root()
     except Exception:  # noqa: BLE001
         root = default_workspace_root()
-    host_root = resolve_user_workspace_root(
-        root=root,
-        user_id=user_id,
-        user_name=user_name,
-        user_info=user_info,
-    )
+    try:
+        host_root = resolve_user_workspace_root(
+            root=root,
+            user_id=user_id,
+            user_name=user_name,
+            user_info=user_info,
+        )
+    except Exception:  # noqa: BLE001
+        # 身份缺失时 require_user_id 会 fail-closed 抛 MissingUserIdentityError。
+        # 这里只做「提示词里的附件路径改写」，没有任何权限收益，不该把整条执行链
+        # 打死（ChatBI/委派等内部路径本就可能没有 user_info）；无身份就不改写。
+        return list(messages)
     if not host_root:
         return list(messages)
 

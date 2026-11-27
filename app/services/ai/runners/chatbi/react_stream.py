@@ -10,6 +10,10 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict
 
 from app.schemas.agent import AgentExecutionStep
+from app.services.ai.model_override import (
+    resolve_effective_model_name,
+    session_model_override,
+)
 from app.services.ai.temperature import resolve_config_temperature
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.executors.prompts import DataQueryPrompts
@@ -63,7 +67,12 @@ def append_native_synthesis_trace(
             step_number=runner.step_counter,
             event_type="synthesis",
             agent_name=runner.config.agent_name,
-            model=model_name or runner.config.model_name,
+            # 轨迹模型名走统一口径：裸读版本配置会让审计轨迹记成另一个模型
+            model=resolve_effective_model_name(
+                recorded_model=model_name,
+                session_model=session_model_override(),
+                config_model=runner.config.model_name,
+            ),
             temperature=resolve_config_temperature(runner.config),
             tool_output={"content": state.full_content},
             raw_log=state.full_content,
