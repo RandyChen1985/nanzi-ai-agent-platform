@@ -269,7 +269,7 @@ async def test_extract_route_returns_result_and_maps_archive_errors(tmp_path, mo
     out.mkdir()
 
     monkeypatch.setattr(fs, "assert_path_allowed", lambda path, user: str(archive))
-    monkeypatch.setattr(fs, "_resolve_writable_entry_path", lambda path, user: str(out))
+    monkeypatch.setattr(fs, "_resolve_writable_dir_path", lambda path, user: str(out))
     monkeypatch.setattr(fs, "is_fs_admin", lambda user: True)
     monkeypatch.setattr(
         "app.services.workspace_archive.extract_limits_from_settings",
@@ -308,7 +308,7 @@ async def test_extract_route_propagates_writable_target_denial(tmp_path, monkeyp
     def _deny(path, user):
         raise HTTPException(status_code=403, detail="仅允许写入本人 AI 工作目录内的文件。")
 
-    monkeypatch.setattr(fs, "_resolve_writable_entry_path", _deny)
+    monkeypatch.setattr(fs, "_resolve_writable_dir_path", _deny)
 
     with pytest.raises(HTTPException) as exc:
         await fs.extract_fs_archive(
@@ -379,7 +379,7 @@ def test_extract_endpoint_over_http_keeps_request_contract(tmp_path, monkeypatch
     app.dependency_overrides[fs._prime_forbidden_skill_cache] = lambda: None
 
     monkeypatch.setattr(fs, "assert_path_allowed", lambda path, user: str(archive))
-    monkeypatch.setattr(fs, "_resolve_writable_entry_path", lambda path, user: str(out))
+    monkeypatch.setattr(fs, "_resolve_writable_dir_path", lambda path, user: str(out))
     monkeypatch.setattr(fs, "is_fs_admin", lambda user: True)
     monkeypatch.setattr(
         "app.services.workspace_archive.extract_limits_from_settings",

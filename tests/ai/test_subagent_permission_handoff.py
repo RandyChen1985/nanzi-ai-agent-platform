@@ -412,6 +412,7 @@ async def test_once_grant_belongs_to_the_agent_that_was_granted():
 def _subagent_pending(
     *,
     command: str = "python export.py",
+    tool_name: str = "Bash",
     conversation_id: str = "child_session_z",
     parent: str = "conv_handoff",
 ):
@@ -429,8 +430,12 @@ def _subagent_pending(
         agent_name="资产导出",
         tool_call={
             "id": "call_h",
-            "name": "Bash",
-            "input": json.dumps({"command": command}, ensure_ascii=False),
+            "name": tool_name,
+            # shell 类工具才有 command；非 shell 工具给一份普通参数，验证会话授权口径
+            "input": json.dumps(
+                {"command": command} if tool_name == "Bash" else {"path": "docs/a.md"},
+                ensure_ascii=False,
+            ),
         },
         agent_state={},
         stream_state={},
@@ -444,7 +449,7 @@ def _subagent_pending(
     )
     return SimpleNamespace(
         snapshot=snapshot,
-        tool_call=SimpleNamespace(id="call_h", name="Bash"),
+        tool_call=SimpleNamespace(id="call_h", name=tool_name),
         trace_id="sub_trace",
     )
 
@@ -551,7 +556,8 @@ async def test_handoff_session_scope_grants_only_that_subagent():
         session_permission_grants,
     )
 
-    pending = _subagent_pending()
+    # 用非 shell 工具验证会话授权：shell 类工具被刻意限制成只给一次性令牌（见下）
+    pending = _subagent_pending(tool_name="Read")
     with patch(
         "app.services.ai.runtime.agentscope.confirmations.pending_agentscope_confirmations.pop_async",
         new=AsyncMock(return_value=None),
@@ -567,9 +573,20 @@ async def test_handoff_session_scope_grants_only_that_subagent():
 
     own_scope = delegation_grant_scope("conv_handoff", "资产导出")
     other_scope = delegation_grant_scope("conv_handoff", "知识库助手")
-    assert await session_permission_grants.is_granted(9, own_scope, "Bash") is True
-    assert await session_permission_grants.is_granted(9, other_scope, "Bash") is False
-    assert await session_permission_grants.is_granted(9, "conv_handoff", "Bash") is False
+    assert await session_permission_grants.is_granted(9, own_scope, "Read") is True
+    assert await session_permission_grants.is_granted(9, other_scope, "Read") is False
+    assert await session_permission_grants.is_granted(9, "conv_handoff", "Read") is False
+
+    # 口径锁定：shell 类工具即便客户端伪造 scope=session，也只落一次性令牌
+    with patch(
+        "app.services.ai.runtime.agentscope.confirmations.pending_agentscope_confirmations.pop_async",
+        new=AsyncMock(return_value=None),
+    ):
+        shell_chunks = await _collect_handoff(
+            _subagent_pending(), confirmed=True, grant_scope="session"
+        )
+    shell_handoff = next(c for c in shell_chunks if c["type"] == "subagent_permission_handoff")
+    assert shell_handoff["grant"]["scope"] == "once"
 
 
 @pytest.mark.asyncio

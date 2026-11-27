@@ -454,7 +454,17 @@ class TestAdminSurface:
 
 
 class TestPolicyAndPrefs:
-    async def test_policy_is_readable_by_user(self, client, clean_secrets, valid_api_key):
+    async def test_policy_is_readable_by_user(
+        self, client, clean_secrets, valid_api_key, monkeypatch
+    ):
+        # 策略值存在共享配置表里，本地/CI 可能被改成「允许脚本注入」；
+        # 这条用例验证的是默认口径与只读标记，因此固定成空配置。
+        from app.services.config_service import ConfigService
+
+        async def _empty_configs():
+            return {}
+
+        monkeypatch.setattr(ConfigService, "get_all_from_db", staticmethod(_empty_configs))
         resp = await client.get(f"{PREFIX}/policy", headers=_user_headers(valid_api_key))
 
         assert resp.status_code == 200

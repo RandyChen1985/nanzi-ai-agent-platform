@@ -309,6 +309,9 @@ async def test_upsert_task_paused_removes_main_and_retry_jobs(monkeypatch):
         SimpleNamespace(id="task_6"),
     ]
     monkeypatch.setattr(sched_mod.TaskSchedulerService, "_scheduler", fake_scheduler)
+    # 本类是单例：别处调用 stop() 会在实例上留下 `_scheduler = None` 的实例属性，
+    # 它会遮蔽上面的类级替换（单跑绿、全量红就是被这条污染的）。
+    monkeypatch.delattr(service, "_scheduler", raising=False)
 
     paused_task = SimpleNamespace(id=5, status=0, cron_expr="0 8 * * *")
     await service.upsert_task(paused_task)
