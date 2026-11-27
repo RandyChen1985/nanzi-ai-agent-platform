@@ -325,7 +325,9 @@ def _browser_user_info(context: Any) -> dict[str, Any]:
 def _safe_browser_file_path(context: Any, file_path: str) -> Path:
     from app.services.ai.tools.generated_file_service import generated_files_root
     from app.utils.fs_access import get_user_private_workspace_root
-    from app.utils.fs_paths import normalize_fs_path
+    # normalize_fs_path 定义在 fs_access，曾经误从 fs_paths 导入：
+    # 那里没有这个函数，ImportError 会让 browser_upload / browser_download 一调用就炸。
+    from app.utils.fs_access import normalize_fs_path
 
     raw = str(file_path or "").strip()
     user_root = get_user_private_workspace_root(_browser_user_info(context))

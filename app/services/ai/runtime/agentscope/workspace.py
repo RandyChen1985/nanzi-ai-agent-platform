@@ -7983,6 +7983,11 @@ async def normalize_runtime_messages_workspace_paths_for_sandbox(
     normalized_list: list[Any] = []
     for msg in messages:
         msg_type = str(getattr(msg, "type", "") or "").lower()
+        if not msg_type:
+            # 平台自带的兼容消息类（app.services.ai.runtime.agentscope.compat）只有 content，
+            # 没有 langchain 的 `type` 属性；只按 type 判断会让这段改写对真实运行时的消息
+            # 完全空转（测试也只有在用 langchain 类时才会「通过」）。
+            msg_type = type(msg).__name__.lower().removesuffix("message")
         if msg_type != "human":
             normalized_list.append(msg)
             continue

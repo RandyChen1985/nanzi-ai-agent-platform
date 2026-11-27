@@ -11,7 +11,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+# 必须用平台自带的兼容消息类：langchain_core 已随 AgentScope 迁移移除
+# （见 app/services/ai/browser/captcha_solver.py），按 requirements.txt 安装的环境里没有它，
+# 直接 import langchain_core 会让 `pytest tests/` 在 collection 阶段整批中断。
+from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -199,9 +202,16 @@ def test_workspace_prompt_sandbox_includes_uploads_and_unified_path_rule():
 
 
 @pytest.mark.asyncio
-async def test_normalize_runtime_messages_rewrites_human_attachment_in_docker(monkeypatch):
+async def test_normalize_runtime_messages_rewrites_human_attachment_in_docker(tmp_path, monkeypatch):
+    """``resolve_user_workspace_root`` 要求用户工作区真实存在，不能写死 /app/data。"""
     from app.services.ai.runtime.agentscope import workspace as ws_mod
     from app.services.config_service import ConfigService
+
+    ws_root = tmp_path / "agent_workspaces"
+    user_dir = ws_root / "ddd__15"
+    (user_dir / "uploads").mkdir(parents=True)
+    attachment_host = user_dir / "uploads" / "这个是一片测试文档_d1d4.docx"
+    attachment_host.write_bytes(b"docx")
 
     async def _get_docker(key, default=None):
         if key == "sandbox_policy":
@@ -209,7 +219,7 @@ async def test_normalize_runtime_messages_rewrites_human_attachment_in_docker(mo
         return default
 
     async def _ws_root():
-        return "/app/data/agent_workspaces"
+        return str(ws_root)
 
     monkeypatch.setattr(ConfigService, "get", _get_docker)
     monkeypatch.setattr(ws_mod, "resolve_workspace_root", _ws_root)
@@ -218,10 +228,10 @@ async def test_normalize_runtime_messages_rewrites_human_attachment_in_docker(mo
         content=(
             "请润色\n\n---\n\n"
             "用户本轮已上传文件附件：这个是一片测试文档.docx，"
-            "其安全托管后的服务器绝对路径是：/app/data/agent_workspaces/ddd__15/uploads/这个是一片测试文档_d1d4.docx。"
+            f"其安全托管后的服务器绝对路径是：{attachment_host}。"
         )
     )
-    ai = AIMessage(content="好的，原文路径 /app/data/agent_workspaces/ddd__15/uploads/x.docx 不改动")
+    ai = AIMessage(content=f"好的，原文路径 {user_dir}/uploads/x.docx 不改动")
 
     result = await ws_mod.normalize_runtime_messages_workspace_paths_for_sandbox(
         [human, ai],
@@ -230,7 +240,7 @@ async def test_normalize_runtime_messages_rewrites_human_attachment_in_docker(mo
     )
     assert "/workspace/uploads/这个是一片测试文档_d1d4.docx" in result[0].content
     assert "工作区统一路径是（Bash 与文件/文档工具通用）" in result[0].content
-    assert "/app/data/agent_workspaces/ddd__15" not in result[0].content
+    assert str(user_dir) not in result[0].content
     # AI 消息原样透传
     assert result[1].content == ai.content
 
@@ -395,6 +405,9 @@ def test_directory_tree_navigator_supports_logical_workspace_path(tmp_path, monk
         "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
         lambda: str(ws_root),
     )
+    # 归属判定的 normalize_fs_path 会把 `.../agent_workspaces/...` 重映射到 data 根，
+    # tmp 目录不跟着走就会被误判成「别人的工作区」；data 根一并指到 tmp。
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(tmp_path))
     monkeypatch.setattr(
         "app.utils.fs_access.get_user_private_workspace_root",
         lambda _: str(user_ws),
