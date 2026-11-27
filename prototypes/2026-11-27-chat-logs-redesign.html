@@ -1,0 +1,3287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="prototype-kind" content="方案对比" />
+<title>聊天日志 · UI/UX 布局重构与审阅体验优化原型</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+
+  :root {
+    --bg-canvas: #f4f6f9;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f8fafc;
+    --bg-muted: #f1f5f9;
+    --bg-hover: #f8fafc;
+    --border: #e6eaf0;
+    --border-soft: #eef1f6;
+    --border-strong: #d3dbe6;
+
+    --ink-1: #0f172a;
+    --ink-2: #334155;
+    --ink-3: #64748b;
+    --ink-4: #94a3b8;
+
+    --brand: #1677ff;
+    --brand-hover: #0958d9;
+    --brand-soft: #eff6ff;
+    --brand-softer: #f5f9ff;
+    --brand-border: #bfdbfe;
+
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --ok-border: #a7f3d0;
+    --warn: #d97706;
+    --warn-soft: #fffbeb;
+    --warn-border: #fde68a;
+    --danger: #dc2626;
+    --danger-soft: #fef2f2;
+    --danger-border: #fecaca;
+    --cancel: #64748b;
+    --cancel-soft: #f1f5f9;
+    --cancel-border: #e2e8f0;
+
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.05);
+    --shadow-pop: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.05);
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-canvas);
+    color: var(--ink-1);
+    font-size: 13.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; padding: 0; }
+  .mono { font-family: var(--font-mono); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  svg.ico {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+  }
+  svg.ico-xs { width: 12px; height: 12px; }
+  svg.ico-sm { width: 13.5px; height: 13.5px; }
+  svg.ico-lg { width: 17px; height: 17px; }
+
+  /* 滚动条微调 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d5dce6; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #b6c2d2; }
+
+  /* ==================== 顶层原型评审控制条 ==================== */
+  .proto-deck {
+    flex-shrink: 0;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-bottom: 1px solid #1e293b;
+    padding: 0 18px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    z-index: 100;
+  }
+  .proto-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .proto-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 7px;
+    border-radius: 99px;
+    background: rgba(22, 119, 255, 0.22);
+    color: #60a5fa;
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    white-space: nowrap;
+  }
+  .proto-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #f8fafc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .proto-tabs {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .proto-tab {
+    padding: 4px 11px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .proto-tab:hover { color: #f1f5f9; }
+  .proto-tab.active {
+    background: #1677ff;
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .proto-tab .rec {
+    font-size: 9.5px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    line-height: 1.5;
+  }
+  .proto-tab:not(.active) .rec {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+  }
+  .proto-hint {
+    font-size: 11.5px;
+    color: #94a3b8;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .proto-hint strong { color: #e2e8f0; font-weight: 600; }
+
+  /* ==================== 模拟平台顶部导航栏（贴合原系统上下文） ==================== */
+  .app-shell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .app-topbar {
+    flex-shrink: 0;
+    height: 46px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  .topbar-crumb-cur { color: var(--ink-1); font-weight: 600; }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .online-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 99px;
+    background: var(--ok-soft);
+    color: var(--ok);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .online-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  }
+  .topbar-icon-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    color: var(--ink-3);
+    position: relative;
+  }
+  .topbar-icon-btn:hover { background: var(--bg-muted); color: var(--ink-1); }
+  .notif-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 99px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+  }
+  .logout-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 7px;
+    border: 1px solid #fecaca;
+    background: #fff5f5;
+    color: #dc2626;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  /* ==================== 主工作区容器 ==================== */
+  .workspace-wrap {
+    flex: 1;
+    min-height: 0;
+    padding: 12px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 1680px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* ==================== 优化核心 1：单行融合工具条（取代原先双层头+独立搜索卡片） ==================== */
+  .unified-toolbar {
+    flex-shrink: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 8px 12px;
+    box-shadow: var(--shadow-xs);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 10px;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .toolbar-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    display: grid;
+    place-items: center;
+  }
+  .toolbar-title {
+    font-size: 14.5px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink-1);
+  }
+  .toolbar-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+    background: var(--bg-muted);
+    padding: 1px 7px;
+    border-radius: 99px;
+  }
+
+  .search-box {
+    position: relative;
+    flex: 1;
+    min-width: 200px;
+    max-width: 420px;
+  }
+  .search-box svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ink-4);
+    pointer-events: none;
+  }
+  .search-input {
+    width: 100%;
+    height: 32px;
+    padding: 0 30px 0 32px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    font-size: 12.5px;
+    color: var(--ink-1);
+    outline: none;
+    transition: all 0.15s ease;
+  }
+  .search-input:focus {
+    background: #fff;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.1);
+  }
+  .search-clear {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: var(--ink-2);
+    font-size: 11px;
+    display: none;
+    place-items: center;
+  }
+  .search-clear.show { display: grid; }
+
+  /* 快捷状态筛选胶囊 */
+  .quick-status-group {
+    display: inline-flex;
+    align-items: center;
+    background: var(--bg-muted);
+    padding: 2px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    gap: 1px;
+  }
+  .qs-btn {
+    padding: 4px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-3);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.12s ease;
+    white-space: nowrap;
+  }
+  .qs-btn:hover { color: var(--ink-1); }
+  .qs-btn.active {
+    background: #fff;
+    color: var(--ink-1);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+  .s-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .s-dot.ok { background: #10b981; }
+  .s-dot.err { background: #ef4444; }
+  .s-dot.cancel { background: #94a3b8; }
+
+  .toolbar-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-outline {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.14s ease;
+    white-space: nowrap;
+  }
+  .btn-outline:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-subtle);
+    color: var(--ink-1);
+  }
+  .btn-outline.active {
+    border-color: var(--brand-border);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+  }
+  .btn-icon-sq {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+  .filter-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+  }
+
+  /* 高级筛选展开区 */
+  .adv-filter-panel {
+    display: none;
+    margin-top: 9px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .adv-filter-panel.open { display: block; }
+  .adv-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+    gap: 10px;
+    align-items: end;
+  }
+  .field-item label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+    margin-bottom: 4px;
+  }
+  .field-ctrl {
+    width: 100%;
+    height: 32px;
+    padding: 0 9px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 12.5px;
+    color: var(--ink-1);
+    outline: none;
+  }
+  .field-ctrl:focus { border-color: var(--brand); }
+  .adv-btns { display: flex; gap: 6px; }
+  .btn-primary {
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 7px;
+    background: var(--brand);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .btn-primary:hover { background: var(--brand-hover); }
+
+  /* ==================== 主分栏工作台 ==================== */
+  .split-shell {
+    flex: 1;
+    min-height: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xs);
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* 左侧列表栏 */
+  .list-pane {
+    width: 336px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: #fafbfc;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    transition: width 0.2s ease, opacity 0.2s ease;
+  }
+  .list-pane.collapsed {
+    width: 0;
+    border-right: none;
+    opacity: 0;
+    overflow: hidden;
+  }
+  .list-head {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-soft);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .seg-ctrl {
+    display: inline-flex;
+    background: var(--bg-muted);
+    padding: 2px;
+    border-radius: 7px;
+    border: 1px solid var(--border-soft);
+  }
+  .seg-btn {
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-3);
+    transition: all 0.14s ease;
+  }
+  .seg-btn.active {
+    background: #fff;
+    color: var(--ink-1);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.07);
+  }
+  .list-meta-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--ink-4);
+  }
+  .source-filter-toggle {
+    font-size: 11px;
+    color: var(--ink-3);
+    padding: 2px 6px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+  }
+  .source-filter-toggle:hover { background: var(--bg-muted); color: var(--ink-1); }
+  .source-filter-toggle.active {
+    background: var(--brand-soft);
+    color: var(--brand);
+    border-color: var(--brand-border);
+    font-weight: 600;
+  }
+
+  .list-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  /* 优化核心 2：干净低噪点的会话条目卡 */
+  .session-item {
+    width: 100%;
+    text-align: left;
+    padding: 10px 11px 9px 13px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    position: relative;
+    transition: all 0.12s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .session-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 9px;
+    bottom: 9px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: transparent;
+    transition: background 0.12s ease;
+  }
+  .session-item:hover {
+    background: #fff;
+    border-color: var(--border-soft);
+  }
+  .session-item.active {
+    background: #fff;
+    border-color: var(--brand-border);
+    box-shadow: 0 1px 4px rgba(22, 119, 255, 0.08);
+  }
+  .session-item.active::before {
+    background: var(--brand);
+  }
+
+  .si-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .si-identity {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    font-size: 11.5px;
+  }
+  .si-user {
+    font-weight: 600;
+    color: var(--ink-2);
+    max-width: 78px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .si-sep { color: var(--border-strong); }
+  .si-agent {
+    color: var(--brand);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .si-time {
+    font-size: 11px;
+    color: var(--ink-4);
+    flex-shrink: 0;
+  }
+
+  .si-query {
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .session-item.active .si-query {
+    color: var(--ink-1);
+    font-weight: 600;
+  }
+  .auto-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 5px;
+    margin-right: 4px;
+    border-radius: 4px;
+    background: #f0f9ff;
+    color: #0369a1;
+    border: 1px solid #bae6fd;
+    font-size: 10.5px;
+    font-weight: 600;
+    vertical-align: 1px;
+  }
+
+  .si-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 1px;
+  }
+  .si-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--ink-3);
+    min-width: 0;
+  }
+  .status-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .status-inline.success { color: var(--ok); }
+  .status-inline.error { color: var(--danger); }
+  .status-inline.cancelled { color: var(--cancel); }
+
+  .si-subtle-val {
+    color: var(--ink-4);
+    font-size: 11px;
+  }
+  .si-turn-badge {
+    color: var(--ink-2);
+    font-weight: 600;
+    background: var(--bg-muted);
+    padding: 0 6px;
+    border-radius: 4px;
+    line-height: 1.65;
+    font-size: 10.5px;
+  }
+  .session-item.active .si-turn-badge {
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  .si-hover-export {
+    opacity: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    color: var(--ink-3);
+    transition: all 0.12s ease;
+  }
+  .session-item:hover .si-hover-export,
+  .session-item.active .si-hover-export { opacity: 1; }
+  .si-hover-export:hover {
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+
+  /* 列表底部分页 */
+  .list-foot {
+    flex-shrink: 0;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border-soft);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .page-range { font-size: 11px; color: var(--ink-4); }
+  .page-size-sel {
+    font-size: 11px;
+    padding: 2px 5px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+    color: var(--ink-3);
+  }
+  .pager-btns { display: flex; align-items: center; gap: 4px; }
+  .pager-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+    color: var(--ink-2);
+  }
+  .pager-btn:hover:not(:disabled) { background: var(--bg-subtle); }
+  .pager-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .pager-input {
+    width: 36px;
+    height: 26px;
+    text-align: center;
+    font-size: 11.5px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  /* ==================== 右侧主详情区 ==================== */
+  .detail-pane {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-surface);
+  }
+
+  /* 优化核心 3：主从分明的精炼详情头部（单行主题+操作，第二行 Tab+轻量指标） */
+  .detail-top {
+    flex-shrink: 0;
+    padding: 11px 20px 0;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+  }
+  .detail-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .detail-title-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+  .collapse-rail-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+    color: var(--ink-3);
+    flex-shrink: 0;
+    transition: all 0.14s ease;
+  }
+  .collapse-rail-btn:hover { background: var(--bg-subtle); color: var(--ink-1); }
+  .collapse-rail-btn.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-border); }
+
+  .session-heading {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink-1);
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .status-pill.success { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok-border); }
+  .status-pill.error { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
+  .status-pill.cancelled { background: var(--cancel-soft); color: var(--cancel); border: 1px solid var(--cancel-border); }
+
+  .detail-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .id-copy-chip {
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    color: var(--ink-3);
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.14s ease;
+  }
+  .id-copy-chip:hover {
+    border-color: var(--brand-border);
+    color: var(--brand);
+    background: var(--brand-soft);
+  }
+  .id-copy-chip span.k { color: var(--ink-4); font-family: var(--font-sans); font-size: 10.5px; }
+
+  .btn-export {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .btn-export:hover {
+    border-color: var(--brand-border);
+    color: var(--brand);
+    background: var(--brand-soft);
+  }
+
+  /* 第二行：Tab 与元信息一体化对齐 */
+  .detail-sub-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .detail-tabs {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .d-tab {
+    padding: 8px 0 9px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-3);
+    border-bottom: 2px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.14s ease;
+  }
+  .d-tab:hover { color: var(--ink-1); }
+  .d-tab.active {
+    color: var(--brand);
+    border-bottom-color: var(--brand);
+  }
+  .d-tab-cnt {
+    font-size: 10.5px;
+    padding: 0 6px;
+    border-radius: 99px;
+    background: var(--bg-muted);
+    color: var(--ink-3);
+    line-height: 1.6;
+  }
+  .d-tab.active .d-tab-cnt {
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+
+  .meta-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    padding-bottom: 7px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .meta-item strong { color: var(--ink-2); font-weight: 600; }
+  .meta-agent { color: var(--brand); font-weight: 600; }
+  .meta-dot { color: var(--border-strong); }
+
+  /* ==================== 优化核心 4：多轮快捷定位条（Jump Rail） ==================== */
+  .turn-jump-bar {
+    flex-shrink: 0;
+    padding: 7px 20px;
+    background: #fafbfd;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+  }
+  .turn-jump-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-4);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .turn-pills {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .turn-pill {
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+    border: 1px solid var(--border);
+    background: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    transition: all 0.12s ease;
+  }
+  .turn-pill:hover { border-color: var(--brand-border); color: var(--ink-1); }
+  .turn-pill.active {
+    background: var(--brand-soft);
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .turn-pill.has-err { border-color: #fecaca; color: #b91c1c; background: #fff5f5; }
+  .turn-pill.has-err.active { background: #fee2e2; border-color: #dc2626; }
+  .turn-pill .ms { font-weight: 400; opacity: 0.72; font-size: 10px; }
+
+  .jump-right-tools {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .mini-toggle {
+    font-size: 11px;
+    color: var(--ink-3);
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .mini-toggle:hover { color: var(--ink-1); border-color: var(--border-strong); }
+
+  /* ==================== 优化核心 5：去套娃、宽幅文档流对话主体 ==================== */
+  .detail-body-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+  }
+  .detail-scroll {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 26px 40px;
+    scroll-behavior: smooth;
+  }
+  .conversation-stream {
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+  }
+
+  /* 每一轮不再用厚重外边框套娃，而是清爽的审阅章节结构 */
+  .turn-block {
+    position: relative;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border-soft);
+    scroll-margin-top: 16px;
+    transition: background 0.2s ease;
+  }
+  .turn-block:last-child { border-bottom: none; }
+  .turn-block.focused-ring {
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(22, 119, 255, 0.025) 0%, rgba(255,255,255,0) 120px);
+    padding: 12px 14px 20px;
+    margin: -12px -14px 0;
+    border: 1px solid var(--brand-border);
+  }
+
+  .turn-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .turn-h-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .turn-idx {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ink-2);
+    background: var(--bg-muted);
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .turn-block.focused-ring .turn-idx {
+    background: var(--brand);
+    color: #fff;
+  }
+  .turn-time { color: var(--ink-4); font-size: 11.5px; }
+  .turn-h-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+  .turn-trace-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--brand);
+    background: var(--brand-soft);
+    border: 1px solid transparent;
+    transition: all 0.14s ease;
+  }
+  .turn-trace-link:hover {
+    background: var(--brand);
+    color: #fff;
+  }
+
+  /* 用户提问：紧凑柔和左锚条块，与 AI 回复形成清晰对比 */
+  .user-prompt-box {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-left: 3px solid #94a3b8;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  .prompt-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  .prompt-author {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-3);
+  }
+  .avatar-xs {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: var(--ink-2);
+    font-size: 10px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+  }
+  .prompt-text {
+    margin: 0;
+    font-size: 13.5px;
+    color: var(--ink-1);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .copy-ghost {
+    font-size: 11px;
+    color: var(--ink-4);
+    padding: 2px 6px;
+    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    transition: all 0.12s ease;
+  }
+  .copy-ghost:hover { color: var(--brand); background: var(--brand-soft); }
+
+  /* AI 回复：彻底去掉整块蓝底+四层套娃边框，改为纯净白底宽幅文档流 */
+  .ai-reply-area {
+    padding-left: 2px;
+  }
+  .ai-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .ai-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ai-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    display: grid;
+    place-items: center;
+  }
+  .ai-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ink-2);
+  }
+  /* 低存在感分段开关，不抢正文风头 */
+  .subtle-seg {
+    display: inline-flex;
+    background: var(--bg-muted);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+  }
+  .subtle-seg button {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-3);
+  }
+  .subtle-seg button.active {
+    background: #fff;
+    color: var(--ink-1);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.07);
+  }
+  .tool-summary-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--ink-3);
+    background: #fafbfd;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 99px;
+    cursor: pointer;
+  }
+  .tool-summary-chips:hover {
+    border-color: var(--brand-border);
+    color: var(--brand);
+    background: var(--brand-soft);
+  }
+
+  /* 优化后的 Markdown 排版：克制深墨标题（不再用刺眼大蓝字撞色），清晰表格与代码 */
+  .md-body {
+    font-size: 14px;
+    line-height: 1.72;
+    color: #1e293b;
+  }
+  .md-body h2 {
+    margin: 0 0 10px;
+    font-size: 16.5px;
+    font-weight: 700;
+    color: var(--ink-1);
+    letter-spacing: -0.015em;
+    line-height: 1.4;
+  }
+  .md-body h3 {
+    margin: 16px 0 8px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink-1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .md-body h3::before {
+    content: "";
+    width: 3px;
+    height: 13px;
+    border-radius: 2px;
+    background: var(--brand);
+    display: inline-block;
+  }
+  .md-body p { margin: 0 0 10px; }
+  .md-body p:last-child { margin-bottom: 0; }
+  .md-body strong { color: var(--ink-1); font-weight: 650; }
+  .md-body ul { margin: 0 0 10px; padding-left: 20px; }
+  .md-body li { margin-bottom: 4px; }
+  .md-body code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: #f1f5f9;
+    color: #be123c;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .md-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 12px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .md-body th {
+    background: var(--bg-subtle);
+    text-align: left;
+    font-weight: 600;
+    color: var(--ink-2);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .md-body td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-2);
+  }
+  .md-body tr:last-child td { border-bottom: none; }
+  .md-source-pre {
+    margin: 0;
+    padding: 13px 15px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .empty-reply-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 11px 14px;
+    border-radius: 8px;
+    background: var(--bg-subtle);
+    border: 1px dashed var(--border-strong);
+    color: var(--ink-3);
+    font-size: 12.5px;
+  }
+  .empty-reply-callout.err {
+    background: var(--danger-soft);
+    border-color: var(--danger-border);
+    color: #b91c1c;
+  }
+  .empty-reply-callout strong { display: block; font-size: 12.5px; margin-bottom: 2px; color: inherit; }
+
+  /* ==================== Tab 2: 轨迹瀑布流（可折叠 + 耗时占比条） ==================== */
+  .trace-wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .trace-overview-card {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .trace-stats {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .t-stat small { display: block; font-size: 10.5px; color: var(--ink-4); }
+  .t-stat b { font-size: 13.5px; color: var(--ink-1); font-weight: 700; }
+
+  .trace-step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .trace-step {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    overflow: hidden;
+    transition: border-color 0.14s ease;
+  }
+  .trace-step.err-step { border-color: var(--danger-border); }
+  .trace-step-head {
+    width: 100%;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    transition: background 0.12s ease;
+  }
+  .trace-step-head:hover { background: var(--bg-subtle); }
+  .step-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--bg-muted);
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+  .trace-step.err-step .step-num { background: var(--danger-soft); color: var(--danger); }
+  .ev-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  .ev-thought { background: #eff6ff; color: #1d4ed8; }
+  .ev-tool { background: #fffbeb; color: #b45309; }
+  .ev-result { background: #ecfdf5; color: #047857; }
+  .ev-error { background: #fef2f2; color: #b91c1c; }
+  .ev-subagent { background: #f5f3ff; color: #6d28d9; }
+
+  .step-summary {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .step-summary code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-1);
+    background: var(--bg-muted);
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 6px;
+  }
+  .step-bar-wrap {
+    width: 90px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .step-bar-track {
+    flex: 1;
+    height: 5px;
+    border-radius: 99px;
+    background: var(--bg-muted);
+    overflow: hidden;
+  }
+  .step-bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: var(--brand);
+  }
+  .trace-step.err-step .step-bar-fill { background: var(--danger); }
+  .step-ms {
+    font-size: 11px;
+    color: var(--ink-3);
+    width: 52px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .step-chev {
+    color: var(--ink-4);
+    transition: transform 0.16s ease;
+  }
+  .trace-step.open .step-chev { transform: rotate(90deg); }
+
+  .trace-step-body {
+    display: none;
+    padding: 0 14px 14px 46px;
+    border-top: 1px solid var(--border-soft);
+    background: #fcfdff;
+  }
+  .trace-step.open .trace-step-body { display: block; }
+  .payload-section { margin-top: 10px; }
+  .payload-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+  }
+  .code-dark {
+    margin: 0;
+    padding: 11px 13px;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .jk { color: #7dd3fc; }
+  .js { color: #86efac; }
+  .jn { color: #fcd34d; }
+  .jb { color: #c4b5fd; }
+
+  .subagent-card {
+    margin-top: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    font-size: 11.5px;
+    color: #4c1d95;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .step-err-box {
+    margin-top: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: var(--danger-soft);
+    border: 1px solid var(--danger-border);
+    color: #b91c1c;
+    font-size: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  /* ==================== Tab 3: 上下文压缩记录 ==================== */
+  .context-wrap {
+    max-width: 820px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ctx-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: #fff;
+  }
+  .ctx-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .ctx-ratio {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+    margin-bottom: 10px;
+  }
+  .ctx-bar {
+    flex: 1;
+    height: 7px;
+    background: var(--bg-muted);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .ctx-bar-after {
+    height: 100%;
+    background: var(--ok);
+    border-radius: 99px;
+  }
+  .ctx-summary {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    background: var(--bg-subtle);
+    border-radius: 7px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-soft);
+    line-height: 1.6;
+  }
+
+  /* ==================== 方案 B 专属：右侧同屏联动「轨迹 & 轮次检查器」 ==================== */
+  .inspector-pane {
+    width: 390px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: #fafbfd;
+    display: none;
+    flex-direction: column;
+    min-height: 0;
+  }
+  body.mode-b .inspector-pane { display: flex; }
+  body.mode-b .detail-tabs-only-a { display: none; }
+  .insp-head {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .insp-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--ink-1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .insp-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 14px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .insp-turn-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+  }
+  .insp-t-btn {
+    padding: 5px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .insp-t-btn:hover { border-color: var(--brand-border); }
+  .insp-t-btn.active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+  .insp-t-btn.active .s-dot { background: #fff !important; }
+  .insp-mini-step {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+  .insp-mini-step.err { border-color: var(--danger-border); background: #fffafa; }
+  .insp-step-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  /* ==================== 视图 3：优化前后对比诊断视图 ==================== */
+  .compare-view {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 20px 40px;
+  }
+  body.mode-compare .workspace-wrap { display: none; }
+  body.mode-compare .compare-view { display: block; }
+
+  .cmp-container {
+    max-width: 1240px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .cmp-hero {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 22px;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 20px;
+    align-items: center;
+  }
+  .cmp-hero h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -0.02em; }
+  .cmp-hero p { margin: 0; color: var(--ink-3); font-size: 13px; }
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .kpi-box {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+  }
+  .kpi-box small { display: block; font-size: 11px; color: var(--ink-3); margin-bottom: 4px; }
+  .kpi-box strong { font-size: 19px; color: var(--brand); font-weight: 750; letter-spacing: -0.02em; }
+  .kpi-box span { display: block; font-size: 10.5px; color: var(--ok); font-weight: 600; margin-top: 2px; }
+
+  .cmp-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .cmp-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cmp-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .cmp-card-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+  .prio-tag {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .prio-p0 { background: var(--danger-soft); color: var(--danger); }
+  .prio-p1 { background: var(--brand-soft); color: var(--brand); }
+  .ba-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .ba-box {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .ba-before {
+    background: #fff5f5;
+    border: 1px solid #fecaca;
+    color: #7f1d1d;
+  }
+  .ba-after {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #14532d;
+  }
+  .ba-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
+  }
+
+  .decision-table {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .decision-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .decision-table th {
+    background: var(--bg-subtle);
+    text-align: left;
+    padding: 10px 14px;
+    color: var(--ink-2);
+    font-weight: 650;
+    border-bottom: 1px solid var(--border);
+  }
+  .decision-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  .decision-table tr:last-child td { border-bottom: none; }
+
+  /* Toast 提示 */
+  .toast-pop {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(16px);
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 8px 16px;
+    border-radius: 99px;
+    font-size: 12.5px;
+    font-weight: 500;
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s ease;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .toast-pop.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  @media (max-width: 1120px) {
+    .proto-hint { display: none; }
+    .adv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .inspector-pane { width: 320px; }
+    .cmp-hero { grid-template-columns: 1fr; }
+    .cmp-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body class="mode-a">
+
+<!-- ==================== 顶部评审控制台 ==================== -->
+<header class="proto-deck">
+  <div class="proto-brand">
+    <span class="proto-badge">UI/UX 原型</span>
+    <span class="proto-title">聊天日志 · 空间减负与审阅体验重构</span>
+  </div>
+  <nav class="proto-tabs" aria-label="方案切换">
+    <button type="button" class="proto-tab active" data-mode="a">
+      方案 A · 精炼文档流 <span class="rec">推荐</span>
+    </button>
+    <button type="button" class="proto-tab" data-mode="b">
+      方案 B · 对话×轨迹同屏对照
+    </button>
+    <button type="button" class="proto-tab" data-mode="compare">
+      痛点诊断 & 方案取舍
+    </button>
+  </nav>
+  <div class="proto-hint">
+    <span>所有列表、轮次跳转、渲染/源码、轨迹折叠均可交互</span>
+  </div>
+</header>
+
+<div class="app-shell">
+  <!-- 还原平台顶栏上下文 -->
+  <div class="app-topbar">
+    <div class="topbar-left">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5z"/></svg>
+      <span>›</span>
+      <span class="topbar-crumb-cur">聊天日志</span>
+    </div>
+    <div class="topbar-right">
+      <span class="online-pill"><span class="online-dot"></span> 1 在线</span>
+      <button type="button" class="topbar-icon-btn" title="通知">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 1 1-6 0h6z"/></svg>
+        <span class="notif-badge">6</span>
+      </button>
+      <button type="button" class="topbar-icon-btn" title="外观模式">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <span class="logout-pill">
+        <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"/></svg>
+        退出
+      </span>
+    </div>
+  </div>
+
+  <!-- ==================== 交互工作区（方案 A & 方案 B 共用底座） ==================== -->
+  <main class="workspace-wrap">
+    <!-- 融合单行工具条：原双层头部 + 搜索卡片合并为 48px 一行 -->
+    <section class="unified-toolbar">
+      <div class="toolbar-row">
+        <div class="toolbar-title-group">
+          <div class="toolbar-icon">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg>
+          </div>
+          <span class="toolbar-title">聊天日志</span>
+          <span class="toolbar-count num" id="toolbarTotalCount">1,009 会话</span>
+        </div>
+
+        <div class="search-box">
+          <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="searchInput" class="search-input" type="text" placeholder="搜索问题、回复或 Trace ID…" />
+          <button id="searchClear" type="button" class="search-clear" title="清空">×</button>
+        </div>
+
+        <div class="quick-status-group" role="group" aria-label="状态快捷筛选">
+          <button type="button" class="qs-btn active" data-status="">全部</button>
+          <button type="button" class="qs-btn" data-status="success"><span class="s-dot ok"></span>成功</button>
+          <button type="button" class="qs-btn" data-status="error"><span class="s-dot err"></span>异常</button>
+          <button type="button" class="qs-btn" data-status="cancelled"><span class="s-dot cancel"></span>已取消</button>
+        </div>
+
+        <div class="toolbar-actions">
+          <button type="button" class="btn-outline" id="btnAdvFilter">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4-2v-4L3 5z"/></svg>
+            高级筛选
+            <span class="filter-dot" id="advFilterDot" style="display:none"></span>
+          </button>
+          <button type="button" class="btn-outline btn-icon-sq" id="btnRefresh" title="刷新列表">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 折叠式高级筛选面板 -->
+      <div class="adv-filter-panel" id="advFilterPanel">
+        <div class="adv-grid">
+          <div class="field-item">
+            <label>智能体</label>
+            <select id="filterAgent" class="field-ctrl">
+              <option value="">全部智能体</option>
+              <option value="主助手(Main)">主助手(Main)</option>
+              <option value="数据分析专家">数据分析专家</option>
+              <option value="运维巡检助手">运维巡检助手</option>
+            </select>
+          </div>
+          <div class="field-item">
+            <label>用户</label>
+            <input id="filterUser" class="field-ctrl" type="text" placeholder="输入用户名，如 admin" />
+          </div>
+          <div class="field-item">
+            <label>来源类型</label>
+            <select id="filterSource" class="field-ctrl">
+              <option value="">全部来源</option>
+              <option value="human">人工对话</option>
+              <option value="auto">自动化任务 (TaskCenter)</option>
+            </select>
+          </div>
+          <div class="field-item">
+            <label>开始日期</label>
+            <input id="filterStartDate" class="field-ctrl" type="date" value="2026-11-20" />
+          </div>
+          <div class="field-item">
+            <label>结束日期</label>
+            <input id="filterEndDate" class="field-ctrl" type="date" value="2026-11-27" />
+          </div>
+          <div class="adv-btns">
+            <button type="button" class="btn-outline" id="btnResetAdv">重置</button>
+            <button type="button" class="btn-primary" id="btnApplyAdv">应用</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 主分栏容器 -->
+    <section class="split-shell">
+      <!-- 左侧会话列表 -->
+      <aside class="list-pane" id="listPane">
+        <div class="list-head">
+          <div class="seg-ctrl" role="tablist">
+            <button type="button" class="seg-btn active" data-viewmode="conversation">按会话</button>
+            <button type="button" class="seg-btn" data-viewmode="turn">按调用</button>
+          </div>
+          <div class="list-meta-right">
+            <button type="button" class="source-filter-toggle" id="btnHideAuto" title="隐藏后台定时任务日志，仅看人工会话">
+              仅人工
+            </button>
+          </div>
+        </div>
+
+        <div class="list-scroll" id="sessionList"></div>
+
+        <div class="list-foot">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="page-range mono num" id="pagerRange">1-6 / 1009</span>
+            <select class="page-size-sel">
+              <option>15/页</option>
+              <option>30/页</option>
+              <option>50/页</option>
+            </select>
+          </div>
+          <div class="pager-btns">
+            <button type="button" class="pager-btn" disabled title="上一页">
+              <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <input class="pager-input num" value="1" aria-label="页码" />
+            <span class="page-range num">/ 68</span>
+            <button type="button" class="pager-btn" title="下一页" onclick="showToast('原型演示：已加载当前示例页')">
+              <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 右侧详情主工作区 -->
+      <section class="detail-pane">
+        <!-- 精炼双层头部：1.主题与主操作 2.Tab与轻量元数据 -->
+        <div class="detail-top">
+          <div class="detail-title-row">
+            <div class="detail-title-left">
+              <button type="button" class="collapse-rail-btn" id="btnToggleList" title="折叠 / 展开左侧会话列表（阅读长表格时更宽敞）">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+              </button>
+              <h1 class="session-heading" id="detailTitle">你好啊</h1>
+              <span class="status-pill cancelled" id="detailStatusPill"><span class="s-dot cancel"></span>已取消</span>
+            </div>
+            <div class="detail-actions">
+              <button type="button" class="id-copy-chip mono" id="btnCopyTrace" title="点击复制完整 Trace ID">
+                <span class="k">Trace</span>
+                <span id="detailTraceShort">8635d42e</span>
+                <svg class="ico ico-xs" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button type="button" class="btn-export" id="btnExportSession">
+                <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                导出 Markdown
+              </button>
+            </div>
+          </div>
+
+          <div class="detail-sub-row">
+            <div class="detail-tabs">
+              <button type="button" class="d-tab active" data-tab="conversation">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg>
+                对话 <span class="d-tab-cnt num" id="tabCntConv">11</span>
+              </button>
+              <button type="button" class="d-tab detail-tabs-only-a" data-tab="trace">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                轨迹 <span class="d-tab-cnt num" id="tabCntTrace">3</span>
+              </button>
+              <button type="button" class="d-tab" data-tab="context">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/></svg>
+                上下文压缩 <span class="d-tab-cnt num" id="tabCntCtx">1</span>
+              </button>
+            </div>
+
+            <div class="meta-strip num" id="detailMetaStrip">
+              <!-- JS 渲染 -->
+            </div>
+          </div>
+        </div>
+
+        <!-- 多轮快捷跳转条（方案 A 对话态 / 轨迹态 均可见） -->
+        <div class="turn-jump-bar" id="turnJumpBar">
+          <span class="turn-jump-label" id="turnJumpLabel">轮次定位</span>
+          <div class="turn-pills" id="turnJumpPills"></div>
+          <div class="jump-right-tools" id="jumpRightTools"></div>
+        </div>
+
+        <!-- 内容区 + 方案 B 同屏联动轨迹面板 -->
+        <div class="detail-body-wrap">
+          <div class="detail-scroll" id="detailScroll">
+            <!-- JS 动态渲染当前 Tab 内容 -->
+          </div>
+
+          <!-- 方案 B 专属：同屏轨迹检查器，无需在 Tab 间来回切换 -->
+          <aside class="inspector-pane" id="inspectorPane">
+            <div class="insp-head">
+              <span class="insp-title">
+                <svg class="ico ico-sm" style="color:var(--brand)" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                同屏轨迹检查器
+              </span>
+              <span class="mono num" style="font-size:11px;color:var(--ink-4)" id="inspTurnBadge">第 4 轮 · 3600ms</span>
+            </div>
+            <div class="insp-body" id="inspectorBody"></div>
+          </aside>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <!-- ==================== 视图 3：优化前后对比诊断 ==================== -->
+  <section class="compare-view">
+    <div class="cmp-container">
+      <div class="cmp-hero">
+        <div>
+          <h2>聊天日志页 · UI/UX 问题诊断与重构收益</h2>
+          <p>针对当前截图与 <code>ChatLogs.vue</code> 源码分析，在不丢弃任何审计能力的前提下，重点解决首屏挤压、套娃边框、状态中英混排、自动化规则霸屏与多轮排障跳转低效 6 大痛点。</p>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi-box">
+            <small>首屏有效阅读区</small>
+            <strong class="num">~78%</strong>
+            <span>↑ 原先仅 ~43%</span>
+          </div>
+          <div class="kpi-box">
+            <small>内容区嵌套边框</small>
+            <strong class="num">1 层</strong>
+            <span>↓ 原先 4 层套娃</span>
+          </div>
+          <div class="kpi-box">
+            <small>多轮定位点击</small>
+            <strong class="num">1 次</strong>
+            <span>轮次胶囊直达</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cmp-grid">
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>1. 顶部「三层叠床架」挤压首屏阅读区</h3>
+            <span class="prio-tag prio-p0">P0 核心</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              页面大标题栏（76px）+ 独立搜索白卡（64px）+ 折行后的双行详情头（78px）+ Tab 栏（42px），合计吃掉近 300px 高度，右侧对话正文只露半截。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              标题、计数、搜索框、快捷状态胶囊、高级筛选、刷新合并为 <b>48px 单行融合工具条</b>；详情区元信息与 Tab 融合，释放出 140px+ 黄金阅读视口。
+            </div>
+          </div>
+        </div>
+
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>2. 四层「套娃卡片」与蓝色视觉噪点</h3>
+            <span class="prio-tag prio-p0">P0 核心</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              大白卡 → 轮次圆角卡 → 灰框用户提问 + 浅蓝底 AI 回复框，四层边距叠加；AI 回复里亮蓝 H1 标题 + 蓝底「渲染/源码」开关与主题蓝撞色抢焦点。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              拆除多余嵌套，改用<b>宽幅无框白底文档流</b>；提问用柔和左竖条区分，渲染/源码降噪为低存在感灰底分段，Markdown 标题改深墨层级，表格和长文一眼通透。
+            </div>
+          </div>
+        </div>
+
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>3. 状态中英混排 & 自动化前缀霸屏</h3>
+            <span class="prio-tag prio-p0">P0 核心</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              <code>cancelled</code> 直接渲染成全大写英文 <b>CANCELLED</b>，旁边却是中文「成功」；TaskCenter 任务列表被 <code>【🌐 TaskCenter 自动化全局执行规则】...</code> 填满，看不到任务本身。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              统一全中文状态字典（成功 / 异常 / 已取消）配轻量语义色点；自动识别系统前缀提炼为 <b>「定时任务」微标签 + 真实任务标题</b>，并提供「仅人工」一键过滤。
+            </div>
+          </div>
+        </div>
+
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>4. 详情头部信息无主次 & 操作按钮掉行</h3>
+            <span class="prio-tag prio-p1">P1 体验</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              把时间戳当主标题，6 个边框胶囊一字排开；窄屏折行把「导出会话」按钮挤到第二行左侧，和 <code>3600ms 8635d42e…</code> 混排，右侧留大片空白。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              首行左侧放<b>会话主题 + 状态徽章</b>，右侧固定操作区（带标签可复制 Trace ID + 导出 Markdown + 折叠边栏）；元信息去胶囊化，以 <code>·</code> 轻量串联。
+            </div>
+          </div>
+        </div>
+
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>5. 多轮定位与轨迹排查链路割裂</h3>
+            <span class="prio-tag prio-p1">P1 效率</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              11 轮对话只能靠滚轮翻找；每轮不知道用了几个工具；轨迹页签所有 JSON 黑框全展开，慢步骤与报错步骤淹没在瀑布流里。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              新增<b>轮次快捷定位胶囊条</b>（带异常红点与耗时）；每轮展示工具调用摘要胶囊；轨迹页升级为<b>耗时占比条 + 可折叠步骤</b>（报错步自动高亮展开）。
+            </div>
+          </div>
+        </div>
+
+        <div class="cmp-card">
+          <div class="cmp-card-head">
+            <h3>6. 列表项低频按钮常驻 & 宽内容查看受限</h3>
+            <span class="prio-tag prio-p1">P1 细节</span>
+          </div>
+          <div class="ba-pair">
+            <div class="ba-box ba-before">
+              <span class="ba-tag">现状痛点</span><br/>
+              每条会话右下角常驻下载图标增加视觉噪点；左侧 360px 列表不可收起，AI 输出宽表格或长代码块时出现横向滚动条。
+            </div>
+            <div class="ba-box ba-after">
+              <span class="ba-tag">优化方案</span><br/>
+              列表下载按钮改为 <b>Hover / 选中显现</b>；详情左上角提供一键「折叠左侧会话栏」，瞬间切入沉浸宽屏阅读模式。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision-table">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:190px">方案选择</th>
+              <th>核心特点</th>
+              <th>适合场景</th>
+              <th style="width:180px">改动成本</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>方案 A · 精炼文档流（推荐）</strong></td>
+              <td>保留熟悉的左右双栏结构，通过单行工具条、去套娃排版、轮次跳转条、可折叠轨迹瀑布全面升级视觉与效率。</td>
+              <td>日常运营审阅 + 常规排障，兼顾小屏（1280px）与大屏，零学习成本。</td>
+              <td>纯前端单文件重构，0 后端改动</td>
+            </tr>
+            <tr>
+              <td><strong>方案 B · 对话×轨迹同屏对照</strong></td>
+              <td>在方案 A 基础上，将「轨迹」改为右侧常驻联动检查器，点击任意轮次立即同屏查看工具入参、耗时与报错。</td>
+              <td>重度排障 / Prompt 调优 / 1440px+ 宽屏显示器（1280px 以下建议自动折叠为抽屉）。</td>
+              <td>纯前端重构，略增宽屏响应式逻辑</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="toast-pop" id="toastPop"></div>
+
+<script>
+// ==================== 真实业务语境模拟数据 ====================
+const SESSIONS = [
+  {
+    id: 'sess-1',
+    user: 'admin',
+    agent: '主助手(Main)',
+    version: 'v48',
+    model: 'DeepSeek-V3.2',
+    status: 'cancelled',
+    source: 'human',
+    timeShort: '10:09:46',
+    timeFull: '2026-11-27 10:09:46',
+    totalMs: 3600,
+    traceId: '8635d42e9f1b4c80a712e3d0',
+    title: '沙箱目录文件访问验证与权限排查',
+    rawQuery: '你好啊',
+    turnCount: 4,
+    displayTotalTurns: 11,
+    compactions: [
+      {
+        at: '2026-11-27 10:06:12',
+        beforeTokens: 28400,
+        afterTokens: 7920,
+        droppedMessages: 14,
+        summary: '已保留核心上下文：用户正在验证沙箱环境对工作区目录 `/workspace/docs/q4-report.md` 的读取权限，以及子代理工具白名单生效范围。早期寒暄与中间探测日志已折叠为摘要。'
+      }
+    ],
+    turns: [
+      {
+        id: 't1',
+        index: 1,
+        time: '2026-11-27 10:02:14',
+        status: 'success',
+        ms: 820,
+        model: 'DeepSeek-V3.2',
+        traceId: '8635d42e1101a8b0',
+        query: '你好啊，帮我检查一下当前沙箱里能不能直接读取工作区里的业务文档？',
+        toolsCount: 0,
+        summaryMd: `你好！可以帮您实测确认。请告诉我具体要验证的文件路径，或者我可以直接检查工作区挂载目录并尝试读取示例文件。`,
+        summaryHtml: `<p>你好！可以帮您实测确认。请告诉我具体要验证的文件路径，或者我可以直接检查工作区挂载目录并尝试读取示例文件。</p>`,
+        steps: [
+          { num: 1, type: 'thought', label: '思考', summary: '用户询问沙箱文件读取能力，无需调用外部工具，先确认目标路径。', ms: 410, status: 'success', input: { prompt_tokens: 1240, intent: 'sandbox_capability_check' }, output: { content: '直接回复确认需要验证的文件路径。' } },
+          { num: 2, type: 'final_answer', label: '最终回复', summary: '输出引导回复', ms: 410, status: 'success', output: { content: '你好！可以帮您实测确认...' } }
+        ]
+      },
+      {
+        id: 't2',
+        index: 2,
+        time: '2026-11-27 10:04:39',
+        status: 'success',
+        ms: 2140,
+        model: 'DeepSeek-V3.2',
+        traceId: '8635d42e2204c9f1',
+        query: '你试试读取 /workspace/reports/2026-q4-summary.md，告诉我能不能完整看到里面的内容，而不仅是文件名。',
+        toolsCount: 2,
+        summaryMd: `## 结论：可以访问，已实测验证\n\n沙箱内**能完整访问并读取**这个文件，不只是看到文件名。\n\n### 验证结果\n\n| 检查项 | 结果 |\n| --- | --- |\n| 目录列表可见 | 通过（\`/workspace/reports/\` 共 4 个文件） |\n| 正文内容读取 | 通过（完整读取 1,842 字节，UTF-8 无乱码） |\n| 越权路径拦截 | 生效（尝试读取 \`/etc/shadow\` 被沙箱策略拒绝） |`,
+        summaryHtml: `
+          <h2>结论：可以访问，已实测验证</h2>
+          <p>沙箱内<strong>能完整访问并读取</strong>这个文件，不只是看到文件名。</p>
+          <h3>验证结果</h3>
+          <table>
+            <thead><tr><th style="width:36%">检查项</th><th>结果</th></tr></thead>
+            <tbody>
+              <tr><td>目录列表可见</td><td>通过（<code>/workspace/reports/</code> 共 4 个文件）</td></tr>
+              <tr><td>正文内容读取</td><td>通过（完整读取 1,842 字节，UTF-8 无乱码）</td></tr>
+              <tr><td>越权路径拦截</td><td>生效（尝试读取 <code>/etc/shadow</code> 被沙箱策略拒绝）</td></tr>
+            </tbody>
+          </table>`,
+        steps: [
+          { num: 1, type: 'thought', label: '思考', summary: '需要通过沙箱文件工具列出目录并读取指定 Markdown 文件内容，同时做边界检查。', ms: 340, status: 'success', input: { plan: ['list_workspace_dir', 'read_workspace_file'] } },
+          { num: 2, type: 'tool_call', label: '工具调用', tool: 'sandbox.read_file', summary: '读取 /workspace/reports/2026-q4-summary.md', ms: 960, status: 'success', input: { path: '/workspace/reports/2026-q4-summary.md', encoding: 'utf-8', max_bytes: 65536 }, output: { ok: true, bytes: 1842, preview: '# 2026 Q4 业务复盘摘要\n核心指标达成率 108.4%...' } },
+          { num: 3, type: 'final_answer', label: '最终回复', summary: '整理实测结论与三项检查结果表格', ms: 840, status: 'success', output: { tokens: 196, format: 'markdown_table' } }
+        ]
+      },
+      {
+        id: 't3',
+        index: 3,
+        time: '2026-11-27 10:07:18',
+        status: 'error',
+        ms: 4820,
+        model: 'DeepSeek-V3.2',
+        traceId: '8635d42e3307e102',
+        query: '顺便把这份文档里的营收明细同步写到外部 BI 数据库里。',
+        toolsCount: 1,
+        summaryMd: '',
+        summaryHtml: '',
+        errorNote: 'MCP 工具 bi_connector.upsert_rows 拒绝写入：当前会话仅授予只读凭证（read_only_scope）。',
+        steps: [
+          { num: 1, type: 'thought', label: '思考', summary: '尝试调用外部 BI 数据源工具执行写入操作。', ms: 420, status: 'success', input: { target_tool: 'bi_connector.upsert_rows' } },
+          { num: 2, type: 'error', label: '工具异常', tool: 'bi_connector.upsert_rows', summary: 'PermissionDenied: 只读凭证禁止执行写操作', ms: 4400, status: 'error', input: { table: 'bi_q4_revenue', rows: 12 }, error: 'HTTP 403 Forbidden: credential scope [read_only] does not permit write operation on table bi_q4_revenue.' }
+        ]
+      },
+      {
+        id: 't4',
+        index: 4,
+        time: '2026-11-27 10:09:46',
+        status: 'cancelled',
+        ms: 3600,
+        model: 'DeepSeek-V3.2',
+        traceId: '8635d42e9f1b4c80a712e3d0',
+        query: '那帮我生成一份完整的年度同比对比 PPT 大纲，包含过去 8 个季度的所有细分渠道分析。',
+        toolsCount: 1,
+        summaryMd: '',
+        summaryHtml: '',
+        steps: [
+          { num: 1, type: 'thought', label: '思考', summary: '拆解 8 个季度渠道分析任务，准备委派数据分析子代理。', ms: 680, status: 'success', input: { subagent: 'data_analyst', quarters: 8 } },
+          { num: 2, type: 'subagent', label: '子代理委派', tool: 'delegate_subagent', summary: '委派至「数据分析专家」拉取季度明细（中途被用户取消）', ms: 2920, status: 'cancelled', subagent: { name: '数据分析专家', runId: 'run_sub_91a4c', stopReason: 'user_cancelled', tools: ['sql_query', 'chart_builder'] }, input: { task: '汇总近 8 个季度各渠道营收同比数据' } }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sess-2',
+    user: 'admin',
+    agent: '主助手(Main)',
+    version: 'v48',
+    model: 'DeepSeek-V3.2',
+    status: 'success',
+    source: 'auto',
+    autoLabel: '定时任务',
+    timeShort: '10:00:27',
+    timeFull: '2026-11-27 10:00:27',
+    totalMs: 4120,
+    traceId: 'c91a774b02de41f9',
+    title: '每日 10:00 生产知识库索引健康巡检与异常汇总',
+    rawQuery: '【🌐 TaskCenter 自动化全局执行规则】1. 无人值守模式：本次为后台自动触发运行，严禁向用户询问确认。2. 任务内容：执行每日 10:00 生产知识库索引健康巡检，检查失败文档并推送摘要。',
+    turnCount: 1,
+    displayTotalTurns: 1,
+    compactions: [],
+    turns: [
+      {
+        id: 't201',
+        index: 1,
+        time: '2026-11-27 10:00:27',
+        status: 'success',
+        ms: 4120,
+        model: 'DeepSeek-V3.2',
+        traceId: 'c91a774b02de41f9',
+        query: '【🌐 TaskCenter 自动化全局执行规则】1. 无人值守模式：本次为后台自动触发运行，严禁向用户询问确认。\n\n任务目标：执行每日 10:00 生产知识库索引健康巡检，检查解析失败文档并汇总。',
+        toolsCount: 2,
+        summaryMd: `### 知识库索引健康巡检报告（2026-11-27 10:00）\n\n本次共扫描 **12 个知识库**、**1,428 份文档**，整体索引健康度 **99.7%**。\n\n- 正常完成索引：1,424 份\n- 待重试（PDF OCR 超时）：4 份（均位于 \`财务制度库\`）\n- 建议动作：已自动触发低峰重试队列，预计 10 分钟内完成。`,
+        summaryHtml: `
+          <h3>知识库索引健康巡检报告（2026-11-27 10:00）</h3>
+          <p>本次共扫描 <strong>12 个知识库</strong>、<strong>1,428 份文档</strong>，整体索引健康度 <strong>99.7%</strong>。</p>
+          <ul>
+            <li>正常完成索引：1,424 份</li>
+            <li>待重试（PDF OCR 超时）：4 份（均位于 <code>财务制度库</code>）</li>
+            <li>建议动作：已自动触发低峰重试队列，预计 10 分钟内完成。</li>
+          </ul>`,
+        steps: [
+          { num: 1, type: 'tool_call', label: '工具调用', tool: 'ragflow.list_datasets_health', summary: '拉取全部 12 个知识库状态快照', ms: 1680, status: 'success', input: { include_failed_docs: true }, output: { datasets: 12, total_docs: 1428, failed_docs: 4 } },
+          { num: 2, type: 'tool_call', label: '工具调用', tool: 'ragflow.retry_failed_parsing', summary: '为 4 份 OCR 超时文档提交后台重试', ms: 1320, status: 'success', input: { dataset: '财务制度库', doc_count: 4 }, output: { queued: 4, eta_minutes: 10 } },
+          { num: 3, type: 'final_answer', label: '最终回复', summary: '输出巡检汇总报告', ms: 1120, status: 'success', output: { status: 'notified_feishu' } }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sess-3',
+    user: 'admin',
+    agent: '主助手(Main)',
+    version: 'v48',
+    model: 'DeepSeek-V3.2',
+    status: 'success',
+    source: 'human',
+    timeShort: '09:36:56',
+    timeFull: '2026-11-27 09:36:56',
+    totalMs: 1450,
+    traceId: 'a74e201f98cd3110',
+    title: '我们有哪些目录权限',
+    rawQuery: '我们有哪些目录权限',
+    turnCount: 2,
+    displayTotalTurns: 2,
+    compactions: [],
+    turns: [
+      {
+        id: 't301',
+        index: 1,
+        time: '2026-11-27 09:35:10',
+        status: 'success',
+        ms: 690,
+        model: 'DeepSeek-V3.2',
+        traceId: 'a74e201f98cd1001',
+        query: '我们有哪些目录权限',
+        toolsCount: 1,
+        summaryMd: `当前运行容器已挂载以下目录权限：\n\n| 路径 | 权限 | 用途说明 |\n| --- | --- | --- |\n| \`/workspace\` | 读写 (RW) | 项目代码与输出产物 |\n| \`/data/shared\` | 只读 (RO) | 公共参考语料与模板 |\n| \`/tmp/sandbox\` | 读写 (RW) | 临时计算与中间文件 |`,
+        summaryHtml: `
+          <p>当前运行容器已挂载以下目录权限：</p>
+          <table>
+            <thead><tr><th>路径</th><th>权限</th><th>用途说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/workspace</code></td><td>读写 (RW)</td><td>项目代码与输出产物</td></tr>
+              <tr><td><code>/data/shared</code></td><td>只读 (RO)</td><td>公共参考语料与模板</td></tr>
+              <tr><td><code>/tmp/sandbox</code></td><td>读写 (RW)</td><td>临时计算与中间文件</td></tr>
+            </tbody>
+          </table>`,
+        steps: [
+          { num: 1, type: 'tool_call', label: '工具调用', tool: 'sandbox.inspect_mounts', summary: '读取容器挂载表与读写 ACL', ms: 290, status: 'success', input: {}, output: { mounts: ['/workspace:rw', '/data/shared:ro', '/tmp/sandbox:rw'] } },
+          { num: 2, type: 'final_answer', label: '最终回复', summary: '生成目录权限说明表格', ms: 400, status: 'success', output: { ok: true } }
+        ]
+      },
+      {
+        id: 't302',
+        index: 2,
+        time: '2026-11-27 09:36:56',
+        status: 'success',
+        ms: 760,
+        model: 'DeepSeek-V3.2',
+        traceId: 'a74e201f98cd3110',
+        query: '那 /data/shared 可以临时写入缓存文件吗？',
+        toolsCount: 0,
+        summaryMd: `不可以，\`/data/shared\` 为严格只读挂载（RO），任何写入尝试都会触发操作系统级 \`EROFS\` 错误。建议将临时缓存写入 \`/tmp/sandbox\`，会话结束后会自动清理。`,
+        summaryHtml: `<p>不可以，<code>/data/shared</code> 为严格只读挂载（RO），任何写入尝试都会触发操作系统级 <code>EROFS</code> 错误。建议将临时缓存写入 <code>/tmp/sandbox</code>，会话结束后会自动清理。</p>`,
+        steps: [
+          { num: 1, type: 'final_answer', label: '最终回复', summary: '说明只读挂载约束并给出替代目录建议', ms: 760, status: 'success', output: { ok: true } }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sess-4',
+    user: 'linwei',
+    agent: '数据分析专家',
+    version: 'v19',
+    model: 'Qwen3-Max',
+    status: 'error',
+    source: 'human',
+    timeShort: '09:12:08',
+    timeFull: '2026-11-27 09:12:08',
+    totalMs: 6320,
+    traceId: 'f018b33c76aa9201',
+    title: '帮我查一下华东区 11 月复购率下滑超过 15% 的门店清单',
+    rawQuery: '帮我查一下华东区 11 月复购率下滑超过 15% 的门店清单',
+    turnCount: 1,
+    displayTotalTurns: 1,
+    compactions: [],
+    turns: [
+      {
+        id: 't401',
+        index: 1,
+        time: '2026-11-27 09:12:08',
+        status: 'error',
+        ms: 6320,
+        model: 'Qwen3-Max',
+        traceId: 'f018b33c76aa9201',
+        query: '帮我查一下华东区 11 月复购率下滑超过 15% 的门店清单',
+        toolsCount: 1,
+        summaryMd: '',
+        summaryHtml: '',
+        errorNote: '外部 ClickHouse 数据源连接超时（超过 5000ms 阈值），请检查内网网关状态。',
+        steps: [
+          { num: 1, type: 'thought', label: '思考', summary: '构建华东区门店月度复购率对比 SQL 查询。', ms: 820, status: 'success', input: { region: '华东', month: '2026-11', threshold: -0.15 } },
+          { num: 2, type: 'error', label: '工具异常', tool: 'clickhouse.execute_sql', summary: 'ConnectTimeoutError: 连接 ch-prod-02:9000 超时', ms: 5500, status: 'error', input: { datasource: 'ch_retail_prod', timeout_ms: 5000 }, error: 'ConnectTimeoutError: failed to establish TCP connection to 10.24.8.19:9000 within 5000ms' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sess-5',
+    user: 'chenxu',
+    agent: '运维巡检助手',
+    version: 'v12',
+    model: 'DeepSeek-V3.2',
+    status: 'success',
+    source: 'auto',
+    autoLabel: '定时任务',
+    timeShort: '昨天 23:00',
+    timeFull: '2026-11-26 23:00:05',
+    totalMs: 2890,
+    traceId: 'd42019aa55ef7812',
+    title: '夜间 Redis 内存水位与慢查询 Top5 巡检',
+    rawQuery: '【🌐 TaskCenter 自动化全局执行规则】1. 无人值守模式：检查 Redis Stack 集群内存水位及慢日志。',
+    turnCount: 1,
+    displayTotalTurns: 1,
+    compactions: [],
+    turns: [
+      {
+        id: 't501',
+        index: 1,
+        time: '2026-11-26 23:00:05',
+        status: 'success',
+        ms: 2890,
+        model: 'DeepSeek-V3.2',
+        traceId: 'd42019aa55ef7812',
+        query: '【🌐 TaskCenter 自动化全局执行规则】1. 无人值守模式：检查 Redis Stack 集群内存水位及慢日志。',
+        toolsCount: 1,
+        summaryMd: `Redis 集群运行平稳：当前内存使用率 **41.2%**（6.6GB / 16GB），碎片率 ` + '`1.06`' + `，近 24 小时无超过 50ms 的慢查询记录。`,
+        summaryHtml: `<p>Redis 集群运行平稳：当前内存使用率 <strong>41.2%</strong>（6.6GB / 16GB），碎片率 <code>1.06</code>，近 24 小时无超过 50ms 的慢查询记录。</p>`,
+        steps: [
+          { num: 1, type: 'tool_call', label: '工具调用', tool: 'redis_ops.cluster_metrics', summary: '采集内存、命中率与 slowlog 指标', ms: 1920, status: 'success', input: { cluster: 'redis-stack-main' }, output: { mem_ratio: 0.412, slowlog_count: 0 } },
+          { num: 2, type: 'final_answer', label: '最终回复', summary: '汇总巡检状态', ms: 970, status: 'success', output: { ok: true } }
+        ]
+      }
+    ]
+  }
+];
+
+// ==================== 全局交互状态 ====================
+const state = {
+  protoMode: 'a',          // 'a' | 'b' | 'compare'
+  viewMode: 'conversation',// 'conversation' | 'turn'
+  selectedSessionId: 'sess-1',
+  selectedTurnIndex: 1,    // 0-based，默认聚焦含丰富 Markdown 表格的第 2 轮，让首屏一眼看到精炼排版
+  activeTab: 'conversation', // 'conversation' | 'trace' | 'context'
+  listCollapsed: false,
+  keyword: '',
+  statusFilter: '',
+  agentFilter: '',
+  userFilter: '',
+  sourceFilter: '',
+  hideAuto: false,
+  replyModes: {},          // { [turnId]: 'render' | 'source' }
+  openSteps: {},           // { [key]: boolean }
+};
+
+const STATUS_MAP = {
+  success: { label: '成功', dot: 'ok' },
+  error: { label: '异常', dot: 'err' },
+  cancelled: { label: '已取消', dot: 'cancel' },
+};
+
+function statusMeta(st) {
+  return STATUS_MAP[st] || { label: st || '未知', dot: 'cancel' };
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function highlightJson(obj) {
+  const s = escapeHtml(JSON.stringify(obj, null, 2));
+  return s.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?)/g, (m) => {
+    if (/^"/.test(m)) return /:$/.test(m) ? `<span class="jk">${m}</span>` : `<span class="js">${m}</span>`;
+    if (/true|false|null/.test(m)) return `<span class="jb">${m}</span>`;
+    return `<span class="jn">${m}</span>`;
+  });
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toastPop');
+  el.innerHTML = `<span class="s-dot ok"></span><span>${escapeHtml(msg)}</span>`;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function getFilteredSessions() {
+  return SESSIONS.filter((s) => {
+    if (state.statusFilter && s.status !== state.statusFilter) return false;
+    if (state.agentFilter && s.agent !== state.agentFilter) return false;
+    if (state.userFilter && !s.user.toLowerCase().includes(state.userFilter.toLowerCase())) return false;
+    if (state.sourceFilter && s.source !== state.sourceFilter) return false;
+    if (state.hideAuto && s.source === 'auto') return false;
+    if (state.keyword) {
+      const kw = state.keyword.toLowerCase();
+      const hay = `${s.title} ${s.rawQuery} ${s.agent} ${s.user} ${s.traceId}`.toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+}
+
+function getCurrentSession() {
+  const list = getFilteredSessions();
+  let cur = list.find((s) => s.id === state.selectedSessionId);
+  if (!cur && list.length) {
+    cur = list[0];
+    state.selectedSessionId = cur.id;
+    state.selectedTurnIndex = 0;
+  }
+  return cur || null;
+}
+
+// ==================== 渲染左侧会话列表 ====================
+function renderList() {
+  const items = getFilteredSessions();
+  const listEl = document.getElementById('sessionList');
+  const totalEl = document.getElementById('toolbarTotalCount');
+  const rangeEl = document.getElementById('pagerRange');
+
+  const isFiltered = state.keyword || state.statusFilter || state.agentFilter || state.userFilter || state.sourceFilter || state.hideAuto;
+  const fakeTotal = isFiltered ? items.length : (state.viewMode === 'conversation' ? 1009 : 4286);
+  totalEl.textContent = `${fakeTotal.toLocaleString()} ${state.viewMode === 'conversation' ? '会话' : '条调用'}`;
+  rangeEl.textContent = items.length ? `1-${items.length} / ${fakeTotal}` : '0 / 0';
+
+  if (!items.length) {
+    listEl.innerHTML = `
+      <div style="padding:48px 16px;text-align:center;color:var(--ink-4);font-size:12.5px;">
+        <div style="margin-bottom:6px;font-weight:600;color:var(--ink-3)">暂无匹配的聊天日志</div>
+        <div>试试切换状态或清空搜索关键词</div>
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = items.map((s) => {
+    const active = s.id === state.selectedSessionId;
+    const sm = statusMeta(s.status);
+    const autoBadge = s.source === 'auto' ? `<span class="auto-tag">定时任务</span>` : '';
+    const rightBadge = state.viewMode === 'conversation'
+      ? `<span class="si-turn-badge num">${s.displayTotalTurns} 轮</span>`
+      : `<span class="si-subtle-val mono num">${s.totalMs}ms</span>`;
+
+    return `
+      <div class="session-item ${active ? 'active' : ''}" role="button" tabindex="0" data-sid="${s.id}">
+        <div class="si-top">
+          <div class="si-identity">
+            <span class="si-user">${escapeHtml(s.user)}</span>
+            <span class="si-sep">·</span>
+            <span class="si-agent">${escapeHtml(s.agent)}</span>
+          </div>
+          <span class="si-time mono num">${escapeHtml(s.timeShort)}</span>
+        </div>
+        <div class="si-query">${autoBadge}${escapeHtml(s.title)}</div>
+        <div class="si-bottom">
+          <div class="si-meta-row">
+            <span class="status-inline ${s.status}"><span class="s-dot ${sm.dot}"></span>${sm.label}</span>
+            <span class="si-subtle-val mono">${escapeHtml(s.version)}</span>
+            ${rightBadge}
+          </div>
+          <button type="button" class="si-hover-export" data-export="${s.id}" title="导出 Markdown">
+            <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+
+  listEl.querySelectorAll('.session-item').forEach((node) => {
+    node.addEventListener('click', (e) => {
+      const exp = e.target.closest('[data-export]');
+      if (exp) {
+        e.stopPropagation();
+        showToast(`已导出会话 Markdown（${node.querySelector('.si-query').textContent.slice(0, 14)}…）`);
+        return;
+      }
+      const sid = node.getAttribute('data-sid');
+      if (sid !== state.selectedSessionId) {
+        state.selectedSessionId = sid;
+        const nextS = SESSIONS.find((x) => x.id === sid);
+        state.selectedTurnIndex = nextS && nextS.turns.length > 1 ? Math.min(1, nextS.turns.length - 1) : 0;
+        renderAll();
+      }
+    });
+  });
+}
+
+// ==================== 渲染右侧详情头部与元信息 ====================
+function renderDetailHeader(session) {
+  const titleEl = document.getElementById('detailTitle');
+  const statusEl = document.getElementById('detailStatusPill');
+  const traceEl = document.getElementById('detailTraceShort');
+  const metaEl = document.getElementById('detailMetaStrip');
+  const cntConv = document.getElementById('tabCntConv');
+  const cntTrace = document.getElementById('tabCntTrace');
+  const cntCtx = document.getElementById('tabCntCtx');
+
+  if (!session) {
+    titleEl.textContent = '未选择会话';
+    return;
+  }
+  const activeTurn = session.turns[state.selectedTurnIndex] || session.turns[0];
+  const sm = statusMeta(session.status);
+
+  titleEl.textContent = session.title;
+  statusEl.className = `status-pill ${session.status}`;
+  statusEl.innerHTML = `<span class="s-dot ${sm.dot}"></span>${sm.label}`;
+  traceEl.textContent = (activeTurn?.traceId || session.traceId).slice(0, 8);
+
+  cntConv.textContent = session.displayTotalTurns;
+  cntTrace.textContent = activeTurn?.steps?.length ?? 0;
+  cntCtx.textContent = session.compactions.length;
+
+  metaEl.innerHTML = `
+    <span class="meta-item"><span class="meta-agent">${escapeHtml(session.agent)}</span></span>
+    <span class="meta-dot">·</span>
+    <span class="meta-item"><strong>${escapeHtml(session.user)}</strong></span>
+    <span class="meta-dot">·</span>
+    <span class="meta-item mono">${escapeHtml(session.version)}</span>
+    <span class="meta-dot">·</span>
+    <span class="meta-item mono">${escapeHtml(session.model)}</span>
+    <span class="meta-dot">·</span>
+    <span class="meta-item mono">${activeTurn ? activeTurn.ms : session.totalMs}ms</span>
+    <span class="meta-dot">·</span>
+    <span class="meta-item mono">${escapeHtml(session.timeFull)}</span>
+  `;
+
+  // Tab 激活态
+  document.querySelectorAll('.d-tab').forEach((btn) => {
+    const t = btn.getAttribute('data-tab');
+    btn.classList.toggle('active', t === state.activeTab);
+  });
+}
+
+// ==================== 渲染轮次快捷定位条 ====================
+function renderTurnJumpBar(session) {
+  const bar = document.getElementById('turnJumpBar');
+  const pillsEl = document.getElementById('turnJumpPills');
+  const labelEl = document.getElementById('turnJumpLabel');
+  const toolsEl = document.getElementById('jumpRightTools');
+
+  if (!session || state.activeTab === 'context' || (session.turns.length <= 1 && state.activeTab === 'conversation')) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  labelEl.textContent = state.activeTab === 'trace' ? '切换轮次轨迹' : '轮次定位';
+
+  pillsEl.innerHTML = session.turns.map((t, idx) => {
+    const sm = statusMeta(t.status);
+    const active = idx === state.selectedTurnIndex;
+    const errCls = t.status === 'error' ? 'has-err' : '';
+    return `
+      <button type="button" class="turn-pill ${active ? 'active' : ''} ${errCls}" data-jump-idx="${idx}">
+        <span class="s-dot ${sm.dot}"></span>
+        <span>第 ${t.index} 轮</span>
+        <span class="ms mono num">${t.ms}ms</span>
+      </button>`;
+  }).join('');
+
+  if (state.activeTab === 'trace') {
+    toolsEl.innerHTML = `
+      <button type="button" class="mini-toggle" id="btnExpandAllSteps">全部展开</button>
+      <button type="button" class="mini-toggle" id="btnCollapseAllSteps">全部收起</button>
+    `;
+    document.getElementById('btnExpandAllSteps').onclick = () => {
+      const turn = session.turns[state.selectedTurnIndex] || session.turns[0];
+      turn.steps.forEach((_, i) => { state.openSteps[`${turn.id}-${i}`] = true; });
+      renderDetailBody(session);
+    };
+    document.getElementById('btnCollapseAllSteps').onclick = () => {
+      const turn = session.turns[state.selectedTurnIndex] || session.turns[0];
+      turn.steps.forEach((_, i) => { state.openSteps[`${turn.id}-${i}`] = false; });
+      renderDetailBody(session);
+    };
+  } else {
+    const extraHint = session.displayTotalTurns > session.turns.length
+      ? `<span style="font-size:11px;color:var(--ink-4)">示例展示核心 ${session.turns.length} / ${session.displayTotalTurns} 轮</span>`
+      : '';
+    toolsEl.innerHTML = extraHint;
+  }
+
+  pillsEl.querySelectorAll('[data-jump-idx]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-jump-idx'));
+      state.selectedTurnIndex = idx;
+      renderDetailHeader(session);
+      renderTurnJumpBar(session);
+      if (state.activeTab === 'conversation') {
+        renderDetailBody(session);
+        renderInspector(session);
+        const target = document.getElementById(`turn-anchor-${idx}`);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        renderDetailBody(session);
+      }
+    });
+  });
+}
+
+// ==================== 渲染对话 / 轨迹 / 上下文正文 ====================
+function renderDetailBody(session) {
+  const scrollEl = document.getElementById('detailScroll');
+  if (!session) {
+    scrollEl.innerHTML = `<div style="padding:80px 20px;text-align:center;color:var(--ink-4)">请从左侧选择一条会话</div>`;
+    return;
+  }
+
+  if (state.activeTab === 'conversation') {
+    scrollEl.innerHTML = `<div class="conversation-stream">${session.turns.map((turn, idx) => renderTurnBlock(session, turn, idx)).join('')}</div>`;
+    bindConversationEvents(session);
+  } else if (state.activeTab === 'trace') {
+    const turn = session.turns[state.selectedTurnIndex] || session.turns[0];
+    scrollEl.innerHTML = renderTraceView(turn);
+    bindTraceEvents(turn);
+  } else {
+    scrollEl.innerHTML = renderContextView(session);
+  }
+}
+
+function renderTurnBlock(session, turn, idx) {
+  const sm = statusMeta(turn.status);
+  const mode = state.replyModes[turn.id] || 'render';
+  const isFocused = idx === state.selectedTurnIndex;
+  const toolChip = turn.toolsCount > 0
+    ? `<button type="button" class="tool-summary-chips" data-view-trace="${idx}" title="点击查看此轮工具调用详情">
+         <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+         调用 ${turn.toolsCount} 个工具 · ${turn.steps.length} 步
+       </button>`
+    : '';
+
+  let replyBodyHtml = '';
+  if (!turn.summaryMd && !turn.summaryHtml) {
+    if (turn.status === 'cancelled') {
+      replyBodyHtml = `
+        <div class="empty-reply-callout">
+          <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+          <div><strong>该轮已取消，未产生回复</strong>在模型返回前被用户主动中断；可点击右侧「查看轨迹」确认子代理停止状态。</div>
+        </div>`;
+    } else if (turn.status === 'error') {
+      replyBodyHtml = `
+        <div class="empty-reply-callout err">
+          <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>
+          <div><strong>该轮执行异常，未产生回复</strong>${escapeHtml(turn.errorNote || '请在执行轨迹中排查详细报错堆栈。')}</div>
+        </div>`;
+    }
+  } else if (mode === 'source') {
+    replyBodyHtml = `<pre class="md-source-pre">${escapeHtml(turn.summaryMd)}</pre>`;
+  } else {
+    replyBodyHtml = `<div class="md-body">${turn.summaryHtml}</div>`;
+  }
+
+  const traceBtnLabel = state.protoMode === 'b' ? '在右侧查看轨迹 →' : '查看轨迹 ↗';
+
+  return `
+    <article class="turn-block ${isFocused ? 'focused-ring' : ''}" id="turn-anchor-${idx}" data-select-turn="${idx}">
+      <div class="turn-header">
+        <div class="turn-h-left">
+          <span class="turn-idx num">第 ${turn.index} 轮</span>
+          <span class="turn-time mono num">${escapeHtml(turn.time)}</span>
+          <span class="status-inline ${turn.status}"><span class="s-dot ${sm.dot}"></span>${sm.label}</span>
+        </div>
+        <div class="turn-h-right">
+          <span class="mono num">${turn.ms}ms</span>
+          <button type="button" class="turn-trace-link" data-view-trace="${idx}">
+            <svg class="ico ico-xs" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            ${traceBtnLabel}
+          </button>
+        </div>
+      </div>
+
+      <div class="user-prompt-box">
+        <div class="prompt-bar">
+          <span class="prompt-author">
+            <span class="avatar-xs">${escapeHtml(session.user.charAt(0).toUpperCase())}</span>
+            ${escapeHtml(session.user)} 提问
+          </span>
+          <button type="button" class="copy-ghost" data-copy-text="${escapeHtml(turn.query)}" data-copy-label="用户提问">复制</button>
+        </div>
+        <p class="prompt-text">${escapeHtml(turn.query)}</p>
+      </div>
+
+      <div class="ai-reply-area">
+        <div class="ai-bar">
+          <div class="ai-bar-left">
+            <span class="ai-avatar">
+              <svg class="ico ico-xs" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z"/></svg>
+            </span>
+            <span class="ai-label">AI 回复</span>
+            ${turn.summaryMd ? `
+              <div class="subtle-seg">
+                <button type="button" class="${mode === 'render' ? 'active' : ''}" data-reply-mode="${turn.id}:render">渲染</button>
+                <button type="button" class="${mode === 'source' ? 'active' : ''}" data-reply-mode="${turn.id}:source">源码</button>
+              </div>` : ''}
+            ${toolChip}
+          </div>
+          ${turn.summaryMd ? `<button type="button" class="copy-ghost" data-copy-text="${escapeHtml(turn.summaryMd)}" data-copy-label="AI 回复">复制</button>` : ''}
+        </div>
+        ${replyBodyHtml}
+      </div>
+    </article>`;
+}
+
+function bindConversationEvents(session) {
+  const scrollEl = document.getElementById('detailScroll');
+
+  // 点击轮次高亮并联动方案 B 检查器
+  scrollEl.querySelectorAll('[data-select-turn]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      const idx = Number(el.getAttribute('data-select-turn'));
+      if (state.selectedTurnIndex !== idx) {
+        state.selectedTurnIndex = idx;
+        renderDetailHeader(session);
+        renderTurnJumpBar(session);
+        renderInspector(session);
+        scrollEl.querySelectorAll('.turn-block').forEach((b, i) => b.classList.toggle('focused-ring', i === idx));
+      }
+    });
+  });
+
+  scrollEl.querySelectorAll('[data-reply-mode]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [tid, mode] = btn.getAttribute('data-reply-mode').split(':');
+      state.replyModes[tid] = mode;
+      renderDetailBody(session);
+    });
+  });
+
+  scrollEl.querySelectorAll('[data-view-trace]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.getAttribute('data-view-trace'));
+      state.selectedTurnIndex = idx;
+      if (state.protoMode === 'b') {
+        renderDetailHeader(session);
+        renderTurnJumpBar(session);
+        renderInspector(session);
+        scrollEl.querySelectorAll('.turn-block').forEach((b, i) => b.classList.toggle('focused-ring', i === idx));
+        showToast(`已在右侧检查器定位至第 ${session.turns[idx].index} 轮轨迹`);
+      } else {
+        state.activeTab = 'trace';
+        renderAll();
+      }
+    });
+  });
+
+  scrollEl.querySelectorAll('[data-copy-text]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showToast(`${btn.getAttribute('data-copy-label')}已复制`);
+    });
+  });
+}
+
+// ==================== 渲染轨迹视图 ====================
+function renderTraceView(turn) {
+  if (!turn || !turn.steps?.length) {
+    return `<div style="padding:60px;text-align:center;color:var(--ink-4)">暂无执行链路数据</div>`;
+  }
+  const totalMs = Math.max(1, turn.steps.reduce((acc, s) => acc + (s.ms || 0), 0));
+  const toolSteps = turn.steps.filter((s) => s.tool).length;
+  const sm = statusMeta(turn.status);
+
+  const stepsHtml = turn.steps.map((st, idx) => {
+    const key = `${turn.id}-${idx}`;
+    const isOpen = state.openSteps[key] !== undefined ? state.openSteps[key] : (st.status === 'error' || idx === 1 || turn.steps.length <= 2);
+    const pct = Math.max(6, Math.round(((st.ms || 0) / totalMs) * 100));
+    const evCls = st.type === 'thought' ? 'ev-thought'
+      : st.type === 'tool_call' ? 'ev-tool'
+      : st.type === 'error' ? 'ev-error'
+      : st.type === 'subagent' ? 'ev-subagent'
+      : 'ev-result';
+
+    return `
+      <div class="trace-step ${isOpen ? 'open' : ''} ${st.status === 'error' ? 'err-step' : ''}" data-step-key="${key}">
+        <button type="button" class="trace-step-head">
+          <span class="step-num num">${st.num}</span>
+          <span class="ev-badge ${evCls}">${escapeHtml(st.label)}</span>
+          <span class="step-summary">
+            ${st.tool ? `<code>${escapeHtml(st.tool)}</code>` : ''}
+            ${escapeHtml(st.summary)}
+          </span>
+          <div class="step-bar-wrap" title="占本轮总耗时 ${pct}%">
+            <div class="step-bar-track"><div class="step-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <span class="step-ms mono num">${st.ms}ms</span>
+          <svg class="ico ico-sm step-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <div class="trace-step-body">
+          ${st.subagent ? `
+            <div class="subagent-card">
+              <span><strong>子代理：</strong>${escapeHtml(st.subagent.name)}</span>
+              <span class="mono"><strong>Run ID：</strong>${escapeHtml(st.subagent.runId)}</span>
+              <span><strong>停止原因：</strong>${escapeHtml(st.subagent.stopReason)}</span>
+              <span><strong>允许工具：</strong>${escapeHtml(st.subagent.tools.join('、'))}</span>
+            </div>` : ''}
+          ${st.input ? `
+            <div class="payload-section">
+              <div class="payload-head">
+                <span>输入参数 / 思考快照</span>
+                <button type="button" class="copy-ghost" data-copy-payload="参数">复制 JSON</button>
+              </div>
+              <pre class="code-dark">${highlightJson(st.input)}</pre>
+            </div>` : ''}
+          ${st.output ? `
+            <div class="payload-section">
+              <div class="payload-head">
+                <span>返回结果</span>
+                <button type="button" class="copy-ghost" data-copy-payload="结果">复制 JSON</button>
+              </div>
+              <pre class="code-dark">${highlightJson(st.output)}</pre>
+            </div>` : ''}
+          ${st.error ? `
+            <div class="step-err-box">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>
+              <span class="mono">${escapeHtml(st.error)}</span>
+            </div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="trace-wrap">
+      <div class="trace-overview-card">
+        <div class="trace-stats num">
+          <div class="t-stat"><small>当前轮次</small><b>第 ${turn.index} 轮</b></div>
+          <div class="t-stat"><small>状态</small><b class="status-inline ${turn.status}" style="font-size:13px"><span class="s-dot ${sm.dot}"></span>${sm.label}</b></div>
+          <div class="t-stat"><small>总耗时</small><b class="mono">${turn.ms}ms</b></div>
+          <div class="t-stat"><small>步骤 / 工具调用</small><b>${turn.steps.length} 步 / ${toolSteps} 次工具</b></div>
+        </div>
+        <button type="button" class="btn-outline" onclick="showToast('Trace ID 已复制：${turn.traceId}')">
+          <span class="mono">${turn.traceId.slice(0, 12)}…</span>
+        </button>
+      </div>
+      <div class="trace-step-list">${stepsHtml}</div>
+    </div>`;
+}
+
+function bindTraceEvents(turn) {
+  const scrollEl = document.getElementById('detailScroll');
+  scrollEl.querySelectorAll('.trace-step').forEach((card) => {
+    const key = card.getAttribute('data-step-key');
+    card.querySelector('.trace-step-head').addEventListener('click', () => {
+      const next = !card.classList.contains('open');
+      state.openSteps[key] = next;
+      card.classList.toggle('open', next);
+    });
+  });
+  scrollEl.querySelectorAll('[data-copy-payload]').forEach((btn) => {
+    btn.addEventListener('click', () => showToast(`${btn.getAttribute('data-copy-payload')} JSON 已复制`));
+  });
+}
+
+// ==================== 渲染上下文压缩视图 ====================
+function renderContextView(session) {
+  if (!session.compactions.length) {
+    return `
+      <div style="padding:70px 20px;text-align:center;color:var(--ink-4);font-size:13px;">
+        <div style="font-weight:600;color:var(--ink-2);margin-bottom:4px;">本会话尚未触发上下文压缩</div>
+        <div>当对话 Token 数接近模型窗口阈值时，系统会自动生成压缩快照并记录于此。</div>
+      </div>`;
+  }
+  return `
+    <div class="context-wrap">
+      ${session.compactions.map((c, idx) => {
+        const savedPct = Math.round((1 - c.afterTokens / c.beforeTokens) * 100);
+        const remainPct = 100 - savedPct;
+        return `
+          <div class="ctx-card">
+            <div class="ctx-head">
+              <strong style="font-size:13.5px;">第 ${idx + 1} 次上下文压缩</strong>
+              <span class="mono" style="font-size:11.5px;color:var(--ink-4)">${escapeHtml(c.at)}</span>
+            </div>
+            <div class="ctx-ratio num">
+              <span class="mono">${c.beforeTokens.toLocaleString()} → <strong>${c.afterTokens.toLocaleString()}</strong> tokens</span>
+              <div class="ctx-bar"><div class="ctx-bar-after" style="width:${remainPct}%"></div></div>
+              <span style="color:var(--ok);font-weight:700;">节省 ${savedPct}%（折叠 ${c.droppedMessages} 条消息）</span>
+            </div>
+            <div class="ctx-summary">${escapeHtml(c.summary)}</div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// ==================== 方案 B 专属：右侧同屏联动轨迹检查器 ====================
+function renderInspector(session) {
+  const bodyEl = document.getElementById('inspectorBody');
+  const badgeEl = document.getElementById('inspTurnBadge');
+  if (!session) return;
+
+  const turn = session.turns[state.selectedTurnIndex] || session.turns[0];
+  badgeEl.textContent = `第 ${turn.index} 轮 · ${turn.ms}ms`;
+
+  const turnGrid = session.turns.length > 1 ? `
+    <div>
+      <div style="font-size:11px;font-weight:600;color:var(--ink-4);margin-bottom:6px;">快速切换轮次（与左侧对话双向联动）</div>
+      <div class="insp-turn-grid">
+        ${session.turns.map((t, i) => {
+          const sm = statusMeta(t.status);
+          return `<button type="button" class="insp-t-btn ${i === state.selectedTurnIndex ? 'active' : ''}" data-insp-idx="${i}">
+            <span class="s-dot ${sm.dot}"></span>#${t.index}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>` : '';
+
+  const totalMs = Math.max(1, turn.steps.reduce((a, s) => a + (s.ms || 0), 0));
+  const stepsHtml = turn.steps.map((st) => {
+    const pct = Math.max(8, Math.round(((st.ms || 0) / totalMs) * 100));
+    const evCls = st.type === 'thought' ? 'ev-thought'
+      : st.type === 'tool_call' ? 'ev-tool'
+      : st.type === 'error' ? 'ev-error'
+      : st.type === 'subagent' ? 'ev-subagent'
+      : 'ev-result';
+    return `
+      <div class="insp-mini-step ${st.status === 'error' ? 'err' : ''}">
+        <div class="insp-step-top">
+          <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+            <span class="ev-badge ${evCls}">${escapeHtml(st.label)}</span>
+            ${st.tool ? `<code class="mono" style="font-size:11px;font-weight:600;color:var(--ink-1);overflow:hidden;text-overflow:ellipsis;">${escapeHtml(st.tool)}</code>` : ''}
+          </div>
+          <span class="mono num" style="font-size:11px;color:var(--ink-3);flex-shrink:0;">${st.ms}ms</span>
+        </div>
+        <div style="font-size:12px;color:var(--ink-2);margin-bottom:6px;line-height:1.45;">${escapeHtml(st.summary)}</div>
+        <div class="step-bar-track"><div class="step-bar-fill" style="width:${pct}%;${st.status === 'error' ? 'background:var(--danger)' : ''}"></div></div>
+        ${st.input ? `<pre class="code-dark" style="margin-top:8px;padding:8px 10px;font-size:11px;">${highlightJson(st.input)}</pre>` : ''}
+        ${st.error ? `<div class="step-err-box" style="margin-top:8px;padding:7px 9px;font-size:11px;">${escapeHtml(st.error)}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  bodyEl.innerHTML = `${turnGrid}${stepsHtml}`;
+  bodyEl.querySelectorAll('[data-insp-idx]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-insp-idx'));
+      state.selectedTurnIndex = idx;
+      renderAll();
+      const anchor = document.getElementById(`turn-anchor-${idx}`);
+      if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+function renderAll() {
+  renderList();
+  const session = getCurrentSession();
+  renderDetailHeader(session);
+  renderTurnJumpBar(session);
+  renderDetailBody(session);
+  renderInspector(session);
+}
+
+// ==================== 全局控件事件绑定 ====================
+// 1. 顶部原型方案切换
+document.querySelectorAll('.proto-tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const mode = btn.getAttribute('data-mode');
+    state.protoMode = mode;
+    document.body.className = `mode-${mode}`;
+    document.querySelectorAll('.proto-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    if (mode === 'b' && state.activeTab === 'trace') {
+      state.activeTab = 'conversation';
+    }
+    if (mode !== 'compare') renderAll();
+  });
+});
+
+// 2. 搜索框
+const searchInput = document.getElementById('searchInput');
+const searchClear = document.getElementById('searchClear');
+searchInput.addEventListener('input', () => {
+  state.keyword = searchInput.value.trim();
+  searchClear.classList.toggle('show', !!state.keyword);
+  renderAll();
+});
+searchClear.addEventListener('click', () => {
+  searchInput.value = '';
+  state.keyword = '';
+  searchClear.classList.remove('show');
+  renderAll();
+});
+
+// 3. 快捷状态筛选
+document.querySelectorAll('.qs-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.statusFilter = btn.getAttribute('data-status');
+    document.querySelectorAll('.qs-btn').forEach((b) => b.classList.toggle('active', b === btn));
+    renderAll();
+  });
+});
+
+// 4. 高级筛选展开/应用/重置
+const btnAdv = document.getElementById('btnAdvFilter');
+const advPanel = document.getElementById('advFilterPanel');
+const advDot = document.getElementById('advFilterDot');
+btnAdv.addEventListener('click', () => {
+  const open = advPanel.classList.toggle('open');
+  btnAdv.classList.toggle('active', open || advDot.style.display !== 'none');
+});
+document.getElementById('btnApplyAdv').addEventListener('click', () => {
+  state.agentFilter = document.getElementById('filterAgent').value;
+  state.userFilter = document.getElementById('filterUser').value.trim();
+  state.sourceFilter = document.getElementById('filterSource').value;
+  const hasAdv = !!(state.agentFilter || state.userFilter || state.sourceFilter);
+  advDot.style.display = hasAdv ? 'inline-block' : 'none';
+  advPanel.classList.remove('open');
+  btnAdv.classList.toggle('active', hasAdv);
+  renderAll();
+  showToast('已应用高级筛选条件');
+});
+document.getElementById('btnResetAdv').addEventListener('click', () => {
+  document.getElementById('filterAgent').value = '';
+  document.getElementById('filterUser').value = '';
+  document.getElementById('filterSource').value = '';
+  state.agentFilter = '';
+  state.userFilter = '';
+  state.sourceFilter = '';
+  advDot.style.display = 'none';
+  btnAdv.classList.remove('active');
+  renderAll();
+  showToast('已重置筛选条件');
+});
+
+// 5. 按会话 / 按调用 切换 & 仅人工切换
+document.querySelectorAll('[data-viewmode]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.viewMode = btn.getAttribute('data-viewmode');
+    document.querySelectorAll('[data-viewmode]').forEach((b) => b.classList.toggle('active', b === btn));
+    renderAll();
+  });
+});
+document.getElementById('btnHideAuto').addEventListener('click', (e) => {
+  state.hideAuto = !state.hideAuto;
+  e.currentTarget.classList.toggle('active', state.hideAuto);
+  renderAll();
+});
+
+// 6. 详情 Tab 切换
+document.querySelectorAll('.d-tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.activeTab = btn.getAttribute('data-tab');
+    renderAll();
+  });
+});
+
+// 7. 折叠/展开左侧会话栏
+document.getElementById('btnToggleList').addEventListener('click', (e) => {
+  state.listCollapsed = !state.listCollapsed;
+  document.getElementById('listPane').classList.toggle('collapsed', state.listCollapsed);
+  e.currentTarget.classList.toggle('active', state.listCollapsed);
+});
+
+// 8. 复制 Trace / 导出 / 刷新
+document.getElementById('btnCopyTrace').addEventListener('click', () => {
+  const s = getCurrentSession();
+  const t = s?.turns[state.selectedTurnIndex] || s?.turns[0];
+  showToast(`Trace ID 已复制：${t?.traceId || s?.traceId}`);
+});
+document.getElementById('btnExportSession').addEventListener('click', () => {
+  const s = getCurrentSession();
+  showToast(`已导出会话 Markdown（${s?.displayTotalTurns || 1} 轮含轨迹）`);
+});
+document.getElementById('btnRefresh').addEventListener('click', () => {
+  showToast('已刷新最新聊天日志');
+});
+
+// 首次渲染
+renderAll();
+</script>
+</body>
+</html>
