@@ -55,15 +55,12 @@ async def build_native_agent(
     primary_model_name: str,
     restored_state: Any = None,
 ) -> Any:
-    from app.services.ai.time_anchor import filter_redundant_time_tools
-
     dar = _runner_module()
     build_timer = BuildStageTimer()
     await emit_build_progress(
         status="pending",
         details="正在装配工作区、工具与会话状态…",
     )
-    tools = filter_redundant_time_tools(tools, system_content)
     # 与助手路径同口径：工作区准备的分段测量（沙箱获取 / 技能播种 / 会话初始化）。
     prepare_trace = WorkspacePrepareTrace()
     try:

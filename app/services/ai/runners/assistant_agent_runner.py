@@ -144,7 +144,6 @@ from app.services.ai.tool_capability import (
     resolve_tool_capabilities,
 )
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
-from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
 
@@ -1757,11 +1756,12 @@ class AssistantAgentRunner(BaseExecutor):
             user_query,
             prepend=not use_cache_layout,
         )
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # 最后一道对齐：提示词里的「本轮可用工具」是 preflight 阶段算的，上面的
-        # 可复用结果裁剪 / 时间工具去重只改 tools。清单里留着调不到的工具会让模型
-        # 照着调用、撞 ghost tool 白名单白跑一轮，所以这里按最终 tools 重写该段。
+        # 可复用结果裁剪只改 tools。清单里留着调不到的工具会让模型照着调用、撞
+        # ghost tool 白名单白跑一轮，所以这里按最终 tools 重写该段。
+        # 注：不再因已注入时间锚点而移除 get_current_time / resolve_relative_dates，
+        # 避免与智能体自定义提示词冲突触发 ToolGuard 拦截报红（重复取时由 ToolLoopDetector 熔断兜底）。
         from app.services.ai.agent_prompts import prune_unregistered_tool_inventory
 
         system_content = prune_unregistered_tool_inventory(
@@ -3455,7 +3455,6 @@ class AssistantAgentRunner(BaseExecutor):
 
         restored_state = AgentState.model_validate(pending.snapshot.agent_state)
         system_content = str(ctx.get("system_content", ""))
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # 恢复挂起执行时 tools 重新按配置解析（不再经过可复用结果裁剪），而
         # system_content 来自快照，两边可能再次错位；同样以最终 tools 为准对齐。

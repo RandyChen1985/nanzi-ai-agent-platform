@@ -1419,17 +1419,13 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             tools=tools,
         )
 
-        from app.services.ai.time_anchor import (
-            append_time_anchor_for_user_question,
-            filter_redundant_time_tools,
-        )
+        from app.services.ai.time_anchor import append_time_anchor_for_user_question
 
         system_content = append_time_anchor_for_user_question(
             system_content,
             user_question,
             prepend=not use_cache_layout,
         )
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # AgentService 已按最终模型的 history_budget 完成窗口选择和摘录；
         # 知识库 runner 不能再次按固定条数截断，避免丢掉平台摘要。
