@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>智能体发布历史 · 按日期分组与折叠的三种排法</title>
+<style>
+  :root{
+    --bg:#eef1f6;
+    --panel:#ffffff;
+    --panel-2:#fbfcfe;
+    --ink:#111827;
+    --ink-2:#374151;
+    --ink-3:#6b7280;
+    --ink-4:#9ca3af;
+    --line:#e5e7eb;
+    --line-soft:#f1f3f6;
+    --primary:#1677ff;
+    --primary-soft:rgba(22,119,255,.08);
+    --green:#059669; --green-soft:#ecfdf5; --green-line:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
+    --red:#dc2626; --red-soft:#fef2f2; --red-line:#fecaca;
+    --slate-soft:#f1f5f9;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg:0 12px 32px -8px rgba(16,24,40,.18), 0 4px 12px -4px rgba(16,24,40,.08);
+    --radius:14px;
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120;
+    --panel:#111a2b;
+    --panel-2:#0f172a;
+    --ink:#f9fafb;
+    --ink-2:#e5e7eb;
+    --ink-3:#9ca3af;
+    --ink-4:#6b7280;
+    --line:#1f2a3d;
+    --line-soft:#182234;
+    --primary:#4096ff;
+    --primary-soft:rgba(64,150,255,.14);
+    --green:#34d399; --green-soft:rgba(52,211,153,.12); --green-line:rgba(52,211,153,.35);
+    --amber:#fbbf24; --amber-soft:rgba(251,191,36,.12); --amber-line:rgba(251,191,36,.35);
+    --red:#f87171; --red-soft:rgba(248,113,113,.12); --red-line:rgba(248,113,113,.35);
+    --slate-soft:#172033;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+    --shadow-lg:0 20px 48px -12px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1300px;margin:0 auto;padding:28px 24px 64px}
+  header.page{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+  header.page h1{margin:0;font-size:22px;letter-spacing:-.2px}
+  header.page p{margin:2px 0 0;color:var(--ink-3);font-size:13px;max-width:760px}
+  .spacer{flex:1}
+  .theme-btn{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink-2);
+    border-radius:10px;padding:7px 12px;font-size:12.5px;cursor:pointer;box-shadow:var(--shadow)
+  }
+  .theme-btn:hover{border-color:var(--primary);color:var(--primary)}
+
+  /* 方案切换 */
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+  .tab{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink-2);
+    border-radius:999px;padding:8px 15px;font-size:13px;cursor:pointer;box-shadow:var(--shadow);
+    display:flex;align-items:center;gap:7px;transition:.16s
+  }
+  .tab b{font-weight:600;color:var(--ink)}
+  .tab .badge{
+    font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:999px;
+    background:var(--slate-soft);color:var(--ink-3)
+  }
+  .tab:hover{border-color:var(--primary)}
+  .tab[aria-selected="true"]{background:var(--primary);border-color:var(--primary);color:#fff}
+  .tab[aria-selected="true"] b,.tab[aria-selected="true"] .badge{color:#fff}
+  .tab[aria-selected="true"] .badge{background:rgba(255,255,255,.22)}
+
+  .stage{display:grid;grid-template-columns:1fr 660px;gap:20px;align-items:start}
+  @media (max-width:1180px){.stage{grid-template-columns:1fr}}
+
+  /* 左侧背景（模拟智能体卡片墙） */
+  .backdrop{
+    display:grid;grid-template-columns:1fr 1fr;gap:14px;opacity:.62;filter:saturate(.7)
+  }
+  .agent-card{
+    border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);
+    padding:14px;box-shadow:var(--shadow)
+  }
+  .agent-card .row{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .agent-card .ico{
+    width:30px;height:30px;border-radius:9px;background:var(--primary-soft);
+    display:grid;place-items:center;font-size:14px
+  }
+  .agent-card .name{font-weight:600;font-size:13.5px;color:var(--ink)}
+  .agent-card .desc{font-size:12px;color:var(--ink-3);line-height:1.6;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .agent-card .meta{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:10.5px;color:var(--ink-3);background:var(--slate-soft);border-radius:6px;padding:2px 7px}
+
+  /* 抽屉 */
+  .drawer{
+    background:var(--panel);border-radius:16px;box-shadow:var(--shadow-lg);
+    border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;
+    max-height:min(84vh,900px)
+  }
+  .drawer-head{
+    padding:14px 18px;border-bottom:1px solid var(--line);
+    display:flex;align-items:flex-start;gap:10px
+  }
+  .drawer-head h2{margin:0;font-size:15.5px;font-weight:600}
+  .drawer-head .sub{margin:2px 0 0;font-size:12px;color:var(--ink-3)}
+  .drawer-head .close{margin-left:auto;color:var(--ink-4);cursor:pointer;font-size:16px;line-height:1}
+  .drawer-tools{
+    display:flex;align-items:center;gap:8px;padding:9px 18px;
+    border-bottom:1px solid var(--line-soft);background:var(--panel-2);
+    font-size:11.5px;color:var(--ink-3);flex-wrap:wrap
+  }
+  .ghost-btn{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink-2);
+    border-radius:8px;padding:4px 9px;font-size:11.5px;cursor:pointer
+  }
+  .ghost-btn:hover{border-color:var(--primary);color:var(--primary)}
+  .drawer-body{padding:12px 18px 20px;overflow-y:auto}
+
+  /* 日期分组头 */
+  .group{margin-top:6px}
+  .group + .group{margin-top:2px}
+  .group-head{
+    display:flex;align-items:center;gap:9px;width:100%;
+    padding:8px 8px 8px 4px;border:0;background:transparent;cursor:pointer;
+    color:var(--ink);text-align:left;border-radius:9px
+  }
+  .group-head:hover{background:var(--panel-2)}
+  .group-head .caret{
+    width:14px;height:14px;flex:none;color:var(--ink-4);
+    transition:transform .18s ease;transform:rotate(90deg)
+  }
+  .group.collapsed .group-head .caret{transform:rotate(0deg)}
+  .group-head .date{font-size:13px;font-weight:600;letter-spacing:-.1px}
+  .group-head .dow{font-size:11.5px;color:var(--ink-4);font-weight:400}
+  .group-head .count{
+    font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;
+    background:var(--slate-soft);color:var(--ink-3)
+  }
+  .group-head .vers{display:flex;gap:4px;align-items:center;flex-wrap:nowrap;overflow:hidden}
+  .group-head .ver{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10.5px;font-weight:600;line-height:1.5;
+    padding:1px 6px;border-radius:6px;white-space:nowrap;
+    background:var(--primary-soft);color:var(--primary);
+    border:1px solid rgba(22,119,255,.16)
+  }
+  html[data-theme="dark"] .group-head .ver{border-color:rgba(64,150,255,.28)}
+  .group-head .ver.more{background:var(--slate-soft);color:var(--ink-3);border-color:var(--line)}
+  .group-head .summary{
+    margin-left:auto;font-size:11px;color:var(--ink-4);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%
+  }
+  .group-body{display:block}
+  .group.collapsed .group-body{display:none}
+
+  /* 时间线 */
+  ol.timeline{list-style:none;margin:0;padding:0 0 0 18px;border-left:1px solid var(--line);margin-left:11px}
+  ol.timeline > li{position:relative;padding:6px 0 10px}
+  ol.timeline > li .dot{
+    position:absolute;left:-24px;top:11px;width:9px;height:9px;border-radius:50%;
+    box-shadow:0 0 0 2px var(--panel)
+  }
+  .dot.green{background:var(--green)} .dot.red{background:var(--red)}
+  .dot.amber{background:var(--amber)} .dot.blue{background:var(--primary)}
+  .dot.gray{background:var(--ink-4)}
+  .ev-title{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+  .ev-title .label{font-size:13.5px;font-weight:600;color:var(--ink-2)}
+  .ev-title .time{font-size:11px;color:var(--ink-4)}
+  .ev-meta{margin:1px 0 0;font-size:12px;color:var(--ink-3)}
+  .bubble{
+    margin-top:5px;font-size:11.5px;line-height:1.65;border-radius:8px;padding:6px 9px;
+    border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2)
+  }
+  .bubble.reason{border-color:var(--primary-soft);background:var(--primary-soft);color:var(--primary)}
+  html[data-theme="dark"] .bubble.reason{color:#9dc6ff}
+  .snap-link{
+    margin-top:4px;display:inline-block;font-size:11px;font-weight:600;color:var(--primary);cursor:pointer
+  }
+  .snap-link:hover{text-decoration:underline}
+  .snap{
+    margin-top:7px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);
+    padding:9px 10px;font-size:11px;color:var(--ink-3);line-height:1.6
+  }
+  .snap pre{
+    margin:6px 0 0;max-height:120px;overflow:auto;background:var(--panel);border:1px solid var(--line);
+    border-radius:7px;padding:7px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px
+  }
+  .empty-note{font-size:11px;color:var(--ink-4);padding:6px 4px 2px}
+
+  /* 说明区 */
+  .notes{
+    margin-top:26px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px
+  }
+  .note{
+    border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);
+    padding:14px 16px;box-shadow:var(--shadow)
+  }
+  .note h3{margin:0 0 8px;font-size:13px;font-weight:600}
+  .note ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-3);line-height:1.85}
+  .note code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+    background:var(--slate-soft);border-radius:4px;padding:1px 5px;color:var(--ink-2)
+  }
+  .pick{border-color:var(--green-line);background:var(--green-soft)}
+  html[data-theme="dark"] .pick{background:rgba(52,211,153,.07)}
+  .pick h3{color:var(--green)}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page">
+    <div>
+      <h1>智能体发布历史 · 按日期分组</h1>
+      <p>
+        现状是一条连续时间线（100 条上限），跨天的事件混在一起、扫读成本高。下面三种排法都是「按自然日分组 + 组可折叠」，
+        差别在<strong>默认展开策略</strong>与<strong>组头承载多少信息</strong>。除方案 A 作为对照外，组头都带<strong>当天涉及的版本号</strong>——
+        折叠状态下也能一眼看出「这天发布/申请的是哪些版本」。点组头即可折叠，数据取自 DS-Token 平台管理助手的真实记录。
+      </p>
+    </div>
+    <div class="spacer"></div>
+    <button class="theme-btn" id="themeBtn">切换深色</button>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-plan="A" aria-selected="true"><b>方案 A</b> 分组头 + 全展开 <span class="badge">对照：组头无版本</span></button>
+    <button class="tab" role="tab" data-plan="B" aria-selected="false"><b>方案 B</b> 只展开最近一组 <span class="badge">推荐 · 组头带版本</span></button>
+    <button class="tab" role="tab" data-plan="C" aria-selected="false"><b>方案 C</b> 组头带类型摘要 <span class="badge">版本 + 事件类型汇总</span></button>
+  </div>
+
+  <div class="stage">
+    <div class="backdrop" aria-hidden="true">
+      <div class="agent-card">
+        <div class="row"><div class="ico">🤖</div><div class="name">NanZi 助手</div></div>
+        <div class="desc">处理日常闲聊、通用问答、代码编写辅助以及无法明确分类的请求。作为系统的兜底助手。</div>
+        <div class="meta"><span class="chip">工具 35</span><span class="chip">MCP 0</span><span class="chip">技能 19</span></div>
+      </div>
+      <div class="agent-card">
+        <div class="row"><div class="ico">📊</div><div class="name">数据查询助手</div></div>
+        <div class="desc">专注于数据查询、SQL 生成，当用户询问具体指标、数据源时接管。</div>
+        <div class="meta"><span class="chip">工具 27</span><span class="chip">MCP 0</span><span class="chip">技能 19</span></div>
+      </div>
+      <div class="agent-card">
+        <div class="row"><div class="ico">📚</div><div class="name">知识库助手</div></div>
+        <div class="desc">仅专注于知识库进行检索问答，关于自动创建知识库、上传文档等管理操作类不处理。</div>
+        <div class="meta"><span class="chip">工具 16</span><span class="chip">知识库 1</span></div>
+      </div>
+      <div class="agent-card">
+        <div class="row"><div class="ico">🔑</div><div class="name">DS-Token 平台管理助手</div></div>
+        <div class="desc">负责管理 ds token 平台，包括平台注册、模型管理等操作。</div>
+        <div class="meta"><span class="chip">工具 20</span><span class="chip">已就绪</span></div>
+      </div>
+    </div>
+
+    <div class="drawer">
+      <div class="drawer-head">
+        <div>
+          <h2>发布历史</h2>
+          <p class="sub">DS-Token 平台管理助手</p>
+        </div>
+        <span class="close">✕</span>
+      </div>
+
+      <div class="drawer-tools" id="drawerTools">
+        <span id="rangeHint">共 15 条记录 · 跨 6 个自然日（含 1 天为 2025 年，用于验证跨年日期标签）</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="ghost-btn" data-act="expand">全部展开</button>
+        <button class="ghost-btn" data-act="collapse">全部收起</button>
+      </div>
+
+      <div class="drawer-body" id="drawerBody"></div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h3>日期标签规则（三方案一致）</h3>
+      <ul>
+        <li>今天 → <code>今天</code>；昨天 → <code>昨天</code></li>
+        <li>同年 → <code>11月24日</code> + 星期在右侧小字</li>
+        <li>跨年 → <code>2025年12月30日</code>，避免「12月30日」误读成今年</li>
+        <li>排序：按 <code>at</code> 倒序分组；组内沿用现有 <code>at / requested_at / reviewed_at</code> 三级时间显示</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>版本号在组头上的规则</h3>
+      <ul>
+        <li>只统计<strong>带版本号</strong>的记录：启用状态变更 / 变更权属人 / 分享类是会话级或账号级动作，没有版本，不参与汇总</li>
+        <li>按版本号<strong>升序去重</strong>，最多显示 3 个，多余的折叠成 <code>+N</code></li>
+        <li>跨年 / 跨天不影响版本表达：同一天既有 <code>v4</code> 申请又有 <code>v4</code> 发布，只出现一次</li>
+        <li>只有一条记录且无版本时（如 11月10日 的权属变更），组头不出现版本 chip，不留空位</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>为什么不做「日期 → 版本」二级分组</h3>
+      <ul>
+        <li>版本不是稳定的分组维度：同一天会连续发多个版本（11/24 一天内 v3、v4、v5），会切出一堆只剩 1 条的残组</li>
+        <li>同一个版本的完整故事（申请 → 审核通过 → 发布）往往<strong>跨天</strong>，按版本分组反而把它拆散</li>
+        <li>版本更适合做成<strong>筛选器</strong>：工具条加一个「全部版本 / v6 / v5 …」下拉，选中即只留涉及该版本的记录，跨天串成一条版本线</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>折叠交互约定（建议）</h3>
+      <ul>
+        <li>组头整行可点（尺寸 ≥ 44px 高），右侧箭头 90° 旋转表示展开</li>
+        <li>折叠只隐内容，不动竖线：每组时间线独立，收起后不留断头线</li>
+        <li>「全部展开 / 全部收起」放工具条，跟着当前分组状态走</li>
+        <li>展开状态记 <code>sessionStorage</code>，同一次会话内重开抽屉保持</li>
+        <li>事件行里的「查看内容快照」与分组折叠互不影响</li>
+      </ul>
+    </div>
+    <div class="note pick">
+      <h3>推荐方案 B</h3>
+      <ul>
+        <li>理由：抽屉高度有限、历史最多 100 条，全展开（A）还是要长滚动；C 的组头摘要要多算一次、且值类型多（申请/事件混排）容易误导</li>
+        <li>B 的做法：默认只展开最近 1 组，其余折叠但显示「N 条 · 最近一条是 X」</li>
+        <li>组头：日期 + 条数 + 版本 chip + 「最近一条是 X」，折叠时这四样都留着</li>
+        <li>改动面：只动 <code>AgentSystemHistoryDrawer.vue</code> 一个文件，加两个纯函数 <code>groupEntriesByDay()</code> / <code>versionsOf()</code>（可单测）+ 组头模板</li>
+        <li>后端无需改动：现有接口已按 <code>at</code> 倒序返回全量（page_size=100）</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const ENTRIES = [
+  {kind:'request', id:11, at:'2026-11-27T13:57:18', status:'APPROVED', actor:'chenxiaolong', requested_at:'2026-11-27T13:56:31', version:6},
+  {kind:'event',   id:11, at:'2026-11-27T13:57:18', action:'BASELINE_PUBLISH', actor:'admin', version:6},
+  {kind:'request', id:10, at:'2026-11-24T17:23:47', status:'APPROVED', actor:'chenxiaolong', requested_at:'2026-11-24T17:22:48', version:5},
+  {kind:'event',   id:10, at:'2026-11-24T17:23:47', action:'BASELINE_PUBLISH', actor:'admin', version:5},
+  {kind:'request', id:9,  at:'2026-11-24T16:13:30', status:'APPROVED', actor:'chenxiaolong', requested_at:'2026-11-24T16:11:40', version:4, comment:'ds-api的平台管理'},
+  {kind:'event',   id:9,  at:'2026-11-24T16:13:30', action:'PUBLISH', actor:'admin', version:4, affected:3, notified:true, review_comment:'审核通过发布申请：ds-api的平台管理', snapshot:true},
+  {kind:'event',   id:12, at:'2026-11-24T16:09:10', action:'BASELINE_PUBLISH', actor:'admin', version:4},
+  {kind:'event',   id:13, at:'2026-11-24T16:05:40', action:'BASELINE_PUBLISH', actor:'chenxiaolong', version:3},
+  {kind:'event',   id:14, at:'2026-11-24T10:58:27', action:'META_UPDATE', actor:'chenxiaolong', version:3, reason:'补充工具说明与默认模型，便于同事直接复用'},
+  {kind:'event',   id:15, at:'2026-11-20T09:12:04', action:'TOGGLE_ENABLED', actor:'admin'},
+  {kind:'request', id:7,  at:'2026-11-18T15:02:10', status:'REJECTED', actor:'chenxiaolong', requested_at:'2026-11-18T14:58:00', version:2, comment:'上线稳定的 v2 版本', review_comment:'请先补齐回归测试记录'},
+  {kind:'event',   id:16, at:'2026-11-18T11:30:00', action:'SHARE_SEND', actor:'chenxiaolong', reason:'分享给数据组做联调'},
+  {kind:'event',   id:17, at:'2026-11-10T18:20:00', action:'TRANSFER_OWNER', actor:'admin', reason:'权属转交给陈小龙'},
+  {kind:'event',   id:18, at:'2026-10-22T13:36:00', action:'UNPUBLISH', actor:'admin', version:1, reason:'沙箱环境临时下架'},
+  {kind:'event',   id:19, at:'2025-12-30T10:05:00', action:'PUBLISH', actor:'admin', version:1, review_comment:'首次上架系统级'}
+];
+
+const TONE = {
+  request: e => e.status === 'APPROVED' ? {dot:'green', label:'申请已通过'}
+    : e.status === 'REJECTED' ? {dot:'red', label:'申请被驳回'}
+    : e.status === 'CANCELLED' ? {dot:'gray', label:'申请人撤回'}
+    : {dot:'amber', label: '提交版本上线申请'},
+  event: e => ({
+    PUBLISH:{dot:'green',label:'发布为系统级'},
+    UNPUBLISH:{dot:'red',label:'下架（取消系统级）'},
+    META_UPDATE:{dot:'blue',label:'修改元数据'},
+    TOGGLE_ENABLED:{dot:'gray',label:'启用状态变更'},
+    BASELINE_PUBLISH:{dot:'blue',label:'发布新基线版本'},
+    TRANSFER_OWNER:{dot:'blue',label:'变更权属人'},
+    SHARE_SEND:{dot:'blue',label:'分享给同事'},
+    SHARE_ACCEPT:{dot:'blue',label:'分享被接受'},
+    SHARE_REJECT:{dot:'gray',label:'分享被拒绝'},
+    SHARE_REVOKE:{dot:'amber',label:'分享已作废'}
+  }[e.action] || {dot:'gray', label:e.action || '操作'})
+};
+const toneOf = e => (e.kind === 'request' ? TONE.request : TONE.event)(e);
+
+const WEEK = ['周日','周一','周二','周三','周四','周五','周六'];
+const now = new Date('2026-11-27T14:10:00');
+const dayKey = iso => new Date(iso).toISOString().slice(0,10);
+
+const sameDay = (a,b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+const dayLabel = d => {
+  const y = new Date(now); y.setDate(y.getDate()-1);
+  if (sameDay(d, now)) return '今天';
+  if (sameDay(d, y)) return '昨天';
+  return d.getFullYear() === now.getFullYear()
+    ? `${d.getMonth()+1}月${d.getDate()}日`
+    : `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+};
+
+function groupEntriesByDay(list){
+  const map = new Map();
+  [...list]
+    .sort((a,b) => new Date(b.at) - new Date(a.at))
+    .forEach(entry => {
+      const key = dayKey(entry.at);
+      if (!map.has(key)) map.set(key, { key, date: new Date(entry.at), items: [] });
+      map.get(key).items.push(entry);
+    });
+  return [...map.values()];
+}
+
+const timeOf = iso => new Date(iso).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit'});
+const fullOf = iso => new Date(iso).toLocaleString('zh-CN',{hour12:false}).replace(/\//g,'/');
+
+function entryHtml(e){
+  const tone = toneOf(e);
+  const meta = [];
+  meta.push(e.actor || '系统');
+  if (e.version) meta.push(`版本 v${e.version}`);
+  if (e.affected !== undefined) meta.push(`影响 ${e.affected} 人`);
+  if (e.notified !== undefined) meta.push(e.notified ? '已发站内信' : '未通知用户');
+  const extraTime = (e.kind === 'request' && e.requested_at && e.requested_at !== e.at)
+    ? `<span class="time" style="color:var(--ink-4)">（${fullOf(e.requested_at)} 提交）</span>` : '';
+  return `<li>
+    <span class="dot ${tone.dot}"></span>
+    <div class="ev-title">
+      <span class="label">${tone.label}</span>
+      <span class="time">${fullOf(e.at)}</span>${extraTime}
+    </div>
+    <p class="ev-meta">${meta.join(' · ')}</p>
+    ${e.reason ? `<div class="bubble">${e.reason}</div>` : ''}
+    ${e.comment ? `<div class="bubble reason">申请理由：${e.comment}</div>` : ''}
+    ${e.review_comment ? `<div class="bubble">审核意见：${e.review_comment}</div>` : ''}
+    ${e.snapshot ? `<span class="snap-link" data-snap="1">查看内容快照</span>` : ''}
+  </li>`;
+}
+
+// 组头版本：只统计「带版本号」的事件（启用状态变更 / 权属变更 / 分享类没有版本），
+// 按版本号升序去重；超过 3 个折叠成 +N，避免把组头撑成一行版本墙。
+function versionsOf(items){
+  const nums = [...new Set(items.map(e => Number(e.version)).filter(n => Number.isFinite(n) && n > 0))]
+    .sort((a,b) => a - b);
+  const shown = nums.slice(0, 3).map(n => `<span class="ver">v${n}</span>`);
+  if (nums.length > 3) shown.push(`<span class="ver more">+${nums.length - 3}</span>`);
+  return shown.length ? `<span class="vers">${shown.join('')}</span>` : '';
+}
+
+function summaryOf(items){
+  const counts = {};
+  items.forEach(e => { const l = toneOf(e).label; counts[l] = (counts[l]||0)+1; });
+  return Object.entries(counts).slice(0,3).map(([k,v]) => v > 1 ? `${k} ×${v}` : k).join(' · ');
+}
+
+function render(plan){
+  const groups = groupEntriesByDay(ENTRIES);
+  const body = document.getElementById('drawerBody');
+  const tools = document.getElementById('drawerTools');
+  const collapseAllFirst = plan !== 'A';
+
+  body.innerHTML = groups.map((g, idx) => {
+    const collapsed = collapseAllFirst && idx > 0;
+    const last = g.items[0];
+    const summary = plan === 'A'
+      ? ''
+      : (plan === 'C' ? summaryOf(g.items) : `最近 ${toneOf(last).label}`);
+    const vers = plan === 'A' ? '' : versionsOf(g.items);
+    return `<section class="group ${collapsed ? 'collapsed' : ''}" data-key="${g.key}">
+      <button class="group-head" type="button">
+        <svg class="caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+        <span class="date">${dayLabel(g.date)}</span>
+        <span class="dow">${WEEK[g.date.getDay()]}</span>
+        <span class="count">${g.items.length}</span>
+        ${vers}
+        <span class="summary">${summary}</span>
+      </button>
+      <div class="group-body">
+        <ol class="timeline">${g.items.map(entryHtml).join('')}</ol>
+      </div>
+    </section>`;
+  }).join('');
+
+  tools.querySelectorAll('[data-act]').forEach(b => {
+    b.classList.toggle('hidden', plan === 'A' && b.dataset.act === 'expand');
+  });
+
+  body.querySelectorAll('.group-head').forEach(head => {
+    head.addEventListener('click', () => head.parentElement.classList.toggle('collapsed'));
+  });
+  body.querySelectorAll('[data-snap]').forEach(link => {
+    link.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const li = link.closest('li');
+      const existing = li.querySelector('.snap');
+      if (existing) { existing.remove(); link.textContent = '查看内容快照'; return; }
+      link.textContent = '收起内容快照';
+      const box = document.createElement('div');
+      box.className = 'snap';
+      box.innerHTML = `元数据：DS-Token 平台管理助手（ds-token-manager）<br>
+        版本 v4 · 模型 DeepSeek-V4-Pro<br>
+        工具：ds_api_list、ds_api_create、model_config_update<br>
+        <pre>你负责管理 ds token 平台的 API 与模型配置。
+- 修改前先列出当前配置
+- 涉及额度调整必须二次确认</pre>`;
+      li.appendChild(box);
+    });
+  });
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+    render(tab.dataset.plan);
+  });
+});
+
+document.getElementById('drawerTools').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-act]');
+  if (!btn) return;
+  const collapse = btn.dataset.act === 'collapse';
+  document.querySelectorAll('#drawerBody .group').forEach(g => g.classList.toggle('collapsed', collapse));
+});
+
+document.getElementById('themeBtn').addEventListener('click', ev => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  ev.target.textContent = dark ? '切换深色' : '切换浅色';
+});
+
+render('A');
+</script>
+</body>
+</html>
