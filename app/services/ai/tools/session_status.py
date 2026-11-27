@@ -377,6 +377,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         "uploads_dir": None,
         "sandbox_dir": None,
         "sandbox_policy": None,
+        "sandbox_logical_root": None,
     }
     limitations: list[str] = []
     if context is None or getattr(context, "user_id", None) is None:
@@ -416,6 +417,15 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
             user_id=user_id,
             user_name=user_name,
         )
+        sandbox_logical_root = None
+        try:
+            from app.services.ai.runtime.agentscope.workspace import (
+                resolve_sandbox_logical_root,
+            )
+
+            sandbox_logical_root = await resolve_sandbox_logical_root(sandbox_policy)
+        except Exception:  # noqa: BLE001 - 辅助字段解析失败不影响其余工作区摘要
+            sandbox_logical_root = None
         return {
             "user_root": _directory_state(user_root),
             "session_workdir": _directory_state(session_path),
@@ -423,6 +433,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
             "uploads_dir": _directory_state(os.path.join(user_root, "uploads")),
             "sandbox_dir": _directory_state(os.path.join(user_root, "sandbox")),
             "sandbox_policy": sandbox_policy,
+            "sandbox_logical_root": sandbox_logical_root,
         }, limitations
     except Exception:
         limitations.append("工作区路径解析失败，路径信息不可用")

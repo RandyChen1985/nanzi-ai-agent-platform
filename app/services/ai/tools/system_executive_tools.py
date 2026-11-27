@@ -58,24 +58,143 @@ def _resolve_path_access_user_info() -> dict[str, Any] | None:
         return None
 
 
+_LOGICAL_WORKSPACE_ROOT = "/workspace"
+_LOGICAL_PUBLIC_DOCS_ROOT = "/workspace/public/docs"
+
+
+def _resolve_current_user_workspace_root_sync() -> Optional[str]:
+    """同步解析当前用户的宿主机工作区根目录，用于将 ``/workspace/...`` 映射到宿主路径。"""
+    from app.utils.fs_access import get_user_private_workspace_root
+
+    user_info = _resolve_path_access_user_info()
+    if user_info:
+        root = get_user_private_workspace_root(user_info)
+        if root:
+            return os.path.abspath(root)
+    try:
+        from app.core.context import get_current_agent_context
+        from app.services.ai.runtime.agentscope.workspace import (
+            default_workspace_root,
+            resolve_user_workspace_root,
+        )
+
+        ctx = get_current_agent_context()
+        if ctx is not None and getattr(ctx, "user_id", None) is not None:
+            dims = getattr(ctx, "user_dimensions", None) or {}
+            user_name = dims.get("user_name") or dims.get("username")
+            ws_dir = resolve_user_workspace_root(
+                root=default_workspace_root(),
+                user_id=ctx.user_id,
+                user_name=str(user_name).strip() if user_name else None,
+            )
+            if ws_dir:
+                return os.path.abspath(ws_dir)
+    except Exception:  # noqa: BLE001 - 上下文缺失时交回后续安全拦截
+        return None
+    return None
+
+
+def _is_path_inside_root(candidate: str, root: str) -> bool:
+    """同时校验词法路径与解引用软链接后的真实路径均落在 root 内。"""
+    abs_root = os.path.abspath(root)
+    abs_cand = os.path.abspath(candidate)
+    real_root = os.path.realpath(abs_root)
+    real_cand = os.path.realpath(abs_cand)
+    try:
+        lexical_ok = os.path.commonpath([abs_cand, abs_root]) == abs_root
+        real_ok = os.path.commonpath([real_cand, real_root]) == real_root
+    except ValueError:
+        return False
+    return lexical_ok and real_ok
+
+
+def _normalize_logical_workspace_path(path: str) -> Optional[str]:
+    """若为 ``/workspace`` 逻辑路径则返回 posix 规范化后的路径；越出 ``/workspace`` 立即抛 ValueError。"""
+    import posixpath
+
+    raw = str(path or "").strip()
+    if raw != _LOGICAL_WORKSPACE_ROOT and not raw.startswith(f"{_LOGICAL_WORKSPACE_ROOT}/"):
+        return None
+    normalized = posixpath.normpath(raw)
+    if normalized != _LOGICAL_WORKSPACE_ROOT and not normalized.startswith(
+        f"{_LOGICAL_WORKSPACE_ROOT}/"
+    ):
+        raise ValueError(
+            f"安全拦截：路径越界！/workspace 路径不得跳出当前用户工作区，当前请求路径为 {path}"
+        )
+    return normalized
+
+
+def _is_logical_public_docs_path(path: str) -> bool:
+    try:
+        normalized = _normalize_logical_workspace_path(path)
+    except ValueError:
+        return False
+    if normalized is None:
+        return False
+    return normalized == _LOGICAL_PUBLIC_DOCS_ROOT or normalized.startswith(
+        f"{_LOGICAL_PUBLIC_DOCS_ROOT}/"
+    )
+
+
+def _translate_logical_workspace_path_sync(path: str) -> tuple[str, Optional[str]]:
+    """将沙箱逻辑路径 ``/workspace/...`` 转为宿主机物理路径。
+
+    返回 ``(转换后的路径, 额外合法根前缀或 None)``；非 ``/workspace`` 开头原样返回。
+    先做 posix 路径规范化消除 ``//``、``/./`` 与 ``uploads/../public/docs`` 变体，
+    再同时校验词法路径与 realpath，杜绝 ``..`` 与符号链接越界。
+    """
+    raw = str(path or "").strip()
+    normalized = _normalize_logical_workspace_path(raw)
+    if normalized is None:
+        return raw, None
+
+    if normalized == _LOGICAL_PUBLIC_DOCS_ROOT or normalized.startswith(
+        f"{_LOGICAL_PUBLIC_DOCS_ROOT}/"
+    ):
+        from app.utils.fs_paths import get_data_base_dir
+
+        docs_root = os.path.abspath(os.path.join(get_data_base_dir(), "docs"))
+        rel = normalized[len(_LOGICAL_PUBLIC_DOCS_ROOT) :].lstrip("/\\")
+        candidate = os.path.abspath(os.path.join(docs_root, rel))
+        if not _is_path_inside_root(candidate, docs_root):
+            raise ValueError(f"安全拦截：路径越界！当前请求路径为 {path}")
+        return candidate, docs_root
+
+    user_root = _resolve_current_user_workspace_root_sync()
+    if not user_root:
+        return raw, None
+    rel = normalized[len(_LOGICAL_WORKSPACE_ROOT) :].lstrip("/\\")
+    candidate = os.path.abspath(os.path.join(user_root, rel))
+    if not _is_path_inside_root(candidate, user_root):
+        raise ValueError(
+            f"安全拦截：路径越界！/workspace 路径不得跳出当前用户工作区，当前请求路径为 {path}"
+        )
+    return candidate, user_root
+
+
 def validate_safe_path(path: str) -> str:
     """
     安全校验：限制物理读写仅允许在合法的 data 安全目录下，防止路径穿越 (..)。
+    同时支持将沙箱逻辑路径 ``/workspace/...`` 安全映射到当前用户宿主工作区。
     """
-    abs_path = os.path.abspath(path)
-    
+    translated, extra_allowed_prefix = _translate_logical_workspace_path_sync(path)
+    abs_path = os.path.abspath(translated)
+
     # 获得当前项目的绝对路径和典型的 docker 挂载路径
     project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
-    
+
     # 合法的目录前缀列表
     allowed_prefixes = [
         os.path.join(project_root, "data"),
-        "/app/data"
+        "/app/data",
     ]
-    
+    if extra_allowed_prefix:
+        allowed_prefixes.append(os.path.abspath(extra_allowed_prefix))
+
     # 额外兼容：支持直接操作相对路径的 data 目录
     allowed_prefixes.append(os.path.abspath("data"))
-    
+
     # 额外允许技能物理目录，以便 create_skills 等工具能正常操作宿主机 ~/.agent/skills 或容器 /app/data/skills
     try:
         from app.core.config import settings
@@ -83,7 +202,7 @@ def validate_safe_path(path: str) -> str:
             allowed_prefixes.append(os.path.abspath(settings.SKILLS_DIR))
     except Exception:
         pass
-    
+
     is_safe = False
     for prefix in allowed_prefixes:
         try:
@@ -92,10 +211,10 @@ def validate_safe_path(path: str) -> str:
                 break
         except ValueError:
             continue
-            
+
     if not is_safe:
         raise ValueError(f"安全拦截：路径越界！仅允许访问 data 及其子目录下的文件。当前请求路径为 {path}")
-        
+
     return abs_path
 
 
@@ -832,6 +951,10 @@ async def write_file(
         artifact_type: 产物类型，仅当 save_artifact=True 时生效（如 document/txt/markdown），默认 "document"。
     """
     try:
+        if _is_logical_public_docs_path(path):
+            raise ValueError(
+                f"安全拦截：{_LOGICAL_PUBLIC_DOCS_ROOT} 为只读公共文档目录，禁止写入（{path}）"
+            )
         abs_path = validate_safe_path(path)
 
         # 自动创建父级目录

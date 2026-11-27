@@ -1408,6 +1408,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
 
         from app.services.ai.runtime.agentscope.workspace import (
             append_session_workspace_sandbox_to_system_prompt,
+            normalize_runtime_messages_workspace_paths_for_sandbox,
         )
 
         system_content = await append_session_workspace_sandbox_to_system_prompt(
@@ -1436,6 +1437,12 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 runtime_messages,
                 HumanMessage(content=session_artifact_context),
             )
+        runtime_messages = await normalize_runtime_messages_workspace_paths_for_sandbox(
+            runtime_messages,
+            user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
+        )
         runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         max_steps_str = await ConfigService.get("agent_max_iterations")

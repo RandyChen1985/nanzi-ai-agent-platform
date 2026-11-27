@@ -5368,7 +5368,7 @@ onUnmounted(() => {
                 </button>
 
                 <button
-                  @click="copyContent(msg.content, $event)"
+                  @click="copyContent(splitUserMessageContent(msg.content).userPart || msg.content, $event)"
                   class="text-xs text-gray-400 hover:text-gray-600 flex items-center space-x-1 transition-colors"
                 >
                   <svg

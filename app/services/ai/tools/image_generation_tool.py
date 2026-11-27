@@ -1457,9 +1457,18 @@ async def _read_source_image(image: str, *, context: Any) -> tuple[str, bytes]:
         if not path.is_file():
             raise ValueError("这张图的文件已经不在原位置了，请让用户重新上传或重新生成。")
     else:
-        candidate = Path(raw).expanduser()
-        if not candidate.is_absolute():
-            candidate = scope / candidate
+        if raw == "/workspace" or raw.startswith("/workspace/"):
+            rel = raw[len("/workspace") :].lstrip("/\\")
+            candidate = scope / rel
+        elif raw == f"/app/data/agent_workspaces/{user_key}" or raw.startswith(
+            f"/app/data/agent_workspaces/{user_key}/"
+        ):
+            rel = raw[len(f"/app/data/agent_workspaces/{user_key}") :].lstrip("/\\")
+            candidate = scope / rel
+        else:
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = scope / candidate
         path = candidate.resolve()
         if not _path_within(path, scope):
             raise ValueError(

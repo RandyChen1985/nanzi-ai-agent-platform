@@ -327,8 +327,49 @@ def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None)
             return True
 
         project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
-        abs_path = os.path.realpath(os.path.abspath(path))
-        allowed_roots = [os.path.realpath(project_root), os.path.realpath("/app")]
+        import posixpath
+
+        raw_input = str(path or "").strip()
+        translated_input = raw_input
+        extra_allowed_roots: list[str] = []
+        if raw_input == "/workspace" or raw_input.startswith("/workspace/"):
+            norm_logical = posixpath.normpath(raw_input)
+            if norm_logical != "/workspace" and not norm_logical.startswith("/workspace/"):
+                return "安全拦截：普通用户只能导航公共目录和自己的私有工作区，禁止访问其他用户目录。"
+            if norm_logical == "/workspace/public/docs" or norm_logical.startswith("/workspace/public/docs/"):
+                from app.utils.fs_paths import get_data_base_dir
+
+                docs_root = os.path.realpath(os.path.join(get_data_base_dir(), "docs"))
+                rel = norm_logical[len("/workspace/public/docs") :].lstrip("/\\")
+                candidate = os.path.realpath(os.path.join(docs_root, rel))
+                try:
+                    inside_docs = os.path.commonpath((candidate, docs_root)) == docs_root
+                except ValueError:
+                    inside_docs = False
+                if not inside_docs:
+                    return f"安全拦截：路径越界！禁止导航 {path}。"
+                translated_input = candidate
+                extra_allowed_roots.append(docs_root)
+            else:
+                if not private_workspace_root:
+                    return f"安全拦截：无法定位当前用户工作区，禁止导航 {path}。"
+                rel = norm_logical[len("/workspace") :].lstrip("/\\")
+                candidate = os.path.realpath(os.path.join(private_workspace_root, rel))
+                try:
+                    inside_ws = os.path.commonpath((candidate, private_workspace_root)) == private_workspace_root
+                except ValueError:
+                    inside_ws = False
+                if not inside_ws:
+                    return "安全拦截：普通用户只能导航公共目录和自己的私有工作区，禁止访问其他用户目录。"
+                translated_input = candidate
+                extra_allowed_roots.append(private_workspace_root)
+
+        abs_path = os.path.realpath(os.path.abspath(translated_input))
+        allowed_roots = [
+            os.path.realpath(project_root),
+            os.path.realpath("/app"),
+            *extra_allowed_roots,
+        ]
         if not any(
             os.path.commonpath((abs_path, root)) == root
             for root in allowed_roots

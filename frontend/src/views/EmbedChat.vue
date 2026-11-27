@@ -740,7 +740,7 @@
                 <span class="hidden sm:inline">编辑</span>
               </button>
               <button
-                @click="copyMessage(visibleStreamBody(msg))"
+                @click="copyMessage(splitUserMessageContent(msg.content).userPart || visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"

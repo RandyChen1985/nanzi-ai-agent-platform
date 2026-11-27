@@ -691,7 +691,17 @@ class DataAgentRunner(BaseExecutor):
             yield chunk
             if chunk.get("status") == "error" and not chunk.get("type"):
                 return
+        from app.services.ai.runtime.agentscope.workspace import (
+            normalize_runtime_messages_workspace_paths_for_sandbox,
+        )
+
         runtime_messages = [message for message in normalize_messages_for_llm(convert_history_to_messages(history, strip_thought=True)) if not isinstance(message, SystemMessage)]
+        runtime_messages = await normalize_runtime_messages_workspace_paths_for_sandbox(
+            runtime_messages,
+            user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
+        )
         raw_user_question = (
             str(self.current_user_query)
             if self.current_user_query is not None

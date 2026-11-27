@@ -110,6 +110,9 @@ def _path_under(path: Path, parent: Path) -> bool:
         return False
 
 
+_DOCKER_WORKSPACE_LOGICAL_ROOT = "/workspace"
+
+
 def _normalize_platform_path(path: str) -> Path:
     data_root = Path(get_data_base_dir()).resolve()
     raw_path = str(path or "")
@@ -121,6 +124,50 @@ def _normalize_platform_path(path: str) -> Path:
     if not candidate.is_absolute():
         candidate = data_root / candidate
     return candidate.resolve()
+
+
+def _is_logical_workspace_path(raw_path: str) -> bool:
+    return raw_path == _DOCKER_WORKSPACE_LOGICAL_ROOT or raw_path.startswith(
+        f"{_DOCKER_WORKSPACE_LOGICAL_ROOT}/"
+    )
+
+
+def _resolve_logical_workspace_candidate(
+    raw_path: str,
+    *,
+    user_workspace_dir: Path | None,
+    session_workdir: Path | None,
+) -> Path | None:
+    """将 ``/workspace/...`` 或用户工作区相对路径映射为当前用户的宿主物理路径。
+
+    仅在路径以 ``/workspace`` 开头、或为非绝对相对路径且命中当前用户工作区/会话目录时生效；
+    任何 ``..`` 逃逸出当前用户工作区均直接拒绝。
+    """
+    cleaned = str(raw_path or "").strip()
+    if not cleaned:
+        return None
+
+    if _is_logical_workspace_path(cleaned):
+        if user_workspace_dir is None:
+            raise DocumentPathError("当前会话缺少工作目录，无法访问该文件")
+        rel = cleaned[len(_DOCKER_WORKSPACE_LOGICAL_ROOT) :].lstrip("/\\")
+        candidate = (user_workspace_dir / rel).resolve()
+        if not _path_under(candidate, user_workspace_dir):
+            raise DocumentPathError("文件不在当前会话允许访问的目录中")
+        return candidate
+
+    if os.path.isabs(cleaned):
+        return None
+
+    if user_workspace_dir is not None:
+        ws_candidate = (user_workspace_dir / cleaned).resolve()
+        if _path_under(ws_candidate, user_workspace_dir) and ws_candidate.is_file():
+            return ws_candidate
+    if session_workdir is not None:
+        sess_candidate = (session_workdir / cleaned).resolve()
+        if _path_under(sess_candidate, session_workdir) and sess_candidate.is_file():
+            return sess_candidate
+    return None
 
 
 def _validate_extension(path: Path, allowed_extensions: Iterable[str]) -> None:
@@ -145,8 +192,59 @@ async def resolve_document_input_path(
     ``max_bytes`` 默认 20MB（Office 工具的解析内存上限）。知识库上传允许 256MB，
     由调用方显式传自己的上限——上限是业务口径，不该由「路径校验」替他决定。
     """
-    candidate = _normalize_platform_path(path)
-    if not candidate.is_file():
+    raw_input = str(path or "").strip()
+    workspace_root_cached: Path | None = None
+    user_workspace_path_cached: Path | None = None
+    session_workdir_cached: Path | None = None
+
+    async def _load_user_workspace_dirs() -> tuple[Path, Path | None, Path | None]:
+        nonlocal workspace_root_cached, user_workspace_path_cached, session_workdir_cached
+        if workspace_root_cached is None:
+            workspace_root_cached = Path(await resolve_workspace_root()).resolve()
+            from app.services.ai.runtime.agentscope.workspace import resolve_user_workspace_root
+
+            user_ws_str = resolve_user_workspace_root(
+                root=str(workspace_root_cached),
+                user_id=user_id,
+                user_name=user_name,
+            )
+            user_workspace_path_cached = Path(user_ws_str).resolve() if user_ws_str else None
+            if conversation_id:
+                session_workdir_cached = Path(
+                    resolve_session_workdir(
+                        root=str(workspace_root_cached),
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        user_name=user_name,
+                    )
+                ).resolve()
+        return workspace_root_cached, user_workspace_path_cached, session_workdir_cached
+
+    candidate: Path | None = None
+    if _is_logical_workspace_path(raw_input):
+        _, user_ws_path, sess_dir = await _load_user_workspace_dirs()
+        candidate = _resolve_logical_workspace_candidate(
+            raw_input,
+            user_workspace_dir=user_ws_path,
+            session_workdir=sess_dir,
+        )
+    else:
+        default_candidate = _normalize_platform_path(raw_input)
+        if default_candidate.is_file() or os.path.isabs(raw_input):
+            candidate = default_candidate
+        else:
+            # 相对路径（如 uploads/xxx.docx、docs/report.docx）优先回退到当前用户工作区 / 会话目录
+            _, user_ws_path, sess_dir = await _load_user_workspace_dirs()
+            candidate = (
+                _resolve_logical_workspace_candidate(
+                    raw_input,
+                    user_workspace_dir=user_ws_path,
+                    session_workdir=sess_dir,
+                )
+                or default_candidate
+            )
+
+    if candidate is None or not candidate.is_file():
         raise DocumentPathError("文件不存在或不可访问")
     if candidate.stat().st_size > max_bytes:
         limit_mb = max(1, max_bytes // (1024 * 1024))
@@ -165,15 +263,8 @@ async def resolve_document_input_path(
             raise DocumentPathError("该上传文件不属于当前会话附件")
         return candidate
 
-    workspace_root = Path(await resolve_workspace_root()).resolve()
-    from app.services.ai.runtime.agentscope.workspace import resolve_user_workspace_root
-
-    user_workspace_dir = resolve_user_workspace_root(
-        root=str(workspace_root),
-        user_id=user_id,
-        user_name=user_name,
-    )
-    if user_workspace_dir and _path_under(candidate, Path(user_workspace_dir).resolve()):
+    workspace_root, user_workspace_path, session_workdir = await _load_user_workspace_dirs()
+    if user_workspace_path is not None and _path_under(candidate, user_workspace_path):
         return candidate
 
     if not conversation_id:
@@ -187,15 +278,7 @@ async def resolve_document_input_path(
     ).resolve()
     if _path_under(candidate, user_docs_dir):
         return candidate
-    session_workdir = Path(
-        resolve_session_workdir(
-            root=str(workspace_root),
-            user_id=user_id,
-            conversation_id=conversation_id,
-            user_name=user_name,
-        )
-    ).resolve()
-    if _path_under(candidate, session_workdir):
+    if session_workdir is not None and _path_under(candidate, session_workdir):
         return candidate
     from app.services.ai.runtime.agentscope.workspace import resolve_legacy_session_workdir
 

@@ -1098,6 +1098,8 @@ class AgentServicePrompts:
         logical_session_workdir: str | None = None,
         logical_docs_dir: str | None = None,
         logical_public_docs_dir: str | None = None,
+        uploads_dir: str | None = None,
+        logical_uploads_dir: str | None = None,
         public_skills_path: str | None = None,
         personal_skills_path: str | None = None,
         sandbox_skills_dir: str | None = None,
@@ -1119,18 +1121,40 @@ class AgentServicePrompts:
         visible_session_workdir = session_workdir
         visible_docs_dir = docs_dir
         is_sandbox = bool(logical_workspace_root)
+        is_mounted_user_workspace = bool(
+            is_sandbox and logical_session_workdir and logical_docs_dir
+        )
         logical_root_text = (
-            f"- **Bash 沙箱工作区**：`{logical_workspace_root}`（沙箱模式下仅 Bash 使用此容器路径；宿主机持久化路径由平台管理）\n"
+            (
+                f"- **统一沙箱工作区**：`{logical_workspace_root}`（沙箱模式下本人工作区文件可统一使用此路径，Bash 与宿主文件/文档/图片工具均原生支持；宿主机持久化路径由平台管理）\n"
+                if is_mounted_user_workspace
+                else f"- **Bash 沙箱工作区**：`{logical_workspace_root}`（沙箱模式下仅 Bash 使用此容器路径；宿主机持久化路径由平台管理）\n"
+            )
             if is_sandbox
             else "- **Bash 与文件工具同根**：当前为 local 执行策略，Bash 直接运行在后端服务环境；公共目录（公共技能、公共文档、branding）的 `paths.bash` 与 `paths.file_tools` 是同一套真实路径，用户工作区内的相对路径相对工作区根，不要去猜 `/workspace` 容器路径。\n"
         )
         sandbox_path_text = (
-            "- **Bash 使用沙箱路径**：沙箱模式下 Bash 使用 `/workspace/...` 路径；\n"
-            "- **Read/Write/Edit/Glob/Grep 使用文件工具路径**：这些工具在后端服务侧执行，优先使用目录清单中的 `paths.file_tools` 或用户工作区相对路径；\n"
-            "- **路径转换规则**：共享用户工作区中的 `/workspace/docs/...`、`/workspace/sessions/...` 等路径可以由工具层转换后交给文件工具；不要将 `/tmp` 等容器专属路径交给 Read；\n"
+            (
+                f"- **统一工作区路径优先（沙箱模式）**：本人工作区文件（`uploads/`、`docs/`、`sessions/`）**可统一使用 `{logical_workspace_root}/...` 路径**——"
+                f"Bash、Read/Write/Edit/Glob/Grep、Word/Excel 文档工具、read_image、edit_image、browser_upload、send_email 附件及 publish_generated_file 均原生支持 `{logical_workspace_root}/...`；"
+                "严禁在沙箱 Bash 中直接使用 `/app/data/...` 宿主机物理路径；\n"
+                if is_mounted_user_workspace
+                else ""
+            )
+            + f"- **Bash 使用沙箱路径**：沙箱模式下 Bash 使用 `{logical_workspace_root}/...` 路径；\n"
+            "- **Read/Write/Edit/Glob/Grep 使用文件工具路径**：这些工具在后端服务侧执行，支持目录清单中的 `paths.file_tools` 或用户工作区相对路径"
+            + (f"（以及共享工作区的 `{logical_workspace_root}/...`）" if is_mounted_user_workspace else "")
+            + "；\n"
+            "- **路径转换规则**：共享用户工作区中的 `/workspace/uploads/...`、`/workspace/docs/...`、`/workspace/sessions/...` 等路径均可由工具层自动转换后交给宿主机工具；不要将 `/tmp` 等容器专属路径交给 Read；\n"
             + (
                 f"- **Bash 会话目录**：`{logical_session_workdir}`；文件工具对应宿主/后端路径为 `{session_workdir}`。\n"
                 f"- **Bash 文档目录**：`{logical_docs_dir}`；文件工具对应宿主/后端路径为 `{docs_dir}`。\n"
+                + (
+                    f"- **用户上传附件目录**：沙箱与全工具统一路径 `{logical_uploads_dir}`"
+                    + (f"；对应宿主/后端路径为 `{uploads_dir}`。\n" if uploads_dir else "。\n")
+                    if logical_uploads_dir
+                    else ""
+                )
                 + (
                     f"- **Bash 公共文档目录**：`{logical_public_docs_dir}`（只读）；文件工具对应后端 `data/docs` 路径。\n"
                     if logical_public_docs_dir
@@ -1275,8 +1299,12 @@ class AgentServicePrompts:
             + "- 平台 branding 只读（沙箱内不挂载，禁止尝试写入）；服务根目录帮助文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`），禁止递归扫描 `/app`。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；"
             + skills_text
             + skills_read_guide
-            + "用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
-            "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
+            + (
+                f"用户消息 `---` 之后或附件块中给出的**`{logical_workspace_root}/...` 统一工作区路径或绝对路径**可直接用于 Read/Grep、Word/Excel、read_image、edit_image 及 Bash。\n"
+                if is_mounted_user_workspace
+                else "用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
+            )
+            + "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
             "- **文件读写与搜索工具优先原则**：文件读写与搜索一律走宿主侧文件工具（Read/Write/Edit/Glob/Grep），不要用 Bash 访问文件（严禁通过 Bash 运行 cat、head、echo >、sed 等命令读写或修改常规文件）。\n"
