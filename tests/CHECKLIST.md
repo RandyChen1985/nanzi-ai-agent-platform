@@ -1560,3 +1560,15 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 |---|---|---|---|
 | 发布历史跨天难扫读：一条连续时间线里混着多天记录 | 前端：`frontend/src/components/agent/AgentSystemHistoryDrawer.vue`、`frontend/src/utils/agentPublishHistory.ts`（新增）；测试：`tests/frontend/test_agent_publish_history_grouping_contract.py`（4 条） | 抽屉改为**按自然日分组**：组头 = 日期标签 + 星期 + 条数 + **当天涉及的版本号** + （折叠时）「最近一条是 X」，整行可点折叠，工具条提供「全部展开 / 全部收起」。版本号只统计带 `version_number` 的条目（启用状态变更 / 变更权属人 / 分享类没有版本），升序去重、最多 3 个、超出折叠成 `+N`；某天无版本时组头不出现空位。**默认只展开最近一天**（历史最多 100 条，全展开仍要长滚动），折叠结果按智能体分别记进 `sessionStorage`，同一次会话内重开抽屉保持。刻意**不做**「日期 → 版本」二级分组：同一天常连发多个版本会切出一堆残组，且同一版本的「申请 → 审核 → 发布」可能跨天，按版本分组反把线索拆散。日期标签、分组排序、`at` 缺失兜底、版本汇总全部抽到纯函数，由 node 真跑（今天/昨天/同年/跨年、非法时间落「时间未知」组不丢弃、本地自然日键不跨 UTC 边界）。 | `tests/frontend/test_agent_publish_history_grouping_contract.py` 4 passed（含 node 行为测试）；前端全量 `5635 passed / 1 skipped`；`vue-tsc --noEmit` exit 0 |
 | 原「条数提示条劫持时间线」契约随结构解耦 | 测试：`tests/frontend/test_agent_center_fix_contract.py` | 旧契约断言「`totalCount > entries.length` 提示条前 160 字符内必须有 `<div v-else>`」，目的是防 `<ol v-else>` 误绑到提示条导致时间线消失。本次把条数提示上移成独立工具条（与加载中/失败/空/有数据那条 v-if-v-else 链解耦），改为断言：工具条是独立 `v-if`、分组时间线仍挂在最后那个 `v-else` 容器内且排在占位分支之后、截断提示文案仍在。 | 同批 `test_agent_center_fix_contract.py` + 分享/转交/分组四份契约 52 passed |
+
+## 2026-11-27 聊天日志「对话」Tab 改为左右分栏回放 + AI 回复标注归属智能体
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| 日志里分不清「谁说的、哪个智能体回的」 | 前端：`frontend/src/views/ChatLogs.vue`；测试：`tests/frontend/test_chat_logs_conversation_layout_contract.py`（3 条）；原型：`prototypes/2026-11-27-chat-logs-conversation-layout.html` | ①用户消息改右对齐主色气泡（`max-w-[74%]`，尖角朝头像），AI 回复左对齐白底文档流且**不限宽**——正文含表格/代码/`<sql_plan>`/图表，套窄气泡会被挤坏；②轮次号 + 时间 + 状态 + 耗时压成居中分隔带（两条细线夹住），不再独占一行，扫读时先认出新的一问一答；③AI 回复头新增归属 chip：`turn.agent_display_name || getAgentName(turn.agent_id)` + `agent_version`，因为同一会话常在主助手/专家/子代理之间切换，只看「AI 回复」四个字分不清是谁答的；④模型名从轮次头移到 AI 回复头，避免同一信息渲染两处。原有能力全部保留：执行 N 步、查看此轮轨迹、渲染/源码切换、空回复说明、主动提问卡回放、系统规则展开、定时任务徽标、轮次定位条。 | `test_chat_logs_conversation_layout_contract.py` 3 passed；聊天日志/用户提问相关四份既有契约 34 passed；前端全量回归 0 failed；`vue-tsc --noEmit` exit 0 |
+
+## 2026-11-27 用户模式侧栏「更多」增加聊天日志入口
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| 用户模式下看不到聊天日志入口 | 前端：`frontend/src/constants/userModeMenu.ts`；测试：`tests/frontend/test_user_mode_sidebar_contract.py`（新增 1 条）、`tests/frontend/user_mode_menu_probe.cjs` | 在「更多 → Token 消耗」之后加「聊天日志」（`/dashboard/chat-logs`，`permission: menu:chat_logs`）。**不挂 adminOnly**：非管理员走 `getChatHistory`，接口本身只返回本人记录，数据边界在服务层；没有 `menu:chat_logs` 的账号按默认 `hide` 策略不渲染，点不到也不会被守卫弹回。同时给 `UserModeIconKey` 补 `chat_logs`（动态菜单同一个 key，`DocumentTextIcon`）——这个联合类型之前漏过 `skills`/`link`，漏了只会退化成默认图标。路由无需改：守卫是 `requiredPerm && !userMenus.includes(perm) && !userModePass`，有菜单码即可进；`collectUserModePaths` 自动带上新子项路径，切模式的可达性判定不用维护第二份白名单。 | 用户模式侧栏 + UI 模式黑名单 + dashboard 守卫三份契约 90 passed（含真跑 `resolveUserModeMenu` 的 probe）；前端全量 0 failed；`vue-tsc --noEmit` exit 0 |
