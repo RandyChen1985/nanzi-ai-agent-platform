@@ -1521,27 +1521,30 @@ onMounted(() => {
                 v-for="(turn, index) in conversationTurns"
                 :id="`chat-log-turn-${index}`"
                 :key="turn.id || turn.trace_id"
-                class="scroll-mt-4 pb-6 border-b border-gray-100 last:border-b-0 transition-colors"
+                class="scroll-mt-4 pb-7 last:pb-2 transition-colors"
                 :class="selectedTraceId === turn.trace_id && conversationTurns.length > 1
                   ? 'rounded-xl bg-primary/[0.02] border border-primary/25 p-4 -mx-4'
                   : ''"
               >
-                <!-- 轮次轻量章节头 -->
-                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div class="flex items-center gap-2 text-xs">
+                <!-- 轮次分隔带：居中细线 + 轮次号 + 时间 + 状态 + 耗时。
+                     左右分栏后「第 N 轮」不再独占一行，而是压成对话流里的分隔标记——
+                     扫读时先认出这是新的一问一答，再看是谁在说、说了什么。 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="h-px flex-1 bg-gray-100" aria-hidden="true"></span>
+                  <div class="flex items-center gap-2 text-[11px] whitespace-nowrap">
                     <span
-                      class="px-2 py-0.5 rounded-md font-bold text-[11px] tabular-nums"
+                      class="px-2 py-0.5 rounded-full font-bold text-[11px] tabular-nums border"
                       :class="selectedTraceId === turn.trace_id && conversationTurns.length > 1
-                        ? 'bg-primary text-white'
-                        : 'bg-slate-100 text-slate-700'"
+                        ? 'bg-primary border-primary text-white'
+                        : 'bg-slate-50 border-gray-200 text-slate-600'"
                     >
                       第 {{ Number(index) + 1 }} 轮
                     </span>
-                    <span class="font-mono text-slate-400 text-[11px] tabular-nums">
+                    <span class="font-mono text-slate-400 tabular-nums">
                       {{ formatDate(turn.created_at) }}
                     </span>
                     <span
-                      class="inline-flex items-center gap-1 text-[11px] font-semibold"
+                      class="inline-flex items-center gap-1 font-semibold"
                       :class="getChatLogStatusMeta(turn.status).textClass"
                     >
                       <span
@@ -1550,85 +1553,92 @@ onMounted(() => {
                       />
                       {{ getChatLogStatusMeta(turn.status).label }}
                     </span>
-                  </div>
-
-                  <div class="flex items-center gap-2.5 text-[11px]">
-                    <span
-                      v-if="turn.model_id"
-                      class="font-mono text-slate-400 hidden md:inline"
-                    >
-                      {{ turn.model_id }}
-                    </span>
                     <span
                       v-if="turn.execution_time_ms"
-                      class="font-mono text-slate-500 tabular-nums"
+                      class="font-mono text-slate-400 tabular-nums"
                     >
                       {{ formatDurationMs(turn.execution_time_ms) }}
                     </span>
-                    <button
-                      v-if="turn.trace_id"
-                      type="button"
-                      class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary text-[11px] font-semibold hover:bg-primary hover:text-white transition-colors"
-                      @click="viewTurnTrace(turn)"
-                    >
-                      <ClockIcon class="w-3.5 h-3.5" />
-                      查看此轮轨迹
-                    </button>
                   </div>
+                  <span class="h-px flex-1 bg-gray-100" aria-hidden="true"></span>
                 </div>
 
-                <!-- 用户提问块：柔和灰底 + 左锚条，与 AI 回复形成清晰阅读节奏 -->
-                <div class="rounded-lg border border-gray-200/80 border-l-[3px] border-l-slate-400 bg-slate-50/80 px-3.5 py-2.5 mb-4 group">
-                  <div class="flex items-center justify-between gap-2 mb-1.5">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-bold shrink-0">
-                        {{ turn.username ? turn.username.charAt(0).toUpperCase() : 'U' }}
-                      </span>
-                      <span class="text-xs font-semibold text-slate-600">
-                        {{ turn.username || '用户' }} 提问
-                      </span>
+                <!-- 用户消息：右侧主色气泡。限宽 74%——长问题撑满整行会把对话节奏压平 -->
+                <div class="flex flex-row-reverse items-start gap-2.5 mb-3.5">
+                  <span
+                    class="w-7 h-7 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center text-[11px] font-bold shrink-0"
+                  >
+                    {{ turn.username ? turn.username.charAt(0).toUpperCase() : 'U' }}
+                  </span>
+                  <div class="flex flex-col items-end min-w-0 max-w-[74%]">
+                    <div class="flex items-center gap-2 mb-1 text-[11px] text-slate-400 max-w-full">
                       <span
                         v-if="parseChatLogQuery(turn.query).isAutomation"
-                        class="inline-flex items-center px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200/80 text-[10px] font-semibold"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200/80 text-[10px] font-semibold shrink-0"
                       >
                         定时任务{{ parseChatLogQuery(turn.query).taskId ? ` #${parseChatLogQuery(turn.query).taskId}` : '' }}
                       </span>
-                    </div>
-                    <div class="flex items-center gap-2 shrink-0">
                       <button
                         v-if="parseChatLogQuery(turn.query).systemPrefix"
                         type="button"
-                        class="text-[11px] text-slate-400 hover:text-primary font-medium transition-colors"
+                        class="shrink-0 font-medium hover:text-primary transition-colors"
                         @click="toggleAutoRuleExpanded(turn.id)"
                       >
                         {{ isAutoRuleExpanded(turn.id) ? '收起系统规则' : '查看系统规则' }}
                       </button>
-                      <button
-                        type="button"
-                        class="text-[11px] text-slate-400 hover:text-primary font-medium opacity-75 group-hover:opacity-100 transition-colors"
-                        @click="copyText(turn.query || '', '用户提问')"
-                      >
-                        复制
-                      </button>
+                      <span class="font-semibold text-slate-500 truncate">
+                        {{ turn.username || '用户' }} 提问
+                      </span>
                     </div>
+                    <div
+                      class="rounded-2xl rounded-tr-sm bg-primary text-white px-3.5 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap break-words shadow-sm"
+                    >
+                      {{
+                        parseChatLogQuery(turn.query).systemPrefix && !isAutoRuleExpanded(turn.id)
+                          ? parseChatLogQuery(turn.query).displayText
+                          : (turn.query || '(空)')
+                      }}
+                    </div>
+                    <button
+                      type="button"
+                      class="mt-1 text-[11px] text-slate-400 hover:text-primary font-medium transition-colors"
+                      @click="copyText(turn.query || '', '用户提问')"
+                    >
+                      复制
+                    </button>
                   </div>
-                  <p class="text-[13.5px] text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
-                    {{
-                      parseChatLogQuery(turn.query).systemPrefix && !isAutoRuleExpanded(turn.id)
-                        ? parseChatLogQuery(turn.query).displayText
-                        : (turn.query || '(空)')
-                    }}
-                  </p>
                 </div>
 
-                <!-- AI 回复区：去掉外层蓝框套娃，改用纯净白底宽幅文档流 -->
-                <div class="group/reply pl-0.5">
-                  <div class="flex items-center justify-between gap-2 mb-2.5">
-                    <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                      <span class="w-5 h-5 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                        <SparklesIcon class="w-3 h-3" />
-                      </span>
+                <!-- AI 回复：左侧白底文档流。正文含表格 / 代码 / 图表，所以不按气泡限宽 -->
+                <div class="flex items-start gap-2.5 group/reply">
+                  <span
+                    class="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0"
+                  >
+                    <SparklesIcon class="w-3.5 h-3.5" />
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1.5 flex-wrap text-[11px] text-slate-400">
                       <span class="text-xs font-bold text-slate-700">AI 回复</span>
+                      <!-- 回复归属：同一会话常在主助手 / 专家 / 子代理之间切换，只看「AI 回复」
+                           四个字分不清是谁答的，非要点进轨迹才发现。 -->
+                      <span
+                        v-if="turn.agent_display_name || turn.agent_id"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200/70 text-[10.5px] font-semibold max-w-[260px]"
+                        :title="`本轮由「${turn.agent_display_name || getAgentName(turn.agent_id)}」回复`"
+                      >
+                        <span class="truncate">{{ turn.agent_display_name || getAgentName(turn.agent_id) }}</span>
+                        <span v-if="turn.agent_version" class="opacity-70 shrink-0">{{ turn.agent_version }}</span>
+                      </span>
+                      <button
+                        v-if="countTurnToolSteps(turn.process_timeline) > 0 && turn.trace_id"
+                        type="button"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-50 border border-gray-200 text-slate-500 hover:text-primary hover:border-primary/30 hover:bg-primary/5 transition-colors"
+                        title="点击查看此轮详细执行步骤"
+                        @click="viewTurnTrace(turn)"
+                      >
+                        <WrenchScrewdriverIcon class="w-3 h-3" />
+                        执行 {{ countTurnToolSteps(turn.process_timeline) }} 步
+                      </button>
                       <div
                         v-if="turn.summary"
                         class="inline-flex rounded-md bg-slate-100 p-0.5 text-[11px]"
@@ -1654,70 +1664,82 @@ onMounted(() => {
                           源码
                         </button>
                       </div>
-                      <button
-                        v-if="countTurnToolSteps(turn.process_timeline) > 0 && turn.trace_id"
-                        type="button"
-                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-50 border border-gray-200 text-[11px] text-slate-500 hover:text-primary hover:border-primary/30 hover:bg-primary/5 transition-colors"
-                        title="点击查看此轮详细执行步骤"
-                        @click="viewTurnTrace(turn)"
-                      >
-                        <WrenchScrewdriverIcon class="w-3 h-3" />
-                        执行 {{ countTurnToolSteps(turn.process_timeline) }} 步
-                      </button>
+                      <div class="ml-auto flex items-center gap-2.5 shrink-0">
+                        <span
+                          v-if="turn.model_id"
+                          class="font-mono text-slate-400 hidden md:inline"
+                        >
+                          {{ turn.model_id }}
+                        </span>
+                        <button
+                          v-if="turn.trace_id"
+                          type="button"
+                          class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary text-[11px] font-semibold hover:bg-primary hover:text-white transition-colors"
+                          @click="viewTurnTrace(turn)"
+                        >
+                          <ClockIcon class="w-3.5 h-3.5" />
+                          查看此轮轨迹
+                        </button>
+                        <button
+                          type="button"
+                          class="text-[11px] text-slate-400 hover:text-primary font-medium transition-colors opacity-75 group-hover/reply:opacity-100"
+                          @click="copyText(turn.summary || turn.userQuestion?.question || turn.userQuestionText || '', '回复内容')"
+                        >
+                          复制
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      class="text-[11px] text-slate-400 hover:text-primary font-medium opacity-75 group-hover/reply:opacity-100 transition-colors shrink-0"
-                      @click="copyText(turn.summary || turn.userQuestion?.question || turn.userQuestionText || '', '回复内容')"
+
+                    <!-- 气泡体：白底圆角，左上角收窄指向 AI 头像 -->
+                    <div
+                      class="rounded-2xl rounded-tl-sm border border-gray-200/80 bg-white px-3.5 py-3 shadow-sm"
                     >
-                      复制
-                    </button>
-                  </div>
+                      <div
+                        v-if="!turn.summary && !turn.userQuestion && !turn.userQuestionText"
+                        class="flex items-start gap-2.5 rounded-lg border border-dashed px-3 py-2.5"
+                        :class="turn.status === 'error'
+                          ? 'border-red-200 bg-red-50/60 text-red-700'
+                          : 'border-gray-200 bg-slate-50/70 text-slate-600'"
+                      >
+                        <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5 opacity-80" />
+                        <div>
+                          <p class="text-xs font-semibold">{{ emptyReplyView(turn).title }}</p>
+                          <p class="text-[11px] opacity-80 mt-0.5">{{ emptyReplyView(turn).detail }}</p>
+                        </div>
+                      </div>
 
-                  <div
-                    v-if="!turn.summary && !turn.userQuestion && !turn.userQuestionText"
-                    class="flex items-start gap-2.5 rounded-lg border border-dashed px-3.5 py-2.5"
-                    :class="turn.status === 'error'
-                      ? 'border-red-200 bg-red-50/60 text-red-700'
-                      : 'border-gray-200 bg-slate-50/70 text-slate-600'"
-                  >
-                    <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5 opacity-80" />
-                    <div>
-                      <p class="text-xs font-semibold">{{ emptyReplyView(turn).title }}</p>
-                      <p class="text-[11px] opacity-80 mt-0.5">{{ emptyReplyView(turn).detail }}</p>
+                      <!-- 主动提问轮没有正文（模型只提了问题），回放提问卡，否则日志里只剩「(无响应内容)」 -->
+                      <UserQuestionCard
+                        v-if="turn.userQuestion"
+                        :payload="turn.userQuestion"
+                        disabled
+                        class="mb-2"
+                      />
+                      <!-- 修复前落库的轮次没有卡片快照，退化为只回放问题文本 -->
+                      <div
+                        v-else-if="turn.userQuestionText"
+                        class="mb-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark"
+                      >
+                        <span class="font-semibold">AI 提问：</span>{{ turn.userQuestionText }}
+                      </div>
+
+                      <div
+                        v-if="turn.summary && getTurnReplyMode(turn.id) === 'render'"
+                        class="message-host chat-log-message-host max-w-none text-slate-800 break-words"
+                      >
+                        <MessageRenderer
+                          :content="turn.summary"
+                          theme="default"
+                          hide-quick-buttons
+                          readonly
+                        />
+                      </div>
+                      <pre
+                        v-else-if="turn.summary"
+                        class="text-xs text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono bg-slate-50 border border-gray-200 rounded-lg p-3 overflow-x-auto"
+                      >{{ turn.summary }}</pre>
                     </div>
                   </div>
-
-                  <!-- 主动提问轮没有正文（模型只提了问题），回放提问卡，否则日志里只剩「(无响应内容)」 -->
-                  <UserQuestionCard
-                    v-if="turn.userQuestion"
-                    :payload="turn.userQuestion"
-                    disabled
-                    class="mb-2"
-                  />
-                  <!-- 修复前落库的轮次没有卡片快照，退化为只回放问题文本 -->
-                  <div
-                    v-else-if="turn.userQuestionText"
-                    class="mb-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-primary-dark"
-                  >
-                    <span class="font-semibold">AI 提问：</span>{{ turn.userQuestionText }}
-                  </div>
-
-                  <div
-                    v-if="turn.summary && getTurnReplyMode(turn.id) === 'render'"
-                    class="message-host chat-log-message-host max-w-none text-slate-800 break-words"
-                  >
-                    <MessageRenderer
-                      :content="turn.summary"
-                      theme="default"
-                      hide-quick-buttons
-                      readonly
-                    />
-                  </div>
-                  <pre
-                    v-else-if="turn.summary"
-                    class="text-xs text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono bg-slate-50 border border-gray-200 rounded-lg p-3.5 overflow-x-auto"
-                  >{{ turn.summary }}</pre>
                 </div>
               </article>
             </div>

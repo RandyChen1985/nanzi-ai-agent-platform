@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>聊天日志 · 左右对话式回放（用户右 / AI 左 + 回复归属智能体）</title>
+<style>
+  :root{
+    --bg:#f4f6fa;
+    --panel:#ffffff;
+    --panel-2:#fafbfd;
+    --ink:#0f172a;
+    --ink-2:#334155;
+    --ink-3:#64748b;
+    --ink-4:#94a3b8;
+    --line:#e5e9f0;
+    --line-soft:#f1f4f9;
+    --primary:#1677ff;
+    --primary-dark:#0958d9;
+    --primary-soft:rgba(22,119,255,.09);
+    --green:#059669; --green-soft:#ecfdf5; --green-line:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb;
+    --red:#dc2626; --red-soft:#fef2f2;
+    --violet:#7c3aed; --violet-soft:#f5f3ff;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg:0 16px 40px -12px rgba(16,24,40,.16);
+    --radius:14px;
+  }
+  html[data-theme="dark"]{
+    --bg:#0a1020;
+    --panel:#111a2b;
+    --panel-2:#0e1728;
+    --ink:#f8fafc;
+    --ink-2:#e2e8f0;
+    --ink-3:#94a3b8;
+    --ink-4:#64748b;
+    --line:#1e2b40;
+    --line-soft:#182338;
+    --primary:#4096ff;
+    --primary-dark:#69b1ff;
+    --primary-soft:rgba(64,150,255,.16);
+    --green:#34d399; --green-soft:rgba(52,211,153,.12); --green-line:rgba(52,211,153,.3);
+    --amber:#fbbf24; --amber-soft:rgba(251,191,36,.12);
+    --red:#f87171; --red-soft:rgba(248,113,113,.12);
+    --violet:#a78bfa; --violet-soft:rgba(167,139,250,.12);
+    --shadow:0 1px 2px rgba(0,0,0,.35);
+    --shadow-lg:0 24px 60px -16px rgba(0,0,0,.65);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+  .app{display:flex;height:100vh;overflow:hidden}
+  .main{display:flex;flex-direction:column;min-width:0;flex:1}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);
+    border-bottom:1px solid var(--line);flex-wrap:wrap
+  }
+  .topbar .title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14.5px}
+  .topbar .pill{
+    font-size:11px;font-weight:600;padding:1.5px 8px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary)
+  }
+  .search{
+    display:flex;align-items:center;gap:6px;margin-left:6px;flex:1;max-width:420px;
+    border:1px solid var(--line);border-radius:9px;padding:6px 10px;background:var(--panel-2);
+    font-size:12.5px;color:var(--ink-4)
+  }
+  .seg{display:flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:9px;padding:2px;background:var(--panel-2)}
+  .seg button{
+    border:0;background:transparent;color:var(--ink-3);font-size:12px;padding:4px 10px;border-radius:7px;cursor:pointer;
+    display:flex;align-items:center;gap:5px
+  }
+  .seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:var(--shadow);font-weight:600}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+  .dot.g{background:var(--green)} .dot.r{background:var(--red)} .dot.k{background:var(--ink-4)}
+  .ghost{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink-2);border-radius:9px;
+    padding:6px 11px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px
+  }
+  .ghost:hover{border-color:var(--primary);color:var(--primary)}
+  .theme-btn{margin-left:auto}
+
+  /* ---------- 主体 ---------- */
+  .body{display:flex;min-height:0;flex:1}
+
+  /* 左侧会话列表 */
+  .sidebar{
+    width:274px;flex:none;border-right:1px solid var(--line);background:var(--panel);
+    display:flex;flex-direction:column;min-height:0
+  }
+  .side-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line-soft)}
+  .side-head .seg button{font-size:11.5px;padding:3px 9px}
+  .side-head .count{margin-left:auto;font-size:11px;color:var(--ink-4)}
+  .conv-list{overflow-y:auto;padding:6px;min-height:0}
+  .conv{
+    padding:9px 10px;border-radius:10px;cursor:pointer;border:1px solid transparent;
+    margin-bottom:3px
+  }
+  .conv:hover{background:var(--panel-2)}
+  .conv[aria-selected="true"]{background:var(--primary-soft);border-color:rgba(22,119,255,.25)}
+  .conv .l1{display:flex;align-items:baseline;gap:6px}
+  .conv .name{font-size:12.5px;font-weight:600;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .conv .tm{margin-left:auto;font-size:10.5px;color:var(--ink-4);flex:none}
+  .conv .q{
+    margin:3px 0 4px;font-size:12px;color:var(--ink-3);line-height:1.5;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden
+  }
+  .conv .l3{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--ink-4)}
+  .conv .l3 b{color:var(--green);font-weight:600}
+
+  /* 右侧详情 */
+  .detail{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel)}
+  .detail-head{
+    display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap
+  }
+  .detail-head .qt{font-size:13.5px;font-weight:600;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge-ok{
+    display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--green);
+    background:var(--green-soft);border:1px solid var(--green-line);padding:1px 8px;border-radius:999px
+  }
+  .detail-head .meta{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink-4);flex-wrap:wrap}
+  .tabs{display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid var(--line-soft)}
+  .tabs button{
+    border:0;background:transparent;padding:9px 0;font-size:12.5px;color:var(--ink-3);cursor:pointer;
+    display:flex;align-items:center;gap:6px;border-bottom:2px solid transparent
+  }
+  .tabs button[aria-selected="true"]{color:var(--primary);font-weight:600;border-bottom-color:var(--primary)}
+
+  /* 轮次定位条 */
+  .turnbar{
+    display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line-soft);
+    background:var(--panel-2);overflow-x:auto
+  }
+  .turnbar .lbl{font-size:11.5px;color:var(--ink-4);flex:none}
+  .turnchip{
+    display:inline-flex;align-items:center;gap:5px;padding:2.5px 9px;border-radius:999px;cursor:pointer;
+    border:1px solid var(--line);background:var(--panel);font-size:11.5px;color:var(--ink-2);white-space:nowrap;flex:none
+  }
+  .turnchip .ms{font-size:10px;color:var(--ink-4)}
+  .turnchip[aria-current="true"]{border-color:var(--primary);background:var(--primary-soft);color:var(--primary-dark);font-weight:600}
+
+  /* 方案切换（原型专用） */
+  .planbar{
+    display:flex;align-items:center;gap:8px;padding:7px 16px;border-bottom:1px solid var(--line);
+    background:linear-gradient(90deg,rgba(124,58,237,.06),transparent 60%);font-size:11.5px;color:var(--violet);flex-wrap:wrap
+  }
+  .planbar .tag{font-weight:700;letter-spacing:.4px;font-size:10.5px}
+  .planbar button{
+    border:1px solid rgba(124,58,237,.3);background:var(--panel);color:var(--ink-2);border-radius:999px;
+    padding:3px 10px;font-size:11.5px;cursor:pointer
+  }
+  .planbar button[aria-selected="true"]{background:var(--violet);border-color:var(--violet);color:#fff;font-weight:600}
+  .planbar .note{margin-left:auto;color:var(--ink-4)}
+
+  /* 对话流 */
+  .stream{flex:1;overflow-y:auto;padding:18px 20px 60px;min-height:0;background:var(--panel)}
+  .stream-inner{max-width:920px;margin:0 auto}
+
+  /* 轮次分隔带 */
+  .turn-divider{display:flex;align-items:center;gap:10px;margin:22px 0 14px;color:var(--ink-4)}
+  .turn-divider:first-child{margin-top:2px}
+  .turn-divider::before,.turn-divider::after{content:"";height:1px;background:var(--line);flex:1}
+  .turn-divider .cap{display:flex;align-items:center;gap:7px;font-size:11px;white-space:nowrap}
+  .turn-divider .n{
+    font-weight:700;font-size:11px;padding:1px 8px;border-radius:999px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink-2)
+  }
+  .turn-divider.is-active .n{background:var(--primary);border-color:var(--primary);color:#fff}
+  .turn-divider .st{color:var(--green);font-weight:600;display:inline-flex;align-items:center;gap:4px}
+
+  /* 时间轴变体 */
+  .tl{position:relative;padding-left:26px}
+  .tl::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:1px;background:var(--line)}
+  .tl .node{position:absolute;left:3px;width:13px;height:13px;border-radius:50%;background:var(--panel);border:2px solid var(--primary);margin-top:6px}
+  .tl .turn-block{position:relative;margin-bottom:26px}
+
+  /* 消息行 */
+  .row{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start}
+  .row.user{flex-direction:row-reverse}
+  .avatar{
+    width:28px;height:28px;border-radius:9px;flex:none;display:grid;place-items:center;
+    font-size:11px;font-weight:700
+  }
+  .avatar.u{background:#e2e8f0;color:#475569}
+  html[data-theme="dark"] .avatar.u{background:#1e293b;color:#cbd5e1}
+  .avatar.a{background:var(--primary-soft);color:var(--primary)}
+  .bubble-wrap{min-width:0;display:flex;flex-direction:column;gap:5px;max-width:100%}
+  .row.user .bubble-wrap{align-items:flex-end;max-width:74%}
+  .row.ai .bubble-wrap{max-width:100%;flex:1}
+
+  /* 用户气泡 */
+  .bubble.user{
+    background:var(--primary);color:#fff;border-radius:14px 14px 4px 14px;padding:9px 13px;
+    font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word;box-shadow:var(--shadow)
+  }
+  /* AI 气泡：白底文档流，保留宽幅（含表格/代码/图表） */
+  .bubble.ai{
+    background:var(--panel);border:1px solid var(--line);border-radius:4px 14px 14px 14px;
+    padding:12px 14px;box-shadow:var(--shadow);width:100%
+  }
+  .msg-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--ink-4)}
+  .msg-head .who{font-size:12px;font-weight:700;color:var(--ink-2)}
+  .agent-tag{
+    display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;
+    background:var(--violet-soft);color:var(--violet);border:1px solid rgba(124,58,237,.22);
+    font-size:10.5px;font-weight:600;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+  }
+  .agent-tag .v{opacity:.75;font-weight:600}
+  .step-chip{
+    display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink-3);font-size:10.5px;cursor:pointer
+  }
+  .step-chip:hover{border-color:var(--primary);color:var(--primary)}
+  .mode-seg{display:inline-flex;background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:1px;font-size:10.5px}
+  .mode-seg button{border:0;background:transparent;color:var(--ink-4);padding:1.5px 7px;border-radius:5px;cursor:pointer}
+  .mode-seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+  .msg-tools{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .msg-tools button{
+    border:0;background:transparent;color:var(--ink-4);font-size:10.5px;cursor:pointer;padding:1px 2px
+  }
+  .msg-tools button:hover{color:var(--primary)}
+
+  /* AI 正文排版 */
+  .md{font-size:13.5px;color:var(--ink-2);line-height:1.75}
+  .md p{margin:0 0 9px}
+  .md p:last-child{margin-bottom:0}
+  .md ul,.md ol{margin:0 0 9px;padding-left:20px}
+  .md li{margin:2px 0}
+  .md code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+  .md a{color:var(--primary);text-decoration:none}
+  .md a:hover{text-decoration:underline}
+  .md table{border-collapse:collapse;font-size:12.5px;margin:6px 0}
+  .md th,.md td{border:1px solid var(--line);padding:4px 9px;text-align:left}
+  .md th{background:var(--panel-2);font-weight:600}
+  .md pre{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;overflow:auto;font-size:11.5px;margin:6px 0}
+
+  /* 折叠态（方案 C） */
+  .fold-head{
+    display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+    border:1px solid var(--line);background:var(--panel-2);border-radius:11px;padding:8px 11px;margin-bottom:10px
+  }
+  .fold-head:hover{border-color:var(--primary)}
+  .fold-head .caret{transition:transform .16s;color:var(--ink-4);font-size:11px}
+  .turn.collapsed .fold-head .caret{transform:rotate(-90deg)}
+  .fold-head .idx{font-size:11px;font-weight:700;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:0 7px}
+  .fold-head .qtext{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%}
+  .fold-head .atext{font-size:11.5px;color:var(--ink-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .fold-head .stat{margin-left:auto;font-size:10.5px;color:var(--ink-4);flex:none;display:flex;gap:8px;align-items:center}
+  .turn.collapsed .turn-body{display:none}
+
+  /* 说明 */
+  .notes{
+    padding:16px 20px 30px;border-top:1px solid var(--line);background:var(--panel-2);
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px
+  }
+  .note{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px 14px}
+  .note h3{margin:0 0 7px;font-size:12.5px;font-weight:700}
+  .note ul{margin:0;padding-left:17px;font-size:12px;color:var(--ink-3);line-height:1.8}
+  .note code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--panel-2);border-radius:4px;padding:0 4px}
+  .note.pick{border-color:var(--green-line);background:var(--green-soft)}
+  .note.pick h3{color:var(--green)}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main">
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <span class="title">🗂 聊天日志 <span class="pill">43 会话</span></span>
+      <span class="search">🔍 搜索问题、回复或智能体名称，回车查询…</span>
+      <span class="seg">
+        <button aria-pressed="true">全部</button>
+        <button aria-pressed="false"><i class="dot g"></i>成功</button>
+        <button aria-pressed="false"><i class="dot r"></i>异常</button>
+        <button aria-pressed="false"><i class="dot k"></i>已取消</button>
+      </span>
+      <button class="ghost">高级筛选</button>
+      <button class="ghost">导出</button>
+      <button class="ghost theme-btn" id="themeBtn">切换深色</button>
+    </div>
+
+    <div class="body">
+      <!-- 会话列表 -->
+      <aside class="sidebar">
+        <div class="side-head">
+          <span class="seg"><button aria-pressed="true">按会话</button><button aria-pressed="false">按调用</button></span>
+          <span class="count">共 43 个会话</span>
+        </div>
+        <div class="conv-list" id="convList"></div>
+      </aside>
+
+      <!-- 详情 -->
+      <section class="detail">
+        <div class="detail-head">
+          <span class="qt">有些 skills 里面本身就会有，会不会这提示词有多余的内容呢</span>
+          <span class="badge-ok"><i class="dot g"></i>成功</span>
+          <div class="meta">
+            <span>Trace 24e1f52d</span>
+            <span>DS-Token 平台管理助手 · v5 · DeepSeek-V4-Pro · 19.9s</span>
+            <span class="mono">2026-11-27 13:53:26</span>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <button aria-selected="true">对话 <span class="pill">8</span></button>
+          <button aria-selected="false">轨迹 <span class="pill">9</span></button>
+          <button aria-selected="false">上下文</button>
+        </div>
+
+        <!-- 原型方案切换 -->
+        <div class="planbar">
+          <span class="tag">原型对比</span>
+          <button data-plan="A" aria-selected="true">A · 气泡对话（推荐）</button>
+          <button data-plan="B" aria-selected="false">B · 时间轴 + 气泡</button>
+          <button data-plan="C" aria-selected="false">C · 可折叠对话流</button>
+          <span class="note">点轮次定位条或组头切换；右上角可切深色</span>
+        </div>
+
+        <div class="turnbar" id="turnbar"></div>
+
+        <div class="stream" id="stream">
+          <div class="stream-inner" id="streamInner"></div>
+          <div class="notes" id="notes">
+            <div class="note">
+              <h3>左右分栏（用户右 / AI 左）</h3>
+              <ul>
+                <li>用户消息靠右、主色气泡；AI 回复靠左、白底文档流，宽度不受气泡限制（表格 / 代码 / 图表要够宽）</li>
+                <li>气泡尖角朝向发言人，一眼看出谁说的</li>
+                <li>用户气泡 <code>max-width 74%</code>，AI 气泡占满内容列</li>
+                <li>轮次多时靠「第 N 轮」分隔带 + 轮次定位条跳转，不靠滚动找</li>
+              </ul>
+            </div>
+            <div class="note">
+              <h3>AI 回复头补智能体归属</h3>
+              <ul>
+                <li><code>AI 回复 · DS-Token 平台管理助手 v5 · 执行 4 步</code></li>
+                <li>智能体名直接用现有的 <code>getAgentName(turn.agent_id)</code>，版本用 <code>turn.agent_version</code>，无需后端改动</li>
+                <li>同一会话里切换智能体（主助手 / 专家 / 子代理）时，归属直接可见，不用去翻轨迹</li>
+                <li>「执行 N 步」继续可点，直达该轮轨迹</li>
+              </ul>
+            </div>
+            <div class="note pick">
+              <h3>推荐 A，折叠（C）作为工具条开关</h3>
+              <ul>
+                <li>A 解决「谁说的」与「哪个智能体回的」，改动集中在一轮内的模板结构</li>
+                <li>轮次超过 N 轮时（如 8 轮以上）提供「全部折叠 / 全部展开」，折叠态一行摘要：<code>第 3 轮 · 用户问… · AI 回…（4 步）</code></li>
+                <li>不动数据层：<code>conversationTurns</code>、<code>process_timeline</code>、渲染器全部沿用</li>
+                <li>B（时间轴）适合审计追流程，但横向空间被吃掉，日志正文本身很宽，不建议做默认</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const CONVS = [
+  { name:'DS-Token 平台管理助手', q:'有些 skills 里面本身就会有，会不会这提示词有多余的内容呢', t:'13:53:26', turns:8, agent:'DS-Token 平台管理助手', sel:true },
+  { name:'主助手(Main)', q:'请按机架统计CMDB中68台已过保服务器的台数分布，找出负载最集中的机架', t:'09:05:45', turns:4, agent:'主助手(Main)' },
+  { name:'DS-Token 平台管理助手', q:'表格列一下每丢的消耗情况呢', t:'08:48:29', turns:2, agent:'DS-Token 平台管理助手' },
+  { name:'DS-Token 平台管理助手', q:'data接口支持按天的吧', t:'19:16:32', turns:16, agent:'DS-Token 平台管理助手' },
+  { name:'DS-Token 平台管理助手', q:'【用户回答】问题：「文生图 总结一下」想让我做哪件事？', t:'17:13:51', turns:5, agent:'DS-Token 平台管理助手' },
+  { name:'主助手(Main)', q:'查看今天用户维度的用量分布，含请求数和token数', t:'10:16:04', turns:2, agent:'主助手(Main)' },
+];
+
+const TURNS = [
+  {
+    n:1, time:'13:46:22', ms:2261, status:'成功', user:'你好', agent:'DS-Token 平台管理助手', ver:'v5', steps:4,
+    ai:`<p>你好，陈小龙。我是 <b>Token 平台管理助手</b>，可以帮你处理以下四类事情：</p>
+      <ul>
+        <li><b>用量与日志</b>：查询额度消耗、请求明细、模型分布</li>
+        <li><b>模型状态</b>：平台运行状态、可用模型列表</li>
+        <li><b>API Key（令牌）</b>：查看令牌列表与单个令牌的用量</li>
+        <li><b>账号信息</b>：查询你的账号信息与剩余额度</li>
+      </ul>
+      <p>需要我帮你查点什么？</p>`
+  },
+  {
+    n:2, time:'13:46:34', ms:3237, status:'成功', user:'help', agent:'DS-Token 平台管理助手', ver:'v5', steps:4,
+    ai:`<h3 style="margin:0 0 6px;font-size:14px">使用帮助</h3>
+      <p>我是 Token 平台管理助手，服务对象是平台 <a href="https://ds-api.yovole.com/" target="_blank" rel="noreferrer">https://ds-api.yovole.com/</a>（New API 架构）。我只处理以下四类事务，且全部为只读查询（不创建、不修改、不删除任何令牌或配置）。</p>
+      <table><thead><tr><th>类别</th><th>能查什么</th></tr></thead>
+      <tbody>
+        <tr><td>用量与日志</td><td>额度消耗、请求明细、模型分布</td></tr>
+        <tr><td>模型状态</td><td>平台运行状态、可用模型列表</td></tr>
+        <tr><td>API Key</td><td>令牌列表、单个令牌用量</td></tr>
+        <tr><td>账号信息</td><td>账号信息与剩余额度</td></tr>
+      </tbody></table>`
+  },
+  {
+    n:3, time:'13:47:02', ms:4886, status:'成功', user:'有些 skills 里面本身就会有，会不会这提示词有多余的内容呢',
+    agent:'主助手(Main)', ver:'v7', steps:7,
+    ai:`<p>你指的是「已安装技能自身的说明」和「系统提示词里重复描述同一件事」这种叠加吧？确实会。常见的三处冗余：</p>
+      <ul>
+        <li><b>技能描述与方法论重复</b>：技能包里已有 <code>When to use</code> 段，系统提示词又写一遍「遇到 X 就调用 Y」；</li>
+        <li><b>工具清单重复</b>：装配时把工具名逐条写进提示词，而运行时工具 schema 本身已下发；</li>
+        <li><b>输出格式重复</b>：技能要求 Markdown 表格，系统提示词又要求「用表格回答」。</li>
+      </ul>
+      <p>建议只保留一层：技能负责「怎么做」，提示词负责「是谁、边界在哪、绝不能做什么」。</p>`
+  },
+  {
+    n:4, time:'13:47:31', ms:15600, status:'成功', user:'那你说说现在这个平台管理助手，提示词里有没有多余的部分',
+    agent:'DS-Token 平台管理助手', ver:'v5', steps:9,
+    ai:`<p>有，主要是两段：</p>
+      <ul>
+        <li>「只处理四类事务」在系统提示词开头和结尾各写了一遍；</li>
+        <li>「全部为只读查询」与工具权限表重复——权限由 <code>scope</code> 兜底，提示词这层可以只留一句提醒。</li>
+      </ul>
+      <p>其它部分（身份、服务对象 URL、拒绝话术）没有冗余，建议保留。</p>`
+  },
+  {
+    n:5, time:'13:48:20', ms:2858, status:'成功', user:'那如果我要精简，你会怎么改',
+    agent:'子代理 · 提示词审计', ver:'—', steps:5, sub:true,
+    ai:`<p>按「删重复、留边界」的顺序改，三步：</p>
+      <ol>
+        <li>删结尾那段重复的事务清单；</li>
+        <li>把「只读」改成一句提醒，权限交给工具层；</li>
+        <li>保留身份 + 服务 URL + 拒答模板。</li>
+      </ol>
+      <p>改完预计省 300~400 tokens，行为不变。</p>`
+  },
+  {
+    n:6, time:'13:49:05', ms:19_900, status:'成功', user:'行，那你按这个改一版给我看看', agent:'DS-Token 平台管理助手', ver:'v5', steps:12,
+    ai:`<p>改完了，对比见下表：</p>
+      <table><thead><tr><th>段落</th><th>改前</th><th>改后</th></tr></thead>
+      <tbody>
+        <tr><td>身份与服务对象</td><td>保留</td><td>保留</td></tr>
+        <tr><td>四类事务清单</td><td>开头 + 结尾各一遍</td><td>只在开头一遍</td></tr>
+        <tr><td>只读约束</td><td>提示词 + 权限表</td><td>一句话提醒</td></tr>
+        <tr><td>拒答模板</td><td>保留</td><td>保留</td></tr>
+      </tbody></table>
+      <p>需要我把这一版写进 <code>system_prompt</code> 并存为新基线版本吗？</p>`
+  },
+  {
+    n:7, time:'13:51:44', ms:2858, status:'成功', user:'先不用，我看看还有没有别的冗余', agent:'DS-Token 平台管理助手', ver:'v5', steps:3,
+    ai:`<p>好。另外还有一处可看：知识库挂载说明在工具描述里已经声明过，提示词里那段「可检索知识库」也可以去掉。</p>`
+  },
+  {
+    n:8, time:'13:53:26', ms:19_900, status:'成功', user:'嗯，那就先这样', agent:'DS-Token 平台管理助手', ver:'v5', steps:4,
+    ai:`<p>收到，这轮不做任何改动。需要时随时叫我。</p>`
+  },
+];
+
+let plan = 'A';
+let activeTurn = 1;
+const collapsed = {};
+const mode = {};
+
+const el = (id) => document.getElementById(id);
+
+function renderConvList(){
+  el('convList').innerHTML = CONVS.map((conv, i) => `
+    <div class="conv" role="option" aria-selected="${conv.sel ? 'true' : 'false'}" data-i="${i}">
+      <div class="l1"><span class="name">${conv.name}</span><span class="tm mono">${conv.t}</span></div>
+      <div class="q">${conv.q}</div>
+      <div class="l3"><span><b>${conv.turns}</b> 轮</span><span>${conv.agent}</span></div>
+    </div>`).join('');
+  el('convList').querySelectorAll('.conv').forEach((node) => {
+    node.addEventListener('click', () => {
+      el('convList').querySelectorAll('.conv').forEach((n) => n.setAttribute('aria-selected', 'false'));
+      node.setAttribute('aria-selected', 'true');
+    });
+  });
+}
+
+function renderTurnbar(){
+  el('turnbar').innerHTML = `<span class="lbl">轮次定位</span>` + TURNS.map((turn) => `
+    <button class="turnchip" data-turn="${turn.n}" aria-current="${turn.n === activeTurn}">
+      第 ${turn.n} 轮 <span class="ms mono">${turn.ms}ms</span>
+    </button>`).join('');
+  el('turnbar').querySelectorAll('.turnchip').forEach((node) => {
+    node.addEventListener('click', () => {
+      activeTurn = Number(node.dataset.turn);
+      renderTurnbar(); renderStream();
+      const target = document.getElementById(`turn-${activeTurn}`);
+      if (target) target.scrollIntoView({ behavior:'smooth', block:'start' });
+    });
+  });
+}
+
+function userRow(turn){
+  return `<div class="row user">
+    <div class="avatar u">${'陈'}</div>
+    <div class="bubble-wrap">
+      <div class="msg-head" style="justify-content:flex-end">
+        <span>陈小龙 提问</span>
+        <span class="mono">${turn.time}</span>
+      </div>
+      <div class="bubble user">${turn.user}</div>
+    </div>
+  </div>`;
+}
+
+function aiRow(turn){
+  const isSub = !!turn.sub;
+  const agentTag = `<span class="agent-tag" title="本轮实际回复的智能体">
+      ${isSub ? '🧩' : '🤖'} ${turn.agent}${turn.ver !== '—' ? ` <span class="v">${turn.ver}</span>` : ''}
+    </span>`;
+  const stepChip = `<span class="step-chip" title="点击查看此轮详细执行步骤">🔧 执行 ${turn.steps} 步</span>`;
+  const replyMode = mode[turn.n] || 'render';
+  return `<div class="row ai">
+    <div class="avatar a">✦</div>
+    <div class="bubble-wrap">
+      <div class="msg-head">
+        <span class="who">AI 回复</span>
+        ${agentTag}
+        ${stepChip}
+        <span class="mode-seg">
+          <button data-mode="render" data-turn="${turn.n}" aria-pressed="${replyMode === 'render'}">渲染</button>
+          <button data-mode="source" data-turn="${turn.n}" aria-pressed="${replyMode === 'source'}">源码</button>
+        </span>
+        <span class="msg-tools"><button>复制</button></span>
+      </div>
+      <div class="bubble ai">
+        ${replyMode === 'render' ? `<div class="md">${turn.ai}</div>`
+          : `<pre class="mono" style="margin:0;white-space:pre-wrap">${turn.ai.replace(/<[^>]+>/g, '').trim().slice(0, 320)}…</pre>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function divider(turn){
+  return `<div class="turn-divider ${turn.n === activeTurn ? 'is-active' : ''}">
+    <span class="cap">
+      <span class="n">第 ${turn.n} 轮</span>
+      <span class="mono">${turn.time}</span>
+      <span class="st">● ${turn.status}</span>
+      <span class="mono" style="color:var(--ink-4)">${turn.ms}ms</span>
+    </span>
+  </div>`;
+}
+
+function renderA(){
+  return TURNS.map((turn) => `<div id="turn-${turn.n}">${divider(turn)}${userRow(turn)}${aiRow(turn)}</div>`).join('');
+}
+
+function renderB(){
+  return `<div class="tl">` + TURNS.map((turn) => `
+    <div class="turn-block" id="turn-${turn.n}">
+      <span class="node"></span>
+      ${divider(turn)}${userRow(turn)}${aiRow(turn)}
+    </div>`).join('') + `</div>`;
+}
+
+function renderC(){
+  return TURNS.map((turn) => {
+    const isCollapsed = collapsed[turn.n] === true;
+    return `<div class="turn ${isCollapsed ? 'collapsed' : ''}" id="turn-${turn.n}">
+      <button class="fold-head" data-fold="${turn.n}">
+        <span class="caret">▾</span>
+        <span class="idx">第 ${turn.n} 轮</span>
+        <span class="qtext">👤 ${turn.user}</span>
+        <span class="atext">✦ ${turn.agent.replace(/^子代理 · /, '')} 已回复</span>
+        <span class="stat">
+          <span>🔧 ${turn.steps} 步</span>
+          <span class="mono">${turn.ms}ms</span>
+          <span class="mono">${turn.time}</span>
+        </span>
+      </button>
+      <div class="turn-body">${userRow(turn)}${aiRow(turn)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderStream(){
+  const inner = el('streamInner');
+  inner.innerHTML = plan === 'A' ? renderA() : plan === 'B' ? renderB() : renderC();
+
+  inner.querySelectorAll('[data-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      mode[Number(btn.dataset.turn)] = btn.dataset.mode;
+      renderStream();
+    });
+  });
+  inner.querySelectorAll('[data-fold]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const n = Number(btn.dataset.fold);
+      collapsed[n] = !collapsed[n];
+      renderStream();
+    });
+  });
+}
+
+document.querySelectorAll('.planbar [data-plan]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    plan = btn.dataset.plan;
+    document.querySelectorAll('.planbar [data-plan]').forEach((n) => n.setAttribute('aria-selected', String(n === btn)));
+    // 方案 C 默认把前两轮之后折叠，直观看出「摘要」与「展开」的对比
+    if (plan === 'C' && !Object.keys(collapsed).length) {
+      TURNS.forEach((turn) => { if (turn.n > 2) collapsed[turn.n] = true; });
+    }
+    renderStream();
+  });
+});
+
+el('themeBtn').addEventListener('click', (ev) => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  ev.target.textContent = dark ? '切换深色' : '切换浅色';
+});
+
+renderConvList();
+renderTurnbar();
+renderStream();
+</script>
+</body>
+</html>
