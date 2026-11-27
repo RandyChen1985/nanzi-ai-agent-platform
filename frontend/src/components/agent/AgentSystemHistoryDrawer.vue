@@ -125,7 +125,10 @@ const formatTime = (value?: string | null) => {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
-const eventTone = (entry: AgentSystemHistoryEntry) => {
+const eventTone = (entry?: AgentSystemHistoryEntry) => {
+  // 组头要显示「最近一次动作」，组内条目理论上非空，但空组（例如刚被筛掉条目）
+  // 不能让整个抽屉在渲染时取 undefined 崩掉，给一个中性兜底。
+  if (!entry) return { dot: 'bg-slate-300', label: '无记录' }
   if (entry.kind === 'request') {
     if (entry.status === 'APPROVED') return { dot: 'bg-emerald-500', label: '申请已通过' }
     if (entry.status === 'REJECTED') return { dot: 'bg-red-500', label: '申请被驳回' }

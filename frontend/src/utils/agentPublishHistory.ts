@@ -95,7 +95,10 @@ export const groupEntriesByDay = <T extends PublishHistoryGroupable>(
         key,
         date: new Date(date.getFullYear(), date.getMonth(), date.getDate()),
         label: formatPublishDayLabel(date, now),
-        weekday: WEEKDAYS[date.getDay()],
+        // 索引访问在 noUncheckedIndexedAccess 下是 `string | undefined`；兜个空串，
+        // 否则这个字段会把整个对象字面量推成不满足 PublishHistoryDayGroup 的类型，
+        // 连带 groups.set 与 group.items.push 一起报错。
+        weekday: WEEKDAYS[date.getDay()] ?? '',
         items: [],
       }
       groups.set(key, group)
