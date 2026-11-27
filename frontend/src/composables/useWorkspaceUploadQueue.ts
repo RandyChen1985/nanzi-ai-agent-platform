@@ -29,11 +29,12 @@ const EMPTY_SNAPSHOT: WorkspaceUploadSnapshot = {
 export function useWorkspaceUploadQueue(options?: { maxBytes?: number }) {
   const snapshot = ref<WorkspaceUploadSnapshot>(EMPTY_SNAPSHOT)
   const queue = shallowRef<WorkspaceUploadQueue | null>(null)
+  let configuredMaxBytes = options?.maxBytes
 
   const ensure = (): WorkspaceUploadQueue => {
     if (queue.value) return queue.value
     const instance = createWorkspaceUploadQueue({
-      maxBytes: options?.maxBytes,
+      maxBytes: configuredMaxBytes,
       upload: (file, uploadOptions) =>
         uploadToWorkspaceDir(uploadOptions.parentPath, file as File, {
           onProgress: uploadOptions.onProgress,
@@ -58,6 +59,13 @@ export function useWorkspaceUploadQueue(options?: { maxBytes?: number }) {
     enqueue: (files: File[], parentPath: string) => ensure().enqueue(files, parentPath),
     cancel: (taskId: string) => queue.value?.cancel(taskId),
     retry: (taskId: string) => queue.value?.retry(taskId),
+    clearCompleted: () => queue.value?.clearCompleted(),
     clearFinished: () => queue.value?.clearFinished(),
+    setMaxBytes: (bytes: number) => {
+      if (Number.isFinite(bytes) && bytes > 0) {
+        configuredMaxBytes = bytes
+        queue.value?.setMaxBytes(bytes)
+      }
+    },
   }
 }

@@ -32,3 +32,43 @@ export function displayFileName(name: string | null | undefined): string {
 export function hasArtifactPrefix(name: string | null | undefined): boolean {
   return ARTIFACT_PREFIX_RE.test(String(name ?? ''));
 }
+
+/** 回收站条目前缀：`<unix时间戳>_<8位hex>_<原文件名>`。 */
+const TRASHED_PREFIX_RE = /^(\d+)_[0-9a-f]{8}_(.+)$/i;
+
+export interface ParsedTrashedFileName {
+  /** 去掉回收站前缀和产物 UUID 前缀后的可读展示名。 */
+  displayName: string;
+  /** 去掉回收站前缀后的真实原名（保留产物前缀以便准确匹配）。 */
+  originalName: string;
+  /** 移入回收站时的秒级时间戳，解析不到时为 null。 */
+  deletedAt: number | null;
+  /** 是否命中标准回收站命名格式。 */
+  isTrashedFormat: boolean;
+}
+
+/**
+ * 解析回收站条目的真实名称与删除时间。
+ *
+ * 仅用于回收站视图展示，真实删除/恢复请求仍传完整 `item.path`。
+ */
+export function parseTrashedFileName(name: string | null | undefined): ParsedTrashedFileName {
+  const raw = String(name ?? '');
+  const match = TRASHED_PREFIX_RE.exec(raw);
+  if (!match) {
+    return {
+      displayName: displayFileName(raw),
+      originalName: raw,
+      deletedAt: null,
+      isTrashedFormat: false,
+    };
+  }
+  const ts = Number(match[1]);
+  const originalName = match[2] || raw;
+  return {
+    displayName: displayFileName(originalName),
+    originalName,
+    deletedAt: Number.isFinite(ts) && ts > 0 ? ts : null,
+    isTrashedFormat: true,
+  };
+}

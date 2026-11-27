@@ -133,3 +133,28 @@ def test_embedded_chat_does_not_overwrite_user_draft_on_fill():
     # 「填入」只是写输入框：用户已开始打字时不能把草稿顶掉
     assert 'pending.action === "fill" && hasUserComposerDraft()' in flush_body
     assert '"输入框已有内容，门户问题未填入"' in flush_body
+
+
+# ------------------------------------------------- 宿主 → 挂件：URL 兜底通道
+
+
+def test_host_also_passes_portal_question_through_widget_url():
+    """postMessage 那条路会静默失败，URL 必须同时带一份。"""
+    chat = _read(CHAT)
+
+    assert "const pendingPortalQuestion = String(route.query.portal_question || '').trim();" in chat
+    assert "embedQuery.set('ask', pendingPortalQuestion);" in chat
+    assert "embedQuery.set('ask_action'," in chat
+    assert "embedQuery.set('ask_id', portalQuestionRequestId);" in chat
+
+
+def test_embedder_queues_url_ask_instead_of_firing_it_directly():
+    embed = _read(EMBED)
+
+    assert 'const askFromUrl = String(query.get("ask") || "").trim();' in embed
+    assert 'request_id: query.get("ask_id") || "",' in embed
+    # 仍然只入队：URL 解析发生在认证之前，这里直接发会打进未登录会话
+    assert "queueHostPortalQuestion({" in embed
+    assert "void handleQuickQuestion(askFromUrl" not in embed
+    # 消费完把参数从挂件地址栏摘掉，刷新不重放
+    assert 'for (const key of ["ask", "ask_action", "ask_id"]) query.delete(key);' in embed

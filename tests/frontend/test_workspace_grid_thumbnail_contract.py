@@ -25,10 +25,32 @@ def _read() -> str:
     return PAGE.read_text(encoding="utf-8")
 
 
+_GRID_ANCHOR = 'class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"'
+
+
 def _grid_block(source: str) -> str:
-    """卡片视图的模板片段：从 grid 容器到它的收尾，避免命中列表视图。"""
-    start = source.index('class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"')
-    return source[start : start + 2600]
+    """卡片视图的模板片段：从 grid 容器按 <div> 配对截取整块，避免命中列表视图。
+
+    早先用固定 2600 字符窗口截断，模板里加几个属性就会把窗口外的媒体区切掉，
+    断言随之变成「找不到媒体区容器」这类假失败。这里按标签配对取真实边界。
+    """
+    anchor = source.index(_GRID_ANCHOR)
+    open_tag = source.rindex("<div", 0, anchor)
+    depth = 0
+    cursor = open_tag
+    while True:
+        next_open = source.find("<div", cursor)
+        next_close = source.find("</div>", cursor)
+        if next_close == -1:
+            raise AssertionError("卡片视图的 div 未闭合")
+        if next_open != -1 and next_open < next_close:
+            depth += 1
+            cursor = next_open + 4
+            continue
+        depth -= 1
+        cursor = next_close + len("</div>")
+        if depth == 0:
+            return source[open_tag:cursor]
 
 
 def test_grid_card_renders_real_thumbnail_for_images():

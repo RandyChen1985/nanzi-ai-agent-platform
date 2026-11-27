@@ -26,6 +26,8 @@ const props = withDefaults(
     submitting?: boolean
     /** 解压场景允许留空 = 直接解到当前目录。 */
     allowEmptyName?: boolean
+    /** 仅选择目标目录模式（移动 / 复制到目录）：隐藏文件名输入框。 */
+    hideNameInput?: boolean
   }>(),
   {
     conversationId: null,
@@ -36,6 +38,7 @@ const props = withDefaults(
     defaultPath: null,
     submitting: false,
     allowEmptyName: false,
+    hideNameInput: false,
   },
 )
 
@@ -116,6 +119,11 @@ const selectDirectory = (directory: DirectoryItem) => {
 
 const submit = () => {
   if (props.submitting) return
+  if (props.hideNameInput) {
+    if (!currentPath.value) return
+    emit('save', { parentPath: currentPath.value, name: '' })
+    return
+  }
   const name = filename.value.trim()
   if (!name && !props.allowEmptyName) {
     errorMessage.value = `请输入${props.nameLabel}`
@@ -183,7 +191,7 @@ watch(
         </button>
       </div>
 
-      <label class="mt-4 block text-xs font-semibold text-gray-700 dark:text-gray-200">
+      <label v-if="!hideNameInput" class="mt-4 block text-xs font-semibold text-gray-700 dark:text-gray-200">
         {{ nameLabel }}
         <input
           v-model="filename"

@@ -100,9 +100,11 @@ export function buildWorkspaceBreadcrumbs(
     const relative = current.slice(root.length).replace(/^\/+/, '')
     const segments: WorkspaceBreadcrumbSegment[] = [{ label: '我的目录', path: root }]
     let acc = root
-    for (const part of relative.split('/').filter(Boolean)) {
+    const parts = relative.split('/').filter(Boolean)
+    for (let i = 0; i < parts.length; i += 1) {
+      const part = parts[i]!
       acc = `${acc}/${part}`
-      segments.push({ label: part, path: acc })
+      segments.push({ label: i === 0 && part === '.trash' ? '回收站' : part, path: acc })
     }
     return segments
   }
@@ -199,4 +201,42 @@ export function isProtectedWorkspaceEntry(
     return !parent.includes('/skills/') && !parent.endsWith('/skills')
   }
   return false
+}
+
+/**
+ * 将工作空间物理路径格式化为对用户可读的相对路径（不暴露宿主机绝对路径前缀）。
+ *
+ * 主要用于「含子目录搜索」结果副标题和「恢复位置」提示，避免出现 `/app/data/...` 或 `/Users/...`。
+ */
+export function formatRelativeWorkspacePath(
+  path: string | null | undefined,
+  userWorkspaceRoot?: string | null,
+): string {
+  const norm = normalizeWorkspacePath(path || '')
+  if (!norm) return ''
+  const root = normalizeWorkspacePath(userWorkspaceRoot || '')
+
+  if (root && isWithinDirectory(norm, root)) {
+    const rel = norm.slice(root.length).replace(/^\/+/, '')
+    if (!rel) return '我的目录'
+    const parts = rel.split('/').filter(Boolean)
+    if (parts[0] === '.trash') parts[0] = '回收站'
+    return `我的目录/${parts.join('/')}`
+  }
+
+  const dataBase = inferDataBaseDir(root)
+  if (dataBase && isWithinDirectory(norm, dataBase)) {
+    const rel = norm.slice(dataBase.length).replace(/^\/+/, '')
+    return rel ? `公共资源/${rel}` : '公共资源'
+  }
+
+  const skillsIdx = norm.lastIndexOf('/skills')
+  if (skillsIdx >= 0) {
+    const afterSkills = norm.slice(skillsIdx + '/skills'.length)
+    if (afterSkills === '' || afterSkills.startsWith('/')) {
+      return `公共资源/skills${afterSkills}`
+    }
+  }
+
+  return norm.split('/').filter(Boolean).pop() || norm
 }
