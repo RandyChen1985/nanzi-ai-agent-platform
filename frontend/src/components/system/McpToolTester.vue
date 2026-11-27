@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
@@ -83,35 +83,79 @@ const requiredFields = computed(() => (schema.value.required || []).filter(
   (name: string) => !credentialParams.value.includes(name),
 ))
 
+/** 解包 Pydantic v2 / FastMCP 的 Optional 联合类型（anyOf / oneOf 剔除 null 分支） */
+const unwrapSchemaProp = (prop: any): any => {
+  if (!prop || typeof prop !== 'object') return prop
+  if (prop.type || prop.properties || prop.items) return prop
+  const variants = Array.isArray(prop.anyOf)
+    ? prop.anyOf
+    : Array.isArray(prop.oneOf)
+      ? prop.oneOf
+      : null
+  if (!variants) return prop
+  const nonNull = variants.find((item: any) => item && typeof item === 'object' && item.type !== 'null')
+  return nonNull ? { ...prop, ...nonNull } : prop
+}
+
 const getScalarType = (prop: any): string => {
-  if (!prop) return ''
-  if (typeof prop.type === 'string') return prop.type
-  if (Array.isArray(prop.type)) return prop.type.find((type: unknown) => type !== 'null') || ''
+  const effective = unwrapSchemaProp(prop)
+  if (!effective) return ''
+  if (typeof effective.type === 'string') return effective.type
+  if (Array.isArray(effective.type)) return effective.type.find((type: unknown) => type !== 'null') || ''
   return ''
 }
 
 const isComplexType = (prop: any): boolean => {
-  if (!prop) return false
-  const t = prop.type
+  const effective = unwrapSchemaProp(prop)
+  if (!effective) return false
+  const t = effective.type
   if (t === 'object' || t === 'array') return true
   if (Array.isArray(t) && (t.includes('object') || t.includes('array'))) return true
-  if (!t && (prop.properties || prop.items)) return true
+  if (!t && (effective.properties || effective.items)) return true
   return false
 }
 
 const getPlaceholder = (prop: any): string => {
-  if (prop.type === 'array' || prop.items) {
+  const effective = unwrapSchemaProp(prop)
+  if (effective?.type === 'array' || effective?.items) {
     return 'JSON 数组格式，例如: ["item1", "item2"]'
   }
-  if (prop.type === 'object' || prop.properties) {
+  if (effective?.type === 'object' || effective?.properties) {
     return 'JSON 对象格式，例如: {"key": "value"}'
   }
-  return prop.description || '请输入 JSON 内容'
+  return prop?.description || '请输入 JSON 内容'
 }
 
+let executeSeq = 0
+let curlSeq = 0
+const copyTimers: Partial<Record<'request' | 'result' | 'curl', number>> = {}
+
+const clearCopyTimers = () => {
+  for (const key of Object.keys(copyTimers) as Array<'request' | 'result' | 'curl'>) {
+    const handle = copyTimers[key]
+    if (handle !== undefined) {
+      window.clearTimeout(handle)
+      delete copyTimers[key]
+    }
+  }
+}
+
+onUnmounted(clearCopyTimers)
+
 watch([() => props.tool, () => props.isOpen], () => {
-  args.value = {}
+  executeSeq += 1
+  curlSeq += 1
+  clearCopyTimers()
+  const initialArgs: Record<string, any> = {}
+  for (const [key, prop] of Object.entries(properties.value as Record<string, any>)) {
+    if (getScalarType(prop) === 'boolean' && requiredFields.value.includes(key)) {
+      initialArgs[key] = typeof prop?.default === 'boolean' ? prop.default : false
+    }
+  }
+  args.value = initialArgs
   rawJsonArgs.value = {}
+  loading.value = false
+  curlLoading.value = false
   result.value = null
   error.value = null
   activeTab.value = 'input'
@@ -209,8 +253,10 @@ const handleCopyRequest = async () => {
   }
   requestCopied.value = true
   showToast('已复制到剪贴板', 'success')
-  window.setTimeout(() => {
+  if (copyTimers.request !== undefined) window.clearTimeout(copyTimers.request)
+  copyTimers.request = window.setTimeout(() => {
     requestCopied.value = false
+    delete copyTimers.request
   }, 1500)
 }
 
@@ -224,8 +270,10 @@ const handleCopyResult = async () => {
   }
   copied.value = true
   showToast('已复制到剪贴板', 'success')
-  window.setTimeout(() => {
+  if (copyTimers.result !== undefined) window.clearTimeout(copyTimers.result)
+  copyTimers.result = window.setTimeout(() => {
     copied.value = false
+    delete copyTimers.result
   }, 1500)
 }
 
@@ -244,24 +292,33 @@ const curlArguments = computed(() => {
       continue
     }
     const value = args.value[key]
-    if (value !== undefined && value !== '') collected[key] = value
+    if (value !== undefined && value !== '') {
+      collected[key] = value
+    } else if (getScalarType(prop) === 'boolean' && requiredFields.value.includes(key)) {
+      collected[key] = false
+    }
   }
   return collected
 })
 
 const loadCurlSnippet = async () => {
+  const toolId = props.tool?.id
+  if (!toolId) return
+  const seq = ++curlSeq
   curlLoading.value = true
   curlError.value = null
   try {
-    const res = await axios.get(`/api/portal/mcp/tools/${props.tool.id}/curl`, {
+    const res = await axios.get(`/api/portal/mcp/tools/${toolId}/curl`, {
       params: { arguments: JSON.stringify(curlArguments.value) }
     })
+    if (seq !== curlSeq || props.tool?.id !== toolId) return
     curlSnippet.value = res.data
   } catch (e: any) {
+    if (seq !== curlSeq || props.tool?.id !== toolId) return
     curlSnippet.value = null
     curlError.value = e.response?.data?.detail || e.message
   } finally {
-    curlLoading.value = false
+    if (seq === curlSeq) curlLoading.value = false
   }
 }
 
@@ -274,8 +331,10 @@ const handleCopyCurl = async () => {
   }
   curlCopied.value = true
   showToast('已复制到剪贴板', 'success')
-  window.setTimeout(() => {
+  if (copyTimers.curl !== undefined) window.clearTimeout(copyTimers.curl)
+  copyTimers.curl = window.setTimeout(() => {
     curlCopied.value = false
+    delete copyTimers.curl
   }, 1500)
 }
 
@@ -285,6 +344,9 @@ watch(activeTab, (tab) => {
 })
 
 const executeTool = async () => {
+  const toolId = props.tool?.id
+  if (!toolId) return
+  const seq = ++executeSeq
   loading.value = true
   result.value = null
   error.value = null
@@ -309,6 +371,9 @@ const executeTool = async () => {
       }
     } else if (args.value[key] !== undefined && args.value[key] !== '') {
       finalArgs[key] = args.value[key]
+    } else if (getScalarType(prop) === 'boolean' && requiredFields.value.includes(key)) {
+      // 未勾选的必填 boolean 默认即为 false，不能误判为空值拦截
+      finalArgs[key] = false
     } else if (requiredFields.value.includes(key)) {
       showToast(`必填参数 ${key} 不能为空`, 'error')
       loading.value = false
@@ -324,9 +389,10 @@ const executeTool = async () => {
   mcpAuth.value = null
 
   try {
-    const res = await axios.post(`/api/portal/mcp/tools/${props.tool.id}/execute`, {
+    const res = await axios.post(`/api/portal/mcp/tools/${toolId}/execute`, {
       arguments: finalArgs
     })
+    if (seq !== executeSeq || props.tool?.id !== toolId) return
 
     mcpAuth.value = res.data.mcp_auth || null
     if (res.data.status === 'success') {
@@ -335,10 +401,13 @@ const executeTool = async () => {
       error.value = res.data.message || '执行失败'
     }
   } catch (e: any) {
+    if (seq !== executeSeq || props.tool?.id !== toolId) return
     error.value = e.response?.data?.detail || e.message
   } finally {
-    loading.value = false
-    activeTab.value = 'details'
+    if (seq === executeSeq) {
+      loading.value = false
+      activeTab.value = 'details'
+    }
   }
 }
 </script>
@@ -442,7 +511,7 @@ const executeTool = async () => {
         </div>
 
         <!-- Input Form -->
-        <div v-if="activeTab === 'input'" class="space-y-4">
+        <div v-else-if="activeTab === 'input'" class="space-y-4">
           <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">参数输入</h4>
           <div
             v-if="credentialParams.length"
@@ -460,7 +529,7 @@ const executeTool = async () => {
                 {{ key }} <span v-if="requiredFields.includes(key)" class="text-red-500">*</span>
               </label>
               <input
-                v-if="getScalarType(prop) === 'string' || (!prop.type && !isComplexType(prop))"
+                v-if="getScalarType(prop) === 'string' || (!getScalarType(prop) && !isComplexType(prop))"
                 v-model="args[key]"
                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
                 :placeholder="prop.description"
@@ -490,7 +559,7 @@ const executeTool = async () => {
         </div>
 
         <!-- Call Details -->
-        <div v-else class="space-y-6">
+        <div v-else-if="activeTab === 'details'" class="space-y-6">
           <div v-if="!requestPayload" class="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-xs text-gray-400">
             运行测试后查看本次调用详情
           </div>
@@ -583,9 +652,8 @@ const executeTool = async () => {
             </button>
 
             <div
-              v-if="formattedResult.kind === 'json' && formattedResult.html"
-              class="mcp-result-json p-3 pr-10 text-xs font-mono leading-relaxed whitespace-pre overflow-x-auto max-h-[360px] overflow-y-auto custom-scrollbar"
-              :class="error ? 'text-red-700' : 'text-slate-100'"
+              v-if="!error && formattedResult.kind === 'json' && formattedResult.html"
+              class="mcp-result-json p-3 pr-10 text-xs font-mono leading-relaxed whitespace-pre overflow-x-auto max-h-[360px] overflow-y-auto custom-scrollbar text-slate-100"
               v-html="formattedResult.html"
             />
             <div

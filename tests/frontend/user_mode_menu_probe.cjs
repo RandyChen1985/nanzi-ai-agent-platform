@@ -72,6 +72,7 @@ const userAllMenus = resolveUserModeMenu({
     "menu:knowledge_management",
     "menu:memory_management",
     "menu:token_stats",
+    "menu:chat_logs",
     "menu:dashboard",
     // 就算真把这些菜单码发给普通用户，adminOnly 也必须把它们挡住：
     // 用户管理 / 角色管理 / 系统设置是管理员的便捷入口，不是又一次可授权
@@ -104,9 +105,9 @@ const expect = {
   nothing: ["experts", "tasks", "library", "workspace", "more"],
   tasksAlwaysVisible: true,
   admin: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
-  adminMore: ["workbench", "token", "overview", "users", "roles", "system"],
+  adminMore: ["workbench", "token", "chat_logs", "overview", "users", "roles", "system"],
   adminHasSystem: true,
-  userAllMenusMore: ["workbench", "token", "overview"],
+  userAllMenusMore: ["workbench", "token", "chat_logs", "overview"],
   userHasSystem: false,
   hasExpertsGroup: true,
   partialExperts: ["expert", "skill", "connector"],

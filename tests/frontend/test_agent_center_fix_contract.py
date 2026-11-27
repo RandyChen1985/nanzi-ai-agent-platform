@@ -27,15 +27,18 @@ def _block(source: str, start_marker: str, end_marker: str = "\nconst ") -> str:
     return source[start:] if end == -1 else source[start:end]
 
 
-def test_system_history_timeline_shares_v_else_with_hint():
+def test_system_history_timeline_is_not_hijacked_by_count_hint():
     source = _read("frontend/src/components/agent/AgentSystemHistoryDrawer.vue")
-    marker = 'v-if="totalCount > entries.length"'
-    index = source.index(marker)
-    before = source[max(0, index - 160):index]
-    assert "<div v-else" in before, (
-        "超过 100 条时的提示条必须与 <ol> 放进同一个 v-else 容器，"
-        "否则 <ol v-else> 会绑到提示条上，时间线直接消失"
-    )
+
+    # 条数提示条已上移成独立工具条（还带着「全部展开/收起」），与「加载中/失败/空/有数据」
+    # 这条 v-if-v-else 链彻底解耦——这正是原来那个「时间线被提示条劫持」bug 的根因。
+    assert 'v-if="!loading && !errorMessage && entries.length"' in source
+    assert "<div v-else>" in source
+    # 分组时间线必须还挂在最后那个 v-else 容器里，且排在提示条与三个占位分支之后
+    timeline = source.index('v-for="group in dayGroups"')
+    assert source.index("<div v-else>") < timeline
+    # 超过 100 条的截断提示不能丢
+    assert "仅显示最近 {{ entries.length }} 条（共 {{ totalCount }} 条）" in source
 
 
 def test_readiness_popover_uses_backend_enum_and_tool_checks():

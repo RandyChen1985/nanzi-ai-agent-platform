@@ -187,17 +187,33 @@ const restoreMcpFlowGuide = () => {
 const showHelp = ref(false)
 const activeHelpTab = ref<'flow' | 'protocols' | 'security'>('flow')
 
-const handleBannerAction = (action: 'add' | 'marketplace') => {
+const openAddFromGuide = async (mode: 'manual' | 'json') => {
   // 只读用户被引导进新建向导只会白填一遍表单，最后在 POST /servers 上撞 403：
   // 直接在入口把权限缺口说清楚，与注册表里 canCreateMcp 收敛「添加」按钮同一口径。
   if (!hasPermission('element:mcp_management:create')) {
     showToast('没有创建 MCP 服务的权限', 'warning')
     return
   }
+  // 处于只读「平台 MCP」、或停留在审计/变更/分享等非「我的 MCP」子视图时，
+  // 自动切回「我的 MCP」再打开新建向导（与技能工作台保持同一口径，避免点按钮无反应或提交撞 403）。
+  const needSwitchToPersonal =
+    (!isAdmin.value && activeScope.value === 'global')
+    || activeScope.value === 'audit'
+    || activeScope.value === 'changes'
+    || (activeScope.value === 'personal' && mcpMenu.value !== 'mine')
+  if (needSwitchToPersonal) {
+    activeScope.value = 'personal'
+    mcpMenu.value = 'mine'
+    await nextTick()
+  }
+  registryRef.value?.openAddModal(mode)
+}
+
+const handleBannerAction = (action: 'add' | 'marketplace') => {
   if (action === 'add') {
-    registryRef.value?.openAddModal('manual')
+    void openAddFromGuide('manual')
   } else if (action === 'marketplace') {
-    registryRef.value?.openAddModal('json')
+    void openAddFromGuide('json')
   }
 }
 </script>
@@ -349,9 +365,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       </p>
     </div>
 
-    <!-- 普通用户只有一个「我的 MCP」：把二级视图提到顶部，内容区全宽 -->
+    <!-- 普通用户在「我的 MCP」（含个人中心 / 嵌入弹窗 personalOnly）下把二级视图提到顶部，内容区全宽 -->
     <McpPersonalMenu
-      v-if="!personalOnly && !isAdmin && activeScope === 'personal'"
+      v-if="!isAdmin && activeScope === 'personal'"
       variant="tabs"
       class="mb-2 flex-shrink-0"
       :active="mcpMenu"
@@ -507,7 +523,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                       <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
                          <button
                             type="button"
-                            @click="showHelp = false; registryRef?.openAddModal('manual')"
+                            @click="showHelp = false; openAddFromGuide('manual')"
                             class="text-xs text-primary hover:text-primary-dark font-bold cursor-pointer"
                          >
                             新增服务 &rarr;

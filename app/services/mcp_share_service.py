@@ -292,7 +292,10 @@ def build_share_payload(
 async def _server_tools(session: AsyncSession, server_id: str) -> list[McpToolCache]:
     result = await session.execute(
         select(McpToolCache)
-        .where(McpToolCache.server_id == server_id)
+        .where(
+            McpToolCache.server_id == server_id,
+            McpToolCache.is_available.is_(True),
+        )
         .order_by(McpToolCache.tool_name.asc())
     )
     return list(result.scalars().all())
@@ -497,9 +500,14 @@ async def list_sent_shares(
         if raw_status in status_counts:
             status_counts[raw_status] = int(count)
 
+    filtered_total = (
+        status_counts[status]
+        if status and status in SHARE_STATUSES
+        else sum(status_counts.values())
+    )
     return {
         "items": [_share_payload(row, target_user=target) for row, target in rows],
-        "total": sum(status_counts.values()),
+        "total": filtered_total,
         "pending_count": status_counts["PENDING"],
         "status_counts": status_counts,
     }
@@ -510,7 +518,11 @@ async def withdraw_share(
 ) -> dict[str, Any]:
     user_id = _user_id(user)
     row = (
-        await session.execute(select(McpServerShare).where(McpServerShare.id == share_id))
+        await session.execute(
+            select(McpServerShare)
+            .where(McpServerShare.id == share_id)
+            .with_for_update()
+        )
     ).scalar_one_or_none()
     if row is None:
         raise McpShareNotFoundError("分享记录不存在")
@@ -707,33 +719,38 @@ async def accept_share(
         user_assertion_private_key_encrypted=config.get(
             "user_assertion_private_key_encrypted"
         ),
-        enabled_status=int(config.get("enabled_status") or 0),
+        enabled_status=0 if url_overridden else int(config.get("enabled_status") or 0),
         scope="personal",
         user_id=user_id,
     )
     session.add(server)
-    for tool in tools:
-        if not tool.get("tool_name"):
-            continue
-        # 工具标识是 ``server_name:tool``：副本换了名字（冲突加 -2 / 接收人前缀），
-        # 工具名必须跟着换，否则同步后旧前缀的行会变成孤立记录、已挂载的会话失效。
-        snapshot_name = str(tool["tool_name"])
-        local_name = (
-            snapshot_name.split(":", 1)[1]
-            if ":" in snapshot_name
-            else snapshot_name
-        )
-        session.add(
-            McpToolCache(
-                id=str(uuid.uuid4()),
-                server_id=new_id,
-                tool_name=f"{final_name}:{local_name}",
-                tool_description=tool.get("tool_description"),
-                parameter_schema=tool.get("parameter_schema"),
-                is_published=bool(tool.get("is_published")),
-                is_available=bool(tool.get("is_available", True)),
+    installed_tool_count = 0
+    # 换源后新地址的工具契约未知，不再把源服务的旧工具按已发布复制过来；
+    # 未换源时仅复制 is_available=True 的有效工具，跳过源服务里已失效的僵尸行。
+    if not url_overridden:
+        for tool in tools:
+            if not tool.get("tool_name") or tool.get("is_available") is False:
+                continue
+            # 工具标识是 ``server_name:tool``：副本换了名字（冲突加 -2 / 接收人前缀），
+            # 工具名必须跟着换，否则同步后旧前缀的行会变成孤立记录、已挂载的会话失效。
+            snapshot_name = str(tool["tool_name"])
+            local_name = (
+                snapshot_name.split(":", 1)[1]
+                if ":" in snapshot_name
+                else snapshot_name
             )
-        )
+            session.add(
+                McpToolCache(
+                    id=str(uuid.uuid4()),
+                    server_id=new_id,
+                    tool_name=f"{final_name}:{local_name}",
+                    tool_description=tool.get("tool_description"),
+                    parameter_schema=tool.get("parameter_schema"),
+                    is_published=bool(tool.get("is_published")),
+                    is_available=True,
+                )
+            )
+            installed_tool_count += 1
 
     row.status = "ACCEPTED"
     row.accepted_server_id = new_id
@@ -761,7 +778,10 @@ async def accept_share(
             "server_name": server.server_name,
             "sse_url": server.sse_url,
             "remark": server.remark,
-            "tool_count": len([tool for tool in tools if tool.get("tool_name")]),
+            # 换源接受时服务是禁用态（等新地址重新同步），响应里必须带上，
+            # 否则前端拿返回值合并列表项会暂时显示成「已启用」。
+            "enabled_status": int(getattr(server, "enabled_status", 0) or 0),
+            "tool_count": installed_tool_count,
         },
     }
 
@@ -771,7 +791,11 @@ async def reject_share(
 ) -> dict[str, Any]:
     user_id = _user_id(user)
     row = (
-        await session.execute(select(McpServerShare).where(McpServerShare.id == share_id))
+        await session.execute(
+            select(McpServerShare)
+            .where(McpServerShare.id == share_id)
+            .with_for_update()
+        )
     ).scalar_one_or_none()
     if row is None:
         raise McpShareNotFoundError("分享记录不存在")

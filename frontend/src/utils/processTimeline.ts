@@ -15,6 +15,7 @@ export type FileToolMetadata = {
   file_extension?: string;
   range?: { start?: number; limit?: number };
   paragraph_range?: { start?: number; limit?: number };
+  table_range?: { start?: number; limit?: number };
   sheet_name?: string;
   cell_range?: string;
   pattern?: string;

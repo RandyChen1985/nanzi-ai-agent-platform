@@ -68,3 +68,24 @@ async def test_function_tool_ainvoke_filters_unknown_arguments():
     result = await _echo.ainvoke({"query": "x", "unexpected": 1})
 
     assert json.loads(result) == {"query": "x", "top_k": 3}
+
+
+def test_literal_and_annotated_field_descriptions_are_preserved():
+    """Annotated[..., Field(description=...)] 与 Literal 枚举在 JSON Schema 中必须保留。"""
+    from typing import Annotated, Literal
+    from pydantic import Field
+
+    def _office_tool(
+        action: Annotated[Literal["inspect", "read_content"], Field(description="要执行的操作")],
+        limit: Annotated[int, Field(description="分页条数")] = 20,
+    ) -> str:
+        return f"{action}:{limit}"
+
+    model = tool_compat._schema_from_signature(_office_tool)
+    schema = model.model_json_schema()
+
+    assert schema["properties"]["action"]["enum"] == ["inspect", "read_content"]
+    assert schema["properties"]["action"]["description"] == "要执行的操作"
+    assert schema["properties"]["limit"]["description"] == "分页条数"
+    assert schema["properties"]["limit"]["default"] == 20
+    assert schema["required"] == ["action"]

@@ -189,14 +189,47 @@ const size = 50
 const hasMore = ref(false)
 const loadingMore = ref(false)
 
+/** 绑定弹窗打开时的已保存快照：用于判断当前选择是否已落库（check-binding 只校验已保存绑定） */
+const savedSecretId = ref<string | null>(null)
+const savedValuePath = ref('')
+
+const canCheckSavedBinding = computed(() =>
+  Boolean(
+    editing.value
+    && secretId.value
+    && secretId.value === savedSecretId.value
+    && (editValuePath.value || '') === (savedValuePath.value || ''),
+  ),
+)
+
+/** 单槽位 MCP 服务的实际槽位（不再写死 header:Authorization，兼容单自定义头/单参数槽位） */
+function singleSlotOf(target: McpTarget): string {
+  return target.bindable_slots?.[0] || 'header:Authorization'
+}
+
+function singleBindingOf(target: McpTarget): Binding | null {
+  const slot = singleSlotOf(target)
+  return target.bindings?.[slot] || (slot === 'header:Authorization' ? target.binding : null) || null
+}
+
+/** 请求序号：追加分页与保存/解绑触发的刷新可能交错，后到的不许覆盖先到的。 */
+let loadSeq = 0
+
 async function load(append = false) {
-  if (append) loadingMore.value = true
-  else loading.value = true
+  const seq = ++loadSeq
+  if (append) {
+    loadingMore.value = true
+  } else {
+    // 非追加刷新必须回到第 1 页，避免点击「加载更多」后保存/解绑把第 1 页列表盖掉
+    page.value = 1
+    loading.value = true
+  }
   error.value = ''
   try {
     const res = await axios.get('/api/portal/secrets/platform-targets', {
       params: { page: page.value, size },
     })
+    if (seq !== loadSeq) return
     const data = res.data?.data || {}
     const nextServers = data.mcp_servers || []
     const nextTools = data.api_tools || []
@@ -205,14 +238,20 @@ async function load(append = false) {
     const more = data.has_more || {}
     hasMore.value = Boolean(more.mcp_servers || more.api_tools)
   } catch (e: any) {
+    if (seq !== loadSeq) return
     error.value = e?.response?.data?.detail || '加载失败'
     if (!append) {
       servers.value = []
       tools.value = []
+      // 首屏失败必须把 hasMore 一起复位：否则列表已经空了，「加载更多」还在，
+      // 点一下 page 直接跳到 2，第 1 页再也补不回来。
+      hasMore.value = false
     }
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
@@ -237,11 +276,15 @@ function slotLabel(slot: string): string {
   return slot
 }
 
-function openBindMcp(target: McpTarget, slot = 'header:Authorization') {
-  const existing = target.bindings?.[slot] || target.binding || null
-  editing.value = { kind: 'mcp', target, slot }
+function openBindMcp(target: McpTarget, slot?: string) {
+  const resolvedSlot = slot || singleSlotOf(target)
+  const existing = target.bindings?.[resolvedSlot] || (resolvedSlot === 'header:Authorization' ? target.binding : null) || null
+  editing.value = { kind: 'mcp', target, slot: resolvedSlot }
   secretId.value = existing?.secret_id || null
   editValuePath.value = existing?.value_path || ''
+  editNeedsField.value = false
+  savedSecretId.value = existing?.secret_id || null
+  savedValuePath.value = existing?.value_path || ''
   picked.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
     : null
@@ -254,6 +297,9 @@ function openBindTool(target: ToolTarget, slot: string) {
   editing.value = { kind: 'tool', target, slot }
   secretId.value = existing?.secret_id || null
   editValuePath.value = existing?.value_path || ''
+  editNeedsField.value = false
+  savedSecretId.value = existing?.secret_id || null
+  savedValuePath.value = existing?.value_path || ''
   picked.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
     : null
@@ -382,15 +428,19 @@ onMounted(load)
             </div>
 
             <span
-              v-if="item.binding"
-              class="flex shrink-0 flex-wrap items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
+              v-if="singleBindingOf(item)"
+              class="flex shrink-0 flex-wrap items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium"
+              :class="bindingIssue(singleBindingOf(item)) ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'"
             >我的凭据：
               <SecretBindingLabel
-                :secret-key="item.binding.secret_key"
-                :format="item.binding.value_format"
-                :template="item.binding.value_template"
-                :value-path="item.binding.value_path"
+                :secret-key="singleBindingOf(item)!.secret_key"
+                :format="singleBindingOf(item)!.value_format"
+                :template="singleBindingOf(item)!.value_template"
+                :value-path="singleBindingOf(item)!.value_path"
               />
+              <template v-if="bindingIssue(singleBindingOf(item))">
+                （{{ bindingIssue(singleBindingOf(item)) }}，调用会失败）
+              </template>
             </span>
             <span
               v-else-if="item.has_fixed_token"
@@ -436,23 +486,22 @@ onMounted(load)
               </div>
             </div>
 
-            <!-- 单槽位（大多数服务只有 Authorization）：两个按钮共用一个 v-else 分支，
-                 给第二个按钮再写一个 v-else 会编译失败（v-else 必须紧邻 v-if/v-else-if） -->
+            <!-- 单槽位：按实际唯一槽位操作，兼容非 Authorization 单自定义头或单参数槽位 -->
             <template v-else>
               <button
                 type="button"
                 class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                @click="openBindMcp(item)"
-              >{{ item.binding ? '更换凭据' : '绑定我的凭据' }}</button>
+                @click="openBindMcp(item, singleSlotOf(item))"
+              >{{ singleBindingOf(item) ? '更换凭据' : '绑定我的凭据' }}</button>
               <button
                 type="button"
                 class="shrink-0 rounded-lg border px-2.5 py-1 text-xs"
-                :class="item.rules?.['header:Authorization']
+                :class="item.rules?.[singleSlotOf(item)]
                   ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
                   : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
-                :title="item.rules?.['header:Authorization']?.rule_summary || '配一条规则，按你的身份自动选凭据'"
-                @click="openLocatorFor('mcp', item, 'header:Authorization')"
-              >{{ item.rules?.['header:Authorization'] ? '改规则' : '规则' }}</button>
+                :title="item.rules?.[singleSlotOf(item)]?.rule_summary || '配一条规则，按你的身份自动选凭据'"
+                @click="openLocatorFor('mcp', item, singleSlotOf(item))"
+              >{{ item.rules?.[singleSlotOf(item)] ? '改规则' : '规则' }}</button>
             </template>
           </li>
         </ul>
@@ -541,7 +590,11 @@ onMounted(load)
           </p>
 
           <div class="mt-3 space-y-2">
-            <CredentialPicker v-model="secretId" scene="mcp" @picked="onPicked" />
+            <CredentialPicker
+              v-model="secretId"
+              :scene="editing.kind === 'mcp' ? 'mcp' : 'api_tool'"
+              @picked="onPicked"
+            />
             <SecretFieldSelect
               v-if="secretId"
               v-model="editValuePath"
@@ -553,11 +606,14 @@ onMounted(load)
           <div v-if="secretId" class="mt-2 space-y-1">
             <button
               type="button"
-              :disabled="checking"
-              class="rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              :disabled="checking || !canCheckSavedBinding"
+              class="rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
               @click="checkCurrent"
             >{{ checking ? '检查中…' : '检查此刻能否取到' }}</button>
-            <p v-if="checkResult" :class="checkResult.ok ? 'text-[11px] text-emerald-700' : 'text-[11px] text-red-600'">
+            <p v-if="!canCheckSavedBinding" class="text-[10px] leading-relaxed text-amber-600">
+              当前选择尚未保存；请先点击「保存绑定」，保存后再检查此刻能否取到。
+            </p>
+            <p v-else-if="checkResult" :class="checkResult.ok ? 'text-[11px] text-emerald-700' : 'text-[11px] text-red-600'">
               {{ checkResult.ok ? '✓ 现在能取到，调用时会注入' : `✗ 取不到：${checkResult.reason}` }}
             </p>
             <p class="text-[10px] leading-relaxed text-gray-400">

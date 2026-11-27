@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
@@ -57,23 +57,45 @@ const toggleRowExpand = (id: string) => {
   }
 }
 
+const copyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let logsRequestSeq = 0
+
+onUnmounted(() => {
+  for (const timer of copyTimers.values()) clearTimeout(timer)
+  copyTimers.clear()
+})
+
 const copyContent = async (key: string, content: any) => {
+  if (content === null || content === undefined) {
+    showToast('没有可复制的内容', 'warning')
+    return
+  }
   try {
     const textToCopy = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
-    await copyToClipboard(textToCopy)
+    const ok = await copyToClipboard(textToCopy)
+    if (!ok) {
+      showToast('复制失败', 'error')
+      return
+    }
     copiedKeys.value[key] = true
     showToast('已复制到剪贴板', 'success')
-    setTimeout(() => {
-      copiedKeys.value[key] = false
-    }, 2000)
+    const prevTimer = copyTimers.get(key)
+    if (prevTimer) clearTimeout(prevTimer)
+    copyTimers.set(
+      key,
+      setTimeout(() => {
+        copiedKeys.value[key] = false
+        copyTimers.delete(key)
+      }, 2000),
+    )
   } catch (err) {
     showToast('复制失败', 'error')
   }
 }
 
-// 格式化 JSON 安全输出
+// 格式化 JSON 安全输出（保留 0 / false 等合法标量值）
 const formatJson = (val: any) => {
-  if (!val) return '无'
+  if (val === null || val === undefined || val === '') return '无'
   if (typeof val === 'string') {
     try {
       const parsed = JSON.parse(val)
@@ -89,6 +111,7 @@ const formatJson = (val: any) => {
 const formatTime = (timeStr: string | null) => {
   if (!timeStr) return '-'
   const d = new Date(timeStr)
+  if (Number.isNaN(d.getTime())) return '-'
   return d.toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -102,6 +125,7 @@ const formatTime = (timeStr: string | null) => {
 
 // 获取全局日志列表及指标
 const fetchLogs = async () => {
+  const seq = ++logsRequestSeq
   loading.value = true
   try {
     const params: Record<string, any> = {
@@ -120,6 +144,7 @@ const fetchLogs = async () => {
     }
 
     const res: any = await axios.get('/api/portal/mcp/outbound-logs', { params })
+    if (seq !== logsRequestSeq) return
     const data = res?.data || {}
     logs.value = data.items || []
     total.value = data.total || 0
@@ -130,9 +155,10 @@ const fetchLogs = async () => {
       metrics.value = data.summary
     }
   } catch (err: any) {
+    if (seq !== logsRequestSeq) return
     showToast(err?.response?.data?.detail || '获取出站审计日志失败', 'error')
   } finally {
-    loading.value = false
+    if (seq === logsRequestSeq) loading.value = false
   }
 }
 

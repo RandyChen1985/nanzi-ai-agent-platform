@@ -80,11 +80,12 @@ def test_toolbar_is_fixed_two_rows():
     start = source.index("flex flex-col gap-2 border-b border-gray-100 bg-gray-50/80")
     end = source.index('class="custom-scrollbar', start)
     toolbar = source[start:end]
-    assert 'placeholder="搜索服务或工具..."' in toolbar
+    # 搜索框现在按服务名/备注/地址/创建人检索（工具名检索已随死代码一起移除）
+    assert 'placeholder="搜索服务名' in toolbar
     assert "仅运行中" in toolbar
     assert "{{ filteredServers.length }} / {{ servers.length }} 个服务" in toolbar
     # 搜索属于第一行，筛选与排序属于第二行
-    assert toolbar.index('placeholder="搜索服务或工具..."') < toolbar.index("仅运行中")
+    assert toolbar.index('placeholder="搜索服务名') < toolbar.index("仅运行中")
 
 def test_selected_server_is_visually_unmistakable():
     """选中态要同时有左条、底色、内描边和主色名称；hover 用中性色避免混淆。"""

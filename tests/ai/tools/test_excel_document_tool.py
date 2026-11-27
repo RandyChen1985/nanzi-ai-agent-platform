@@ -133,3 +133,20 @@ async def test_excel_create_writes_initial_cells(excel_context, tmp_path):
         ]
     finally:
         workbook.close()
+
+
+def test_excel_tools_schema_exposes_action_enum_and_descriptions():
+    from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
+
+    read_schema = excel_document_read.args_schema.model_json_schema()
+    assert read_schema["properties"]["action"]["enum"] == ["inspect", "read_range"]
+    assert read_schema["properties"]["action"].get("description")
+    assert read_schema["properties"]["cell_range"].get("description")
+    assert read_schema["required"] == ["action", "path"]
+
+    write_schema = excel_document_write.args_schema.model_json_schema()
+    assert write_schema["properties"]["action"]["enum"] == [
+        "create", "write_cells", "append_rows", "create_sheet"
+    ]
+    assert write_schema["properties"]["action"].get("description")
+    assert write_schema["required"] == ["action", "output_filename"]

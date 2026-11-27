@@ -1750,6 +1750,9 @@ function fileMetadataSummary(metadata?: FileToolMetadata): string {
   if (metadata.paragraph_range) {
     parts.push(`第 ${metadata.paragraph_range.start ?? 0} 段起 ${metadata.paragraph_range.limit ?? 0} 段`);
   }
+  if (metadata.table_range) {
+    parts.push(`第 ${metadata.table_range.start ?? 0} 个表格起 ${metadata.table_range.limit ?? 0} 个`);
+  }
   if (metadata.sheet_name) parts.push(`工作表：${metadata.sheet_name}`);
   if (metadata.cell_range) parts.push(`范围：${metadata.cell_range}`);
   if (metadata.pattern) parts.push(`关键词：${metadata.pattern}`);

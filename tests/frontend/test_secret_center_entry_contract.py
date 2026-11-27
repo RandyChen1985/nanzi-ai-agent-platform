@@ -350,7 +350,10 @@ class TestMcpWizardPendingBindings:
 
     def test_pending_flushed_after_create(self):
         source = _read(self.REGISTRY)
-        assert "await flushPendingBindings(newId)" in source
+        # POST 拿到 id 之后立刻补写暂存绑定，并且用的是「发起请求前的那份快照」——
+        # 保存过程中用户关开关/删行会清 pendingBindings，直接读实时值会把绑定丢掉。
+        assert "flushPendingBindings(newId" in source
+        assert "pendingSnapshot" in source
 
     def test_binding_failure_does_not_rollback_server(self):
         """服务建好了但绑定失败，要明说，不能显示成「已绑定」。"""
@@ -694,27 +697,39 @@ class TestBindingEdgeCases:
         assert "已不在可选列表里" in source
 
     def test_close_after_save_flushes_pending_first(self):
-        """`closeAfterSave` 分支必须先把暂存绑定补写掉再关向导。
+        """补写暂存绑定必须早于 `closeWizard()`。
 
         `closeWizard()` → `resetWizard()` 会 `pendingBindings.value = {}`，
-        先关就再也找不到用户选过哪几条凭据了。
+        先关就再也找不到用户选过哪几条凭据了。现在补写被提到了 POST 之后、
+        分支判断之前（两条出口共用），所以这里断言的是「整段 addServer 里
+        补写早于任何 closeWizard」，比原来只覆盖 `closeAfterSave` 一条更严。
         """
         source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
-        start = source.find("if (options?.closeAfterSave) {")
-        body = source[start:source.find("return true", start)]
-        flush_at = body.find("flushPendingBindings(")
-        # rfind：上面那段注释里也提到 closeWizard()，取真正调用的那次
-        close_at = body.rfind("closeWizard()")
-        assert flush_at != -1, "closeAfterSave 分支没有补写暂存绑定"
-        assert flush_at < close_at, "补写必须在 closeWizard 之前"
+        start = source.find("const addServer = async")
+        body = source[start:source.find("async function flushPendingBindings(")]
+        flush_at = body.find("flushPendingBindings(newId")
+        assert flush_at != -1, "addServer 没有补写暂存绑定"
+        # 用正则找真正的调用语句：注释里也会出现 ``closeWizard()`` 字样，直接 find 会误判
+        call = re.search(r"^\s*closeWizard\(\);", body, re.MULTILINE)
+        if call:
+            assert flush_at < call.start(), "补写必须在 closeWizard 之前"
 
     def test_new_wizard_does_not_inherit_previous_bindings(self):
-        """从「编辑 A」跳到「添加」，新向导不能显示 A 的 header 绑定。"""
+        """从「编辑 A」跳到「添加」，新向导不能显示 A 的 header 绑定。
+
+        清空点现在提到**请求之前、分支判断之外**：请求失败时 catch 不做事，
+        若只在 `!editingId` 分支里清，编辑 A 后打开 B 且 B 的绑定接口失败，
+        界面会继续显示 A 的凭据（解绑还会带着 A 的 is_global 去删 B 的绑定）。
+        """
         source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
         start = source.find("async function loadMcpBinding(")
         body = source[start:source.find("\n}", start)]
-        head = body[:body.find("if (!editingId.value)")]
-        assert "headerBindings.value = {}" in body[body.find("if (!editingId.value)"):][:200]
+        clear_at = body.find("headerBindings.value = {}")
+        assert clear_at != -1, "loadMcpBinding 没有清空 headerBindings"
+        branch_at = body.find("if (!editingId.value)")
+        assert branch_at != -1
+        assert clear_at < branch_at, "清空必须早于 !editingId 分支（请求失败时也要清）"
+        assert "slotRules.value = {}" in body[:branch_at]
 
     def test_failed_flush_keeps_pending_for_retry(self):
         """补写失败要留在暂存里，否则只能到编辑态重新选一遍。"""

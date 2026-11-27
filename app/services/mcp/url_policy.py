@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 from urllib.parse import urlsplit
 
 MAX_MCP_URL_LENGTH = 2048
@@ -43,6 +44,19 @@ _BLOCKED_IP_NETWORKS = (
     ipaddress.ip_network("168.63.129.16/32"),  # Azure wire server
     ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IMDS IPv6
 )
+# NAT64 / IPv4-translated IPv6 前缀：低 32 位内嵌 IPv4，需要剥出后按 IPv4 策略复检，
+# 防止 `64:ff9b::169.254.169.254` 或 `::ffff:0:169.254.169.254` 绕过元数据拦截。
+#
+# 注意这里是 **IPv4-translated**（RFC 2765，`::ffff:0:0:0/96`，第 5 组为 ffff），
+# 与 **IPv4-mapped**（`::ffff:a.b.c.d`，第 6 组为 ffff）是两个不同前缀：
+# 后者由上面的 ``ipv4_mapped`` 分支处理，重复列在这儿只会让读者以为覆盖了两遍。
+# RFC 8215 的 local-use 前缀（`64:ff9b:1::/48`）不在此列：/48 的内嵌位按 RFC 6052
+# 分布在 48-63 / 72-95，不在末 32 位，用低 32 位提取判断是错误的，宁可留空也不要
+# 给出「已覆盖」的错觉。
+_EMBEDDED_IPV4_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),  # RFC 6052 Well-Known NAT64
+    ipaddress.ip_network("::ffff:0:0:0/96"),  # RFC 2765 IPv4-translated
+)
 
 
 class McpUrlPolicyError(ValueError):
@@ -59,13 +73,33 @@ def _has_control_or_ambiguous_chars(value: str) -> bool:
     return False
 
 
+def _parse_literal_ip(hostname: str) -> "ipaddress._BaseAddress | None":
+    """解析字面 IP，兼顾标准写法、IPv6 zone id 与非标准 IPv4 编码。
+
+    Python ``ipaddress.ip_address()`` 只认 4 段点分十进制 IPv4；而底层
+    ``getaddrinfo`` / ``inet_aton`` 会把十进制整数（``2852039166``）、十六进制
+    （``0xa9fea9fe``）、八进制（``0251.0376.0251.0376``）、省略段
+    （``169.254.43518``）以及 ``0`` 解析为真实 IPv4。这里统一归一，防止绕过拦截。
+    """
+    candidate = hostname.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    try:
+        packed = socket.inet_aton(candidate)
+    except OSError:
+        return None
+    return ipaddress.IPv4Address(packed)
+
+
 def _ip_is_blocked(ip: "ipaddress._BaseAddress") -> bool:
     """判断地址是否命中「元数据 / link-local / 组播 / 未指定」。
 
-    必须同时检查 IPv4-mapped IPv6：``ipaddress`` 对 ``::ffff:169.254.169.254`` 的
-    ``is_link_local`` 会跟着映射地址走（这一条不用额外处理），但 ``in
-    IPv4Network(...)`` 因为版本不同恒为 False——所以只靠网段判断的条目
-    （阿里云 ``100.100.100.200``、Azure ``168.63.129.16``）会被 ``::ffff:`` 写法绕过。
+    必须同时检查 IPv4-mapped / IPv4-translated / NAT64 IPv6：``ipaddress`` 对
+    ``::ffff:169.254.169.254`` 的 ``is_link_local`` 会跟着映射地址走，但 ``in
+    IPv4Network(...)`` 因为版本不同恒为 False，且 NAT64 / ``::ffff:0:0/96`` 不会
+    触发 ``ipv4_mapped``——因此提取内嵌 IPv4 递归复检。
     """
     if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
         return True
@@ -74,6 +108,11 @@ def _ip_is_blocked(ip: "ipaddress._BaseAddress") -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None and mapped != ip:
         return _ip_is_blocked(mapped)
+    if isinstance(ip, ipaddress.IPv6Address) and any(
+        ip in network for network in _EMBEDDED_IPV4_NETWORKS
+    ):
+        embedded = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        return _ip_is_blocked(embedded)
     return False
 
 
@@ -112,10 +151,7 @@ def validate_mcp_outbound_url(value: str) -> str:
     if hostname in _BLOCKED_HOSTNAMES:
         raise McpUrlPolicyError("MCP 服务地址不能指向云元数据服务")
 
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        ip = None
+    ip = _parse_literal_ip(hostname)
     if ip is not None and _ip_is_blocked(ip):
         raise McpUrlPolicyError("MCP 服务地址不能指向云元数据或不可用地址")
 

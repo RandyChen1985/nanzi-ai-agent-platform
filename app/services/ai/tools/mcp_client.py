@@ -224,8 +224,19 @@ def _is_transport_error(err: BaseException) -> bool:
 
     ``ExceptionGroup``（anyio task group 会把并发子任务的异常打包抛出）按成员递归
     判断：只要有一个成员是传输异常，整体就按传输断开处理。
+
+    超时按「请求有没有可能已被远端处理」分开判：
+
+    * ``ConnectTimeout``（TCP 都还没握上手）——请求一定没送达，重连是安全的，
+      而且这正是「远端刚重启/DNS 抖动」最常见、最该自愈的形态，保留重连；
+    * ``ReadTimeout`` / ``WriteTimeout`` / ``PoolTimeout``——请求可能已经进对端，
+      重连重发会把非幂等写操作执行两遍，还会拆掉共享连接影响并发用户，因此排除。
     """
     if isinstance(err, McpToolCallTimeout):
+        return False
+    if isinstance(err, (httpx.ConnectTimeout, httpx2.ConnectTimeout)):
+        return True
+    if isinstance(err, (httpx.TimeoutException, httpx2.TimeoutException)):
         return False
     if _is_mcp_connection_closed(err):
         return True
@@ -278,7 +289,9 @@ def _create_no_redirect_mcp_http_client(headers=None, timeout=None, auth=None):
     """
     return httpx2.AsyncClient(
         headers=headers,
-        timeout=timeout or httpx2.Timeout(30.0),
+        # 与 mcp SDK 默认读超时（300s）对齐：若只写 Timeout(30.0)，Streamable HTTP
+        # 长耗时工具会在 30s 被底层读超时截断，覆盖掉平台 180s+ 的工具超时配置。
+        timeout=timeout or httpx2.Timeout(30.0, read=300.0),
         auth=auth,
         follow_redirects=False,
     )
@@ -325,7 +338,12 @@ async def _call_tool_with_progress(
             session.call_tool(tool_name, arguments, **kwargs),
             timeout=timeout,
         )
-    except asyncio.TimeoutError as exc:
+    except (httpx.ConnectTimeout, httpx2.ConnectTimeout):
+        # TCP 都还没握上手：请求一定没送达，重连重试是安全的，交给上层按「传输断开」
+        # 处理（_is_transport_error 也把它算传输）。翻译成 McpToolCallTimeout 会让它
+        # 被当成「工具太慢」上报，也不会淘汰那条已经坏掉的会话——两处口径互相抵消。
+        raise
+    except (asyncio.TimeoutError, httpx.TimeoutException, httpx2.TimeoutException) as exc:
         raise McpToolCallTimeout(
             f"MCP tool '{tool_name}' timed out after {timeout:g}s"
         ) from exc
@@ -1032,57 +1050,105 @@ class McpClientService:
         session_key: Optional[str] = None
         auth_headers: Optional[Dict[str, str]] = None
         is_verify_temp = server_id.startswith("verify_") and server_id in cls._sessions
-        if user_info and not is_verify_temp:
-            server = await cls._load_server(server_id)
-            signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
-            user_id = str((user_info or {}).get("user_id") or "").strip()
-            if signed_user_enabled:
-                if not user_id:
-                    raise ValueError("MCP UserContext requires an authenticated user_id")
-                auth_headers = build_mcp_headers(
-                    server,
-                    user_info=user_info,
-                    agent_info={
-                        "agent_id": "mcp-tool-sync",
-                        "agent_name": "MCP 工具同步",
-                    },
-                )
-                session_key = f"{server_id}:sync:user:{user_id}:{uuid.uuid4().hex}"
-                ephemeral_session = True
+        if not is_verify_temp:
+            server = None
+            if user_info:
+                server = await cls._load_server(server_id)
             else:
-                auth_headers = resolve_mcp_auth_headers(server)
+                # 后台巡检（user_info=None）也需要为平台服务注入管理员绑定的全局系统凭据；
+                # 仅加载失败（例如单测仅 mock get_session 未建库）时保持向后兼容，回落静态会话。
+                try:
+                    server = await cls._load_server(server_id)
+                except Exception:  # noqa: BLE001
+                    server = None
 
-            mcp_denials: dict[str, str] = {}
-            mcp_used: dict[str, Any] = {}
-            auth_headers = await apply_mcp_bindings(
-                server,
-                auth_headers or {},
-                user_info=user_info,
-                denials=mcp_denials,
-                used=mcp_used,
-            )
-            if mcp_denials:
-                raise McpCredentialDeniedError(
-                    str(getattr(server, "server_name", "") or server_id), mcp_denials
-                )
-            pending_refs = unresolved_credential_headers(auth_headers)
-            if pending_refs:
-                raise McpCredentialDeniedError(
-                    str(getattr(server, "server_name", "") or server_id),
-                    {
-                        f"header:{name}": unbound_reason(auth_headers.get(name))
-                        or "reference_unbound"
-                        for name in pending_refs
-                    },
-                )
-            if not signed_user_enabled:
-                if mcp_used.get("slots"):
-                    session_key = f"{server_id}:sync:bind:{user_id or 'u'}:{uuid.uuid4().hex}"
-                    ephemeral_session = True
-                else:
-                    # 无签名且未命中动态凭据时沿用静态会话连接池
-                    auth_headers = None
-                    session_key = None
+            if server is not None:
+                signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
+                user_id = str((user_info or {}).get("user_id") or "").strip()
+                if user_info:
+                    if signed_user_enabled:
+                        if not user_id:
+                            raise ValueError("MCP UserContext requires an authenticated user_id")
+                        auth_headers = build_mcp_headers(
+                            server,
+                            user_info=user_info,
+                            agent_info={
+                                "agent_id": "mcp-tool-sync",
+                                "agent_name": "MCP 工具同步",
+                            },
+                        )
+                        session_key = f"{server_id}:sync:user:{user_id}:{uuid.uuid4().hex}"
+                        ephemeral_session = True
+                    else:
+                        auth_headers = resolve_mcp_auth_headers(server)
+
+                    mcp_denials: dict[str, str] = {}
+                    mcp_used: dict[str, Any] = {}
+                    auth_headers = await apply_mcp_bindings(
+                        server,
+                        auth_headers or {},
+                        user_info=user_info,
+                        denials=mcp_denials,
+                        used=mcp_used,
+                    )
+                    if mcp_denials:
+                        raise McpCredentialDeniedError(
+                            str(getattr(server, "server_name", "") or server_id), mcp_denials
+                        )
+                    pending_refs = unresolved_credential_headers(auth_headers)
+                    if pending_refs:
+                        raise McpCredentialDeniedError(
+                            str(getattr(server, "server_name", "") or server_id),
+                            {
+                                f"header:{name}": unbound_reason(auth_headers.get(name))
+                                or "reference_unbound"
+                                for name in pending_refs
+                            },
+                        )
+                    if not signed_user_enabled:
+                        if mcp_used.get("slots"):
+                            session_key = f"{server_id}:sync:bind:{user_id or 'u'}:{uuid.uuid4().hex}"
+                            ephemeral_session = True
+                        else:
+                            # 无签名且未命中动态凭据时沿用静态会话连接池
+                            auth_headers = None
+                            session_key = None
+                elif not signed_user_enabled and getattr(server, "scope", None) == "global":
+                    # 后台巡检只解析平台服务上的「全局系统凭据」。
+                    #
+                    # 刻意排除 ``signed_user_enabled``：开了 UserContext 签名的服务必须带
+                    # 某个真实用户的断言才能连通，巡检没有操作者，硬注入凭据也照样过不了
+                    # 验签。这类服务应当由调用方按「需要用户」上报（探测状态里的
+                    # ``needs_user``），而不是在这里伪装成凭据解析失败。
+                    base_headers = resolve_mcp_auth_headers(server)
+                    mcp_denials = {}
+                    mcp_used = {}
+                    resolved_headers = await apply_mcp_bindings(
+                        server,
+                        base_headers,
+                        user_info=None,
+                        denials=mcp_denials,
+                        used=mcp_used,
+                        allow_system_global=True,
+                    )
+                    if mcp_denials:
+                        raise McpCredentialDeniedError(
+                            str(getattr(server, "server_name", "") or server_id), mcp_denials
+                        )
+                    pending_refs = unresolved_credential_headers(resolved_headers)
+                    if pending_refs:
+                        raise McpCredentialDeniedError(
+                            str(getattr(server, "server_name", "") or server_id),
+                            {
+                                f"header:{name}": unbound_reason(resolved_headers.get(name))
+                                or "reference_unbound"
+                                for name in pending_refs
+                            },
+                        )
+                    if mcp_used.get("slots"):
+                        auth_headers = resolved_headers
+                        session_key = f"{server_id}:probe:sys:{uuid.uuid4().hex}"
+                        ephemeral_session = True
 
         session_mgr = await cls.get_session(
             server_id,
@@ -1534,14 +1600,21 @@ class McpClientService:
         if hasattr(session_mgr, "mark_request_start"):
             session_mgr.mark_request_start()
         try:
-            # per-request timeout：共享 client 的默认值不能成为工具超时的第二套口径。
+            # per-request timeout：未指定时使用 USE_CLIENT_DEFAULT（回落 client 默认 120s），
+            # 严禁显式传 None——在 httpx 中 timeout=None 会彻底禁用超时导致永久挂起。
             resp = await client.post(
                 session_mgr.sse_url,
                 json=payload,
                 headers=headers,
-                timeout=timeout if timeout and timeout > 0 else None,
+                timeout=timeout if timeout and timeout > 0 else httpx.USE_CLIENT_DEFAULT,
             )
             logger.info(f"[MCP-Direct] Response from {method}: HTTP {resp.status_code}")
+        except httpx.TimeoutException as timeout_err:
+            redacted_err = redact_value(str(timeout_err), where=f"MCP 服务 {method} 超时")
+            logger.error(f"[MCP-Direct] HTTP Request timed out for {method}: {redacted_err}")
+            raise McpToolCallTimeout(
+                f"MCP HTTP request '{method}' timed out: {redacted_err}"
+            ) from None
         except Exception as http_err:
             redacted_err = redact_value(str(http_err), where=f"MCP 服务 {method} 异常")
             logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {redacted_err}")
@@ -1610,6 +1683,7 @@ class McpClientService:
                         params,
                         is_notification,
                         retry_count=retry_count + 1,
+                        timeout=timeout,
                     )
                 redacted_error = redact_value(
                     data["error"], where=f"MCP 服务 {method} RPC 错误"
@@ -1648,6 +1722,7 @@ class McpClientService:
                 params,
                 is_notification,
                 retry_count=retry_count + 1,
+                timeout=timeout,
             )
 
         safe_body = redact_value(resp.text, where=f"MCP 服务 {method} 错误响应")

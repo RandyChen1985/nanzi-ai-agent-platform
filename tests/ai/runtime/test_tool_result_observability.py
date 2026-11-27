@@ -328,6 +328,12 @@ def test_file_tool_metadata_sandbox_policy_uses_logical_namespace():
             {"document_type": "word", "path": "report.docx", "paragraph_range": {"start": 20, "limit": 10}},
         ),
         (
+            "word_document_read",
+            {"action": "read_tables", "path": "/app/data/uploads/report.docx", "start": None, "limit": 20},
+            {"status": "ok", "summary": "已读取 10 个表格（共 10 个）", "data": {"start": 0, "limit": 10}},
+            {"document_type": "word", "path": "report.docx", "table_range": {"start": 0, "limit": 10}},
+        ),
+        (
             "excel_document_read",
             {"action": "read_range", "path": "/app/data/uploads/sales.xlsx", "sheet_name": "八月", "cell_range": "A1:H30"},
             {"status": "ok", "summary": "已读取 八月!A1:H30"},

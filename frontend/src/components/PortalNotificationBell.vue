@@ -10,6 +10,7 @@ import {
 } from "../utils/savedReportOpenProtocol";
 import { copyToClipboard } from "../utils/clipboard";
 import { OPEN_PORTAL_INBOX_EVENT } from "../constants/personalResources";
+import { getCachedUiModeBlocked, resolveInitialUiMode, useUiMode } from "../composables/useUiMode";
 
 const props = withDefaults(defineProps<{
   /** bell：Dashboard 顶栏下拉；modal：EmbedChat 内独立居中弹层（iframe 集成不依赖父页铃铛） */
@@ -32,6 +33,11 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
+const {
+  uiMode: activeUiMode,
+  blockedModes: activeBlockedModes,
+  ready: uiModeReady,
+} = useUiMode();
 const open = ref(false);
 const shouldListenGlobalEvent = computed(() =>
   props.listenGlobalEvent ?? props.variant === "bell",
@@ -88,10 +94,47 @@ const isAgentShareNotification = (item: any) =>
 const isTaskCenterNotification = (item: any) =>
   item?.category === "task_center" || item?.resource_type === "scheduled_task";
 
+const resolveTaskCenterRoutePath = (): string => {
+  try {
+    const raw = localStorage.getItem("user_info");
+    const info = raw ? JSON.parse(raw) : null;
+    const isAdmin = info?.role === "admin";
+    const menus: string[] = Array.isArray(info?.permissions?.menus) ? info.permissions.menus : [];
+    const uiMode = uiModeReady.value ? activeUiMode.value : resolveInitialUiMode(info?.role);
+    const proBlocked = uiModeReady.value
+      ? activeBlockedModes.value.includes("pro")
+      : getCachedUiModeBlocked().includes("pro");
+    // 用户模式、禁用专业模式或无 menu:task_center 权限的账号走 /dashboard/my-tasks，
+    // 避免跳 /dashboard/tasks 被路由守卫拦截弹回首页。
+    if (uiMode === "user" || proBlocked) return "/dashboard/my-tasks";
+    if (isAdmin || menus.includes("menu:task_center")) return "/dashboard/tasks";
+  } catch {
+    return "/dashboard/my-tasks";
+  }
+  return "/dashboard/my-tasks";
+};
+
+const extractNumericTaskId = (item: any): string | undefined => {
+  const metaTaskId = item?.metadata?.task_id;
+  if (metaTaskId !== undefined && metaTaskId !== null && /^\d+$/.test(String(metaTaskId).trim())) {
+    return String(metaTaskId).trim();
+  }
+  // 成功推送的定时任务通知 resource_id 存的是 trace_id（UUID），告警通知才存数字 task_id，
+  // 必须校验纯数字，避免把 trace_id 误当 task_id 塞进 URL。
+  if (item?.resource_type === "scheduled_task" && item?.resource_id != null) {
+    const raw = String(item.resource_id).trim();
+    if (/^\d+$/.test(raw)) return raw;
+  }
+  return undefined;
+};
+
 const goToTaskCenter = async () => {
+  const targetTaskId = extractNumericTaskId(detailItem.value);
+  const path = resolveTaskCenterRoutePath();
   closeDetail();
   closeNotifications();
-  await router.push({ path: "/dashboard/tasks" }).catch(() => undefined);
+  const query = targetTaskId ? { task_id: targetTaskId } : undefined;
+  await router.push(query ? { path, query } : { path }).catch(() => undefined);
 };
 
 const detailContent = computed(() => String(detailItem.value?.content || ""));

@@ -40,7 +40,7 @@ from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound
     [
         httpx.ConnectError("boom"),
         httpx2.ConnectError("boom"),
-        httpx2.ReadTimeout("boom"),
+        httpx2.RemoteProtocolError("boom"),
         anyio.ClosedResourceError(),
         anyio.BrokenResourceError(),
         anyio.EndOfStream(),
@@ -60,6 +60,13 @@ def test_exception_group_is_recognized_when_any_member_is_transport():
 def test_business_timeout_is_not_a_transport_error():
     """超时是「远端太慢」，不是「连接断了」：重连重发会把写操作执行两遍。"""
     assert _is_transport_error(McpToolCallTimeout("slow tool")) is False
+    assert _is_transport_error(httpx.ReadTimeout("slow http")) is False
+    assert _is_transport_error(httpx2.ReadTimeout("slow streamable")) is False
+    assert _is_transport_error(httpx.WriteTimeout("slow upload")) is False
+    assert _is_transport_error(httpx2.PoolTimeout("pool busy")) is False
+    # 建连超时是例外：TCP 都没握上手，请求一定没送达，重连安全且正是最该自愈的形态
+    assert _is_transport_error(httpx.ConnectTimeout("connect slow")) is True
+    assert _is_transport_error(httpx2.ConnectTimeout("connect slow")) is True
     # 对外仍是 TimeoutError 语义，调用方无需改判
     assert isinstance(McpToolCallTimeout("x"), TimeoutError)
 

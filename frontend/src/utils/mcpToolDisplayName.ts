@@ -26,8 +26,12 @@ export const mcpToolDisplayName = (
     }
   }
   if (raw.toLowerCase().startsWith(server.toLowerCase()) && raw.length > server.length + 1) {
-    const rest = raw.slice(server.length).replace(/^[:/._-]+/, '').trim()
-    if (rest) return rest
+    // 必须紧跟明确分隔符才允许剥离服务名前缀，避免 server="git" 把 "github_search" 截残成 "hub_search"
+    const tail = raw.slice(server.length)
+    if (/^[:/._-]+/.test(tail)) {
+      const rest = tail.replace(/^[:/._-]+/, '').trim()
+      if (rest) return rest
+    }
   }
   const colonIdx = raw.indexOf(':')
   if (colonIdx > 0 && colonIdx < raw.length - 1) {

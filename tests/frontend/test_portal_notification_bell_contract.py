@@ -142,3 +142,17 @@ def test_notification_detail_renders_mermaid_and_echarts_via_canvas_markdown():
     assert "chart|echarts|json" in renderer
     assert "mermaid" in renderer
     assert "graph|flowchart|sequenceDiagram" in renderer
+
+
+def test_task_notification_routes_non_admin_and_user_mode_to_my_tasks():
+    """用户模式或缺少 menu:task_center 的普通用户点任务通知不能跳 /dashboard/tasks 撞守卫。"""
+    bell = (ROOT / "frontend/src/components/PortalNotificationBell.vue").read_text(encoding="utf-8")
+
+    assert "resolveTaskCenterRoutePath" in bell
+    assert "extractNumericTaskId" in bell
+    assert '"/dashboard/my-tasks"' in bell
+    assert '"/dashboard/tasks"' in bell
+    assert "menu:task_center" in bell
+    assert "resolveInitialUiMode" in bell
+    assert "getCachedUiModeBlocked" in bell
+    assert "useUiMode" in bell

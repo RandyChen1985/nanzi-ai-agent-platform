@@ -909,6 +909,168 @@ def _set_case_insensitive(headers: dict[str, str], name: str, value: str) -> Non
     headers[name] = value
 
 
+async def _apply_system_global_mcp_bindings(
+    server: Any,
+    headers: dict[str, str],
+    *,
+    denials: dict[str, str],
+    denial_details: dict[str, str] | None,
+    used: dict[str, Any] | None,
+) -> dict[str, str]:
+    """后台巡检（无操作者 user_id）解析平台 MCP 上管理员绑定的全局系统凭据。
+
+    只认满足全部四个条件的绑定：
+    1. 目标服务为平台公共服务（``scope == 'global'``）；
+    2. 绑定行是全局绑定（``bound_by_user_id`` 为空 / NULL）且策略为 ``fixed``；
+    3. 凭据本身是系统级共享凭据（``owner_scope == 'system'``），绝不触碰任何个人凭据；
+    4. 完整通过 ``evaluate_secret``（状态/过期/场景 ``mcp``/域名白名单）校验，并注册进脱敏池。
+
+    刻意**不**做授权拦截：用户态解析系统凭据会判「是否 grant 给该用户」，巡检没有
+    操作者可比对，阻断会让存量平台服务的探测仅因缺一条 grant 就变红，而真实调用
+    本来就已是 ``denied_by_grant``。零授权的系统凭据只打一条 WARNING 留痕。
+    """
+    from datetime import datetime
+    from sqlalchemy import or_, select
+
+    from app.core.orm import AsyncSessionLocal
+    from app.models.secret import SecretBinding, SecretGrant, UserSecret
+    from app.services.secrets.policy import SecretContext, evaluate_secret
+    from app.services.secrets.resolver import SecretResolver, _to_record
+
+    if getattr(server, "scope", None) != "global":
+        _flag_unresolved_references(headers, denials)
+        return headers
+    server_id = str(getattr(server, "id", "") or "")
+    if not server_id:
+        _flag_unresolved_references(headers, denials)
+        return headers
+
+    resolved = dict(headers or {})
+    target = host_of(getattr(server, "sse_url", None))
+    now = datetime.utcnow()
+    try:
+        _, platform_external, _ = await SecretResolver._platform_flags()
+        async with AsyncSessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(SecretBinding, UserSecret)
+                    .join(UserSecret, UserSecret.id == SecretBinding.secret_id)
+                    .where(
+                        SecretBinding.consumer_type == CONSUMER_MCP,
+                        SecretBinding.consumer_id == server_id,
+                    )
+                )
+            ).all()
+            # 授权：用户态解析系统凭据前会判「这条是否 grant 给了该用户」，后台巡检
+            # 没有可比对的操作者，只认「至少授权给了某个范围」。这里只用来**告警**，
+            # 不阻断注入（见下方零 grant 分支）：阻断会让存量平台服务的探测因为缺
+            # 一条 grant 突然变红，而真实调用本来就已经是 denied_by_grant。
+            secret_ids = [row.id for _binding, row in rows]
+            granted_secret_ids: set[str] = set()
+            if secret_ids:
+                granted_secret_ids = {
+                    str(value)
+                    for value in (
+                        await session.execute(
+                            select(SecretGrant.secret_id)
+                            .where(
+                                SecretGrant.secret_id.in_(secret_ids),
+                                or_(
+                                    SecretGrant.expires_at.is_(None),
+                                    SecretGrant.expires_at > now,
+                                ),
+                            )
+                            .distinct()
+                        )
+                    ).scalars().all()
+                }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SecretInject] 后台读取平台 MCP %s 全局绑定失败: %s", server_id, exc)
+        _flag_unresolved_references(resolved, denials)
+        return resolved
+
+    matched_slots: list[str] = []
+    limit = await _max_inject_per_call()
+    injected = 0
+    for binding, secret_row in rows:
+        if injected >= limit:
+            break
+        if binding.bound_by_user_id:
+            continue
+        slot = str(binding.slot or "")
+        if (getattr(binding, "strategy", None) or "fixed") != "fixed":
+            # 规则绑定要在「调用者是谁」的语境里求值，后台巡检没有操作者，只能跳过。
+            # 故意不记 denial：同槽位常有一条固定头兜底，记拒会让整次探测失败。
+            # 但必须留一条日志——否则远端 401 时看不出「规则绑定根本没被求值」。
+            logger.info(
+                "[SecretInject] 平台 MCP %s 的槽位 %s 是规则绑定，后台巡检无法求值，已跳过",
+                server_id,
+                slot or "<empty>",
+            )
+            continue
+        if not slot.startswith("header:"):
+            continue
+        name = slot.partition(":")[2].strip()
+        if not name:
+            continue
+        record = _to_record(secret_row)
+        if not record.is_system:
+            continue
+        if str(record.id) not in granted_secret_ids:
+            # 巡检没有操作者，「这条系统凭据有没有授权给调用者」无从判断；历史口径是
+            # 不判授权直接注入。保持不变（存量平台服务的探测不会因为缺 grant 变红），
+            # 但必须留痕：否则「一条谁都没被授权的凭据被后台解密外发」完全无声。
+            logger.warning(
+                "[SecretInject] 平台 MCP %s 的系统凭据 %s（槽位 %s）没有任何有效授权记录，"
+                "巡检仍按历史口径注入；若确属无意，请在凭据中心补一条授权。",
+                server_id,
+                record.secret_key,
+                slot,
+            )
+        matched_slots.append(slot)
+        context = SecretContext(
+            user_id="__system__",
+            scene=SCENE_MCP,
+            target_host=target,
+            dept_code=None,
+            allow_script_env=False,
+            allow_external_host=platform_external,
+        )
+        denial = evaluate_secret(record, context, now=now)
+        if denial:
+            _record(denials, slot, denial, details=denial_details)
+            continue
+        ciphertext = SecretResolver._pick_ciphertext(secret_row, now)
+        if not ciphertext:
+            _record(denials, slot, "missing_binding", details=denial_details)
+            continue
+        plain = SecretResolver._decrypt(ciphertext)
+        register_injected(plain)
+        orig = _get_case_insensitive(resolved, name)
+        rendered = _render_reference(
+            orig,
+            plain,
+            secret_key=record.secret_key,
+            slot=slot,
+            denials=denials,
+            value_path=getattr(binding, "value_path", "") or "",
+            value_format=secret_row.value_format or "text",
+        )
+        if rendered is None:
+            continue
+        if name.lower() == "authorization":
+            rendered = _keep_auth_scheme(rendered, orig)
+        _set_case_insensitive(resolved, name, rendered)
+        injected += 1
+
+    if used is not None and matched_slots:
+        used["user_id"] = "__system__"
+        used["slots"] = sorted(set(matched_slots))
+
+    _flag_unresolved_references(resolved, denials)
+    return resolved
+
+
 async def apply_mcp_bindings(
     server: Any,
     headers: dict[str, str],
@@ -917,6 +1079,7 @@ async def apply_mcp_bindings(
     denials: dict[str, str] | None = None,
     denial_details: dict[str, str] | None = None,
     used: dict[str, Any] | None = None,
+    allow_system_global: bool = False,
 ) -> dict[str, str]:
     """把绑定的凭据填进 MCP 出站请求头。
 
@@ -943,6 +1106,17 @@ async def apply_mcp_bindings(
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
+        if allow_system_global:
+            return await _apply_system_global_mcp_bindings(
+                server,
+                headers,
+                denials=denials,
+                denial_details=denial_details,
+                used=used,
+            )
+        # 走到这儿说明既没有操作者、调用方也没要求解析系统级全局绑定（例如后台巡检
+        # 撞上一个必须带用户断言的平台服务）：此时无法构造个人层语义，只能把占位符
+        # 原样留下，由调用方按「凭据未解析」上报，而不是在这里静默当成已注入。
         _flag_unresolved_references(headers, denials)
         return headers
 

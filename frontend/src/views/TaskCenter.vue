@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { UserIcon,
+import {
+  UserIcon,
   BellAlertIcon,
   ChartBarIcon,
   CloudIcon,
@@ -7,6 +8,8 @@ import { UserIcon,
   MagnifyingGlassIcon,
   PauseCircleIcon,
   PlayCircleIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
   TrashIcon,
 } from "@heroicons/vue/24/outline";
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
@@ -50,6 +53,7 @@ import type { ReasoningEffort } from '@/api/model'
 // 直接丢进 <p> 会显示成 ## / ** / | 的裸源码。只读模式不接引用面板与产物下载。
 import MessageRenderer from '@/components/MessageRenderer.vue'
 import '@/styles/messageMarkdownHost.css'
+import { parseChatLogQuery } from '@/utils/chatLogPresentation'
 
 const emptyResourceScope = (): TaskResourceScope => ({
   project_name: '',
@@ -150,10 +154,34 @@ const router = useRouter()
 const route = useRoute()
 
 // Auth & Permission
-const cachedUser = localStorage.getItem('user_info')
-const userInfo = ref(cachedUser ? JSON.parse(cachedUser) : null)
+const parseCachedUserInfo = () => {
+  try {
+    const raw = localStorage.getItem('user_info')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+const userInfo = ref(parseCachedUserInfo())
+const currentUserId = computed(() => {
+  const raw = userInfo.value?.user_id ?? userInfo.value?.id
+  return raw === undefined || raw === null || raw === '' ? '' : String(raw)
+})
 const isTaskOwner = (task: AgentTask) =>
-  String(task.user_id) === String(userInfo.value?.user_id)
+  Boolean(currentUserId.value) && String(task.user_id) === currentUserId.value
+
+const extractApiError = (error: any, fallback: string): string => {
+  const data = error?.response?.data
+  const message = typeof data?.message === 'string' ? data.message.trim() : ''
+  if (message) return message
+  const detail = data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  if (Array.isArray(detail) && detail.length > 0) {
+    const firstMsg = detail[0]?.msg
+    if (typeof firstMsg === 'string' && firstMsg.trim()) return firstMsg.trim()
+  }
+  return fallback
+}
 const canManage = computed(() => {
   if (props.personalOnly) return true
   if (!userInfo.value) return false
@@ -248,7 +276,7 @@ const fetchExecutionHistory = async (reset = true) => {
     historyItems.value = reset ? items : [...historyItems.value, ...items]
     historyTotal.value = Number(payload?.total || 0)
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '获取执行记录失败', 'error')
+    showToast(extractApiError(e, '获取执行记录失败'), 'error')
   } finally {
     historyLoading.value = false
   }
@@ -273,6 +301,28 @@ const toggleHistoryExpand = (id: number) => {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   historyExpandedIds.value = next
+}
+
+/**
+ * 执行记录表摘要展示：
+ * 1) 有 summary 时，收起态剥离 Markdown 杂音方便扫读，展开态展示原文；
+ * 2) 无 summary 回退到 query 时，剥掉 TaskCenter 自动注入的全局规则样板前缀，只保留真实任务指令。
+ */
+const formatHistorySummary = (item: TaskExecutionHistoryItem, expanded = false): string => {
+  const rawSummary = String(item.summary || '').trim()
+  if (rawSummary) {
+    if (expanded) return rawSummary
+    const plain = rawSummary
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/[#*`>|_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return plain || rawSummary
+  }
+  const rawQuery = String(item.query || '').trim()
+  if (!rawQuery) return '—'
+  const parsed = parseChatLogQuery(rawQuery)
+  return parsed.displayText || rawQuery
 }
 
 const openTaskLogsFromHistory = (item: TaskExecutionHistoryItem) => {
@@ -398,7 +448,8 @@ const handleAgentDropdownOutsideClick = (e: MouseEvent) => {
     showAgentDropdown.value = false
   }
 }
-const loading = ref(false)
+const loading = ref(true)
+const saving = ref(false)
 const showEditModal = ref(false)
 const showPromptHelpModal = ref(false)
 const showConstraintsHelpModal = ref(false)
@@ -548,9 +599,22 @@ const startBlankTask = () => {
   showTemplatePicker.value = false
 }
 const closeEditModal = () => {
+  if (saving.value) return
+  notificationAvailabilitySeq += 1
+  personalNotificationLoading.value = false
   showEditModal.value = false
   showTemplatePicker.value = false
 }
+
+watch(agents, () => {
+  if (showEditModal.value && !editingTask.value.id && !editingTask.value.agent_id) {
+    const fallback = systemAgents.value[0]?.id || agents.value[0]?.id || ''
+    if (fallback) {
+      editingTask.value.agent_id = fallback
+      syncAgentTab()
+    }
+  }
+})
 const notificationChannelOptions = [
   { value: 'portal', label: '站内消息' },
   { value: 'dingtalk', label: '钉钉' },
@@ -595,6 +659,8 @@ const notificationChannelLabel = (channel: string) =>
 const notificationReadiness = ref<Record<string, { ready: boolean; reason: string }>>({})
 const personalNotificationConfigs = ref<Record<string, any>>({})
 const personalNotificationLoading = ref(false)
+/** 标记当前编辑会话中是否已成功拿到通知可用性数据；未就绪或接口全失败时禁止裁剪已有渠道，避免误删用户配置。 */
+const notificationAvailabilityLoaded = ref(false)
 const promptOverlapsNotificationChannels = computed(() => {
   const prompt = String(editingTask.value.prompt || '').toLowerCase()
   if (!prompt || !notificationChannels.value.length) return false
@@ -687,37 +753,66 @@ const pruneUnavailableNotificationChannels = () => {
     }
   }
 }
-const fetchNotificationReadiness = async () => {
+let notificationAvailabilitySeq = 0
+
+const fetchNotificationReadiness = async (): Promise<{ ok: boolean; channels: Record<string, { ready: boolean; reason: string }> }> => {
   try {
     const res = await axios.get('/api/portal/notifications/readiness')
-    notificationReadiness.value = res.data?.channels || {}
+    return { ok: true, channels: res.data?.channels || {} }
   } catch (error) {
     console.warn('Failed to load notification channel readiness', error)
-    notificationReadiness.value = {}
+    return { ok: false, channels: {} }
   }
 }
-const fetchPersonalNotificationConfigs = async () => {
-  personalNotificationLoading.value = true
+const fetchPersonalNotificationConfigs = async (): Promise<{
+  ok: boolean
+  configs: Record<string, any>
+  groups: Record<string, Array<{ id: number; name: string; is_enabled: boolean; is_default: boolean }>>
+}> => {
   try {
     const [configRes, groupsRes] = await Promise.all([
       axios.get('/api/portal/notifications/config'),
       // 群清单失败不影响主流程：下拉里只剩「默认群」，任务照样能保存
       axios.get('/api/portal/notifications/channels').catch(() => null),
     ])
-    personalNotificationConfigs.value = configRes.data || {}
-    channelGroupOptions.value = groupsRes?.data || {}
+    return {
+      ok: true,
+      configs: configRes.data || {},
+      groups: groupsRes?.data || {},
+    }
   } catch (error) {
     console.warn('Failed to load personal notification configs', error)
-    personalNotificationConfigs.value = {}
-  } finally {
-    personalNotificationLoading.value = false
+    return { ok: false, configs: {}, groups: {} }
   }
 }
 // 就绪判定（权威）与配置明细（兜底）一起取，再统一裁剪掉不可用的已选渠道——
-// 顺序不能反：readiness 未到位就裁剪会按兜底规则误删用户原本选中的渠道。
+// 顺序不能反：readiness 未到位就裁剪会按兜底规则误删用户原本选中的渠道；
+// 若两路接口均瞬时失败则不裁剪，避免把用户原配置静默清空；
+// 通过序号丢弃慢返回的旧弹窗响应，防止交叉污染。
 const refreshNotificationAvailability = async () => {
-  await Promise.all([fetchNotificationReadiness(), fetchPersonalNotificationConfigs()])
-  pruneUnavailableNotificationChannels()
+  const seq = ++notificationAvailabilitySeq
+  personalNotificationLoading.value = true
+  notificationAvailabilityLoaded.value = false
+  try {
+    const [readinessRes, configRes] = await Promise.all([
+      fetchNotificationReadiness(),
+      fetchPersonalNotificationConfigs(),
+    ])
+    if (seq !== notificationAvailabilitySeq) return
+    notificationReadiness.value = readinessRes.channels
+    personalNotificationConfigs.value = configRes.configs
+    if (configRes.ok) {
+      channelGroupOptions.value = configRes.groups
+    }
+    notificationAvailabilityLoaded.value = readinessRes.ok || configRes.ok
+    if (notificationAvailabilityLoaded.value) {
+      pruneUnavailableNotificationChannels()
+    }
+  } finally {
+    if (seq === notificationAvailabilitySeq) {
+      personalNotificationLoading.value = false
+    }
+  }
 }
 const openPersonalNotificationSettings = () => {
   if (props.embedded) return
@@ -1184,6 +1279,17 @@ const taskTypeCounts = computed(() => ({
   metadata_inspection: scopedTasks.value.filter(task => task.task_type === 'metadata_inspection').length,
 }))
 
+const visibleTaskTypeTabs = computed(() => {
+  if (!props.personalOnly || taskTypeCounts.value.metadata_inspection > 0) return taskTypeTabs
+  return taskTypeTabs.filter((tab) => tab.value !== 'metadata_inspection')
+})
+
+watch(visibleTaskTypeTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.value === taskTypeFilter.value)) {
+    taskTypeFilter.value = 'all'
+  }
+})
+
 const filteredTasks = computed(() => {
   let result = [...scopedTasks.value]
   if (taskTypeFilter.value === 'agent') {
@@ -1307,11 +1413,29 @@ const confirmState = ref({ show: false, title: '', message: '', type: 'danger' a
 const fetchTasks = async (isSilent = false) => {
   if (!isSilent) loading.value = true
   try {
-    const [agentRes, reportRes] = await Promise.all([taskApi.list(), taskApi.listReportSubscriptions()])
-    tasks.value = [...(agentRes.data.data || []), ...(reportRes.data.data || [])]
-  } catch (e) {
-    if (!isSilent) showToast('获取任务列表失败', 'error')
-    console.error('Failed to fetch tasks', e)
+    const [agentRes, reportRes] = await Promise.allSettled([
+      taskApi.list(),
+      taskApi.listReportSubscriptions(),
+    ])
+    const agentOk = agentRes.status === 'fulfilled'
+    const reportOk = reportRes.status === 'fulfilled'
+    if (!agentOk && !reportOk) {
+      if (!isSilent) showToast(extractApiError(agentRes.reason, '获取任务列表失败'), 'error')
+      console.error('Failed to fetch tasks', agentRes.reason, reportRes.reason)
+      return
+    }
+    const existingAgents = tasks.value.filter((t) => t.task_type !== 'saved_report')
+    const existingReports = tasks.value.filter((t) => t.task_type === 'saved_report')
+    const nextAgents = agentOk ? (agentRes.value.data.data || []) : existingAgents
+    const nextReports = reportOk ? (reportRes.value.data.data || []) : existingReports
+    tasks.value = [...nextAgents, ...nextReports]
+    if (!agentOk) {
+      console.error('Failed to fetch agent tasks', agentRes.reason)
+      if (!isSilent) showToast('定时任务加载失败，已展示报表订阅', 'warning')
+    } else if (!reportOk) {
+      console.error('Failed to fetch report subscriptions', reportRes.reason)
+      if (!isSilent) showToast('报表订阅加载失败，已展示智能体任务', 'warning')
+    }
   } finally {
     loading.value = false
   }
@@ -1378,10 +1502,16 @@ const openEditModal = async (task: AgentTask) => {
 }
 
 const saveTask = async () => {
+  if (saving.value) return
+  if (personalNotificationLoading.value) {
+    showToast('正在检测通知渠道可用性，请稍后再保存', 'info')
+    return
+  }
   try {
     // 名称与提示词在后端是必填（422）；前端前移校验，否则收起态下报错位置不可见
+    const taskName = String(editingTask.value?.name || '').trim()
     const sectionIssues = resolveTaskSectionIssues({
-      name: String(editingTask.value?.name || ''),
+      name: taskName,
       prompt: String(editingTask.value?.prompt || ''),
       cronExpr: String(editingTask.value?.cron_expr || ''),
       cronValid: cronExprValidation.value.valid,
@@ -1389,11 +1519,19 @@ const saveTask = async () => {
     if (sectionIssues.issues.what) {
       expandSection('what')
       showToast(
-        String(editingTask.value?.name || '').trim()
-          ? '请填写「要做什么」'
-          : '请填写任务名称',
+        taskName ? '请填写「要做什么」' : '请填写任务名称',
         'error',
       )
+      return
+    }
+    if (taskName.length > 100) {
+      expandSection('what')
+      showToast('任务名称最多 100 个字符', 'error')
+      return
+    }
+    if (!String(editingTask.value?.agent_id || '').trim()) {
+      expandSection('what')
+      showToast('请选择执行智能体', 'error')
       return
     }
     // 非法表达式就地拦截：后端会返回 422，但原因埋在 detail 里，不如直接说明是哪一段错了
@@ -1408,7 +1546,10 @@ const saveTask = async () => {
       showToast(cronExprValidation.value.message, 'error')
       return
     }
-    pruneUnavailableNotificationChannels()
+    if (notificationAvailabilityLoaded.value) {
+      pruneUnavailableNotificationChannels()
+    }
+    saving.value = true
     const baseConfig =
       editingTask.value.config && typeof editingTask.value.config === 'object'
         ? { ...editingTask.value.config }
@@ -1479,7 +1620,7 @@ const saveTask = async () => {
     } else {
       delete baseConfig.resource_scope
     }
-    const payload = { ...editingTask.value, config: baseConfig }
+    const payload = { ...editingTask.value, name: taskName, config: baseConfig }
     if (editingTask.value.id) {
       await taskApi.update(editingTask.value.id, payload)
       showToast('更新成功')
@@ -1490,7 +1631,9 @@ const saveTask = async () => {
     showEditModal.value = false
     fetchTasks(true)
   } catch (e: any) {
-    showToast(e.response?.data?.message || '保存失败', 'error')
+    showToast(extractApiError(e, '保存失败'), 'error')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -1510,7 +1653,7 @@ const toggleStatus = (task: AgentTask) => {
         fetchTasks(true)
         confirmState.value.show = false
       } catch (e) {
-        showToast('操作失败', 'error')
+        showToast(extractApiError(e, '操作失败'), 'error')
       }
     }
   }
@@ -1534,7 +1677,7 @@ const deleteTask = (task: AgentTask) => {
         fetchTasks(true)
         confirmState.value.show = false
       } catch (e) {
-        showToast('删除失败', 'error')
+        showToast(extractApiError(e, '删除失败'), 'error')
       }
     }
   }
@@ -1546,7 +1689,7 @@ const runTaskNow = async (task: AgentTask) => {
   try {
     if (task.task_type === 'saved_report') await taskApi.runReportSubscription(task.subscription_id!)
     else await taskApi.run(task.id)
-    showToast(`任务 已发送触发指令`, 'success')
+    showToast(`任务「${task.name}」已发送触发指令`, 'success')
     // Poll for status update for 5 seconds
     let attempts = 0
     const poll = trackRunNowTimer(window.setInterval(async () => {
@@ -1564,7 +1707,7 @@ const runTaskNow = async (task: AgentTask) => {
       runningTaskIds.value.delete(task.id)
     }, 5000))
   } catch (e) {
-    showToast('触发失败', 'error')
+    showToast(extractApiError(e, '触发失败'), 'error')
     runningTaskIds.value.delete(task.id)
   }
 }
@@ -1627,7 +1770,7 @@ const fetchLogs = async (append = false) => {
         logs.value = newItems
     }
     logsTotal.value = res.data.data.total
-  } catch (e) { showToast('获取日志失败', 'error') } finally { logsLoading.value = false }
+  } catch (e) { showToast(extractApiError(e, '获取日志失败'), 'error') } finally { logsLoading.value = false }
 }
 
 /** 历史抽屉：只看失败（打开这个抽屉最常见的原因就是「刚才那次怎么失败了」） */
@@ -2118,6 +2261,19 @@ const clearSelection = () => {
   selectedTaskIds.value = new Set()
 }
 
+// 筛选条件变化或列表刷新后，自动剔除当前不可见的已选项，防止批量操作误伤隐藏任务
+watch(filteredTasks, (visibleList) => {
+  if (selectedTaskIds.value.size === 0) return
+  const visibleIds = new Set(visibleList.map((task) => task.id))
+  let changed = false
+  const next = new Set<number>()
+  for (const id of selectedTaskIds.value) {
+    if (visibleIds.has(id)) next.add(id)
+    else changed = true
+  }
+  if (changed) selectedTaskIds.value = next
+})
+
 const resetTaskFilters = () => {
   searchQuery.value = ''
   statusFilter.value = 'all'
@@ -2207,17 +2363,43 @@ const logStatusMeta = (status: string | undefined) => {
 
 const metricValue = (value: number | undefined) => Number(value || 0)
 
-onMounted(async () => {
-  await Promise.all([fetchTasks(true), fetchAgents()])
-  const view = props.initialView || String(route.query.view || '')
+const applyRouteViewDeepLink = (viewParam: unknown) => {
+  const view = String(viewParam || '')
   if (view === 'history' && showHistoryTab.value) {
     mainViewTab.value = 'history'
+  } else if (view === 'tasks') {
+    mainViewTab.value = 'tasks'
   }
-  const taskId = props.initialTaskId ?? route.query.task_id
-  if (taskId) {
-    const target = tasks.value.find(task => String(task.id) === String(taskId))
-    if (target) openLogs(target)
-  }
+}
+
+const applyRouteTaskDeepLink = (taskIdParam: unknown) => {
+  if (!taskIdParam) return
+  const target = tasks.value.find(task => String(task.id) === String(taskIdParam))
+  if (target) openLogs(target)
+}
+
+const applyRouteDeepLink = (useInitialProps = false) => {
+  applyRouteViewDeepLink((useInitialProps ? props.initialView : undefined) || route.query.view)
+  applyRouteTaskDeepLink((useInitialProps ? props.initialTaskId : undefined) ?? route.query.task_id)
+}
+
+watch(
+  () => route.query.view,
+  (nextView) => {
+    if (nextView) applyRouteViewDeepLink(nextView)
+  },
+)
+
+watch(
+  () => route.query.task_id,
+  (nextTaskId) => {
+    if (nextTaskId && tasks.value.length > 0) applyRouteTaskDeepLink(nextTaskId)
+  },
+)
+
+onMounted(async () => {
+  await Promise.all([fetchTasks(false), fetchAgents()])
+  applyRouteDeepLink(true)
 })
 </script>
 
@@ -2479,7 +2661,7 @@ onMounted(async () => {
     <div class="border-b border-gray-200 -mt-1">
       <div class="flex items-center gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
         <button
-          v-for="tab in taskTypeTabs"
+          v-for="tab in visibleTaskTypeTabs"
           :key="'main-' + tab.value"
           type="button"
           class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
@@ -2629,8 +2811,8 @@ onMounted(async () => {
                     class="w-full text-left text-xs text-gray-600"
                     @click="toggleHistoryExpand(item.id)"
                   >
-                    <span :class="historyExpandedIds.has(item.id) ? '' : 'line-clamp-2'">
-                      {{ item.summary || item.query || '—' }}
+                    <span :class="historyExpandedIds.has(item.id) ? 'whitespace-pre-wrap break-words' : 'line-clamp-2'">
+                      {{ formatHistorySummary(item, historyExpandedIds.has(item.id)) }}
                     </span>
                   </button>
                 </td>
@@ -2815,7 +2997,7 @@ onMounted(async () => {
           v-if="taskScheduleMismatch(task)"
           class="line-clamp-2 rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-700"
           :title="taskScheduleMismatch(task)"
-        > {{ taskScheduleMismatch(task) }}</p>
+        >{{ taskScheduleMismatch(task) }}</p>
         <p
           v-else-if="task.last_error"
           class="line-clamp-2 rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-700"
@@ -3344,7 +3526,7 @@ onMounted(async () => {
                宽屏时挪到右侧粘性栏（见本区块下方 aside），窄屏才留在表单顶部 -->
           <div v-if="isMobile" class="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="text-[10px] font-bold text-gray-400"> 这个任务会这样跑</span>
+              <span class="text-[10px] font-bold text-gray-400">这个任务会这样跑</span>
               <span v-if="taskSummaryNext" class="ml-auto rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700">
                 下次 {{ taskSummaryNext }}
               </span>
@@ -3373,7 +3555,7 @@ onMounted(async () => {
           >
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">任务基本信息</label>
-            <input v-model="editingTask.name" placeholder="任务名称 (e.g. PUE日报)" class="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+            <input v-model="editingTask.name" maxlength="100" placeholder="任务名称 (e.g. PUE日报)" class="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
           </div>
           
           <div>
@@ -3392,7 +3574,9 @@ onMounted(async () => {
                       class="h-full w-full object-cover"
                     />
                     <span v-else-if="selectedEditingAgent?.avatar_url" class="text-sm">{{ selectedEditingAgent?.avatar_url }}</span>
-                    <span v-else class="text-sm">{{ selectedEditingAgent && isMainAgent(selectedEditingAgent) ? '🌟' : (selectedEditingAgent?.is_system ? '🔒' : '👤') }}</span>
+                    <SparklesIcon v-else-if="selectedEditingAgent && isMainAgent(selectedEditingAgent)" class="h-4 w-4 text-amber-500" aria-hidden="true" />
+                    <ShieldCheckIcon v-else-if="selectedEditingAgent?.is_system" class="h-4 w-4 text-primary" aria-hidden="true" />
+                    <UserIcon v-else class="h-4 w-4 text-gray-400" aria-hidden="true" />
                   </div>
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-1.5">
@@ -3538,7 +3722,8 @@ onMounted(async () => {
                           class="h-full w-full object-cover"
                         />
                         <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
-                        <span v-else class="text-sm">{{ isMainAgent(agent) ? '🌟' : '🔒' }}</span>
+                        <SparklesIcon v-else-if="isMainAgent(agent)" class="h-4 w-4 text-amber-500" aria-hidden="true" />
+                        <ShieldCheckIcon v-else class="h-4 w-4 text-primary" aria-hidden="true" />
                       </div>
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center justify-between gap-2">
@@ -4034,7 +4219,7 @@ onMounted(async () => {
         >
           <div class="rounded-xl border border-gray-200 bg-white px-3 py-2.5">
             <div class="mb-1 flex items-center gap-1.5">
-              <span class="text-[10px] font-bold text-gray-400"> 这个任务会这样跑</span>
+              <span class="text-[10px] font-bold text-gray-400">这个任务会这样跑</span>
               <span class="ml-auto text-[9px] font-bold text-gray-300">随填随更新</span>
             </div>
             <p class="text-xs leading-relaxed text-gray-600">
@@ -4081,8 +4266,13 @@ onMounted(async () => {
         </div>
 
         <div v-if="!showTemplatePicker" class="flex justify-end space-x-3 pt-4 pb-[env(safe-area-inset-bottom)] border-t border-gray-50">
-          <button @click="closeEditModal" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600">取消</button>
-          <button @click="saveTask" class="px-8 py-2 bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all font-bold text-sm">确认保存</button>
+          <button type="button" :disabled="saving" @click="closeEditModal" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600 disabled:opacity-50">取消</button>
+          <button
+            type="button"
+            :disabled="saving || personalNotificationLoading"
+            @click="saveTask"
+            class="px-8 py-2 bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all font-bold text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >{{ saving ? '保存中...' : (personalNotificationLoading ? '检测渠道中...' : '确认保存') }}</button>
         </div>
       </div>
     </Modal>

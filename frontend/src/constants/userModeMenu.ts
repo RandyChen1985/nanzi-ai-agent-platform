@@ -30,6 +30,8 @@ export type UserModeIconKey =
   | "users"
   | "roles"
   | "token_stats"
+  // 聊天日志用动态菜单里同一个 key（menuIcons 里是 DocumentTextIcon）
+  | "chat_logs"
   | "user_circle"
   | "system"
   // 下面两个 menuIcons 里早就有，联合类型漏了：用户模式的「技能」「连接器」
@@ -144,6 +146,16 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
         icon: "token_stats",
         path: "/dashboard/token-stats",
         permission: "menu:token_stats",
+      },
+      {
+        // 回看自己的对话与执行记录。非管理员走 getChatHistory，接口本身只返回本人数据，
+        // 所以不需要 adminOnly；没有 menu:chat_logs 的账号按默认策略直接不渲染。
+        // 放在「更多」而不是一级入口：它是按需回查，不是日常动线。
+        key: "chat_logs",
+        label: "聊天日志",
+        icon: "chat_logs",
+        path: "/dashboard/chat-logs",
+        permission: "menu:chat_logs",
       },
       {
         key: "overview",
