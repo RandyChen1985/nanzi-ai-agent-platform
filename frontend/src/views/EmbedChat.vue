@@ -10964,9 +10964,18 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     // 身份已在上面确定：若与界面上会话所属身份不同（换用户登录 / 宿主换票），先丢弃
     // 上一位用户的会话现场。此处保留本次 INIT_CONFIG 下发的 resume id——它属于新身份。
     const identityKey = currentIdentityKey();
-    if (identityKey && identityKey !== activeIdentityKey) {
-      console.log("[Session] Identity changed; resetting the previous user's session view.");
-      resetSessionForIdentityChange(identityKey, { preserveRequestedConversationId: true });
+    if (identityKey) {
+      if (activeIdentityKey && identityKey !== activeIdentityKey) {
+        console.log("[Session] Identity changed; resetting the previous user's session view.");
+        resetSessionForIdentityChange(identityKey, { preserveRequestedConversationId: true });
+      } else {
+        // 首次确立身份（activeIdentityKey 还是空）不是「换用户」：此前 Cookie 模式下第一次
+        // initChat 往往在 currentUser 落地前跑完，identityKey 为空，于是第二次初始化拿到的
+        // `id:x` 会被判成换人，走 resetSessionForIdentityChange —— 它会清空输入区草稿/附件
+        // 并 resetConversationScopedState() 掐掉在途流。表现为「输入框有光标没字」和
+        // 「后台处理中，已恢复实时同步」两种必现现象。这里只登记身份，不动现场。
+        activeIdentityKey = identityKey;
+      }
     }
     // 会话置顶是账号级偏好：身份确定后再加载（上面的 reset 已清掉上一位用户的置顶）。
     void loadPinnedConversations();
@@ -12077,6 +12086,10 @@ const handleQuickQuestion = async (
     await sendMessage({ content: nextContent, quickContext });
   } else {
     userInput.value = nextContent;
+    // 「填入」不能静默收场：用户从工作空间/门户跳过来，只看到一条问题躺在输入框里，
+    // 很容易以为「点了没反应」。显式提示一句、把焦点落上去，回车即可发送。
+    showToast("已填入问题，按回车发送", "info");
+    if (!isMobile.value) nextTick(() => chatInputRef.value?.focus?.());
   }
 };
 

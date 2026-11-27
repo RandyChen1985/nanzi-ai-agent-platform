@@ -128,8 +128,16 @@ def test_identity_change_resets_the_previous_users_session_view():
     assert "browserOpenGeneration += 1;" in reset_body
 
     # 身份变化必须真的触发重置（挂在鉴权成功后、采用的会话 ID 之前）。
-    assert "if (identityKey && identityKey !== activeIdentityKey) {" in init_chat
+    #
+    # 条件是「两个身份都已知且不同」：首次确立身份（activeIdentityKey 仍为空）不算换人。
+    # 此前条件只判 identityKey 非空，于是 Cookie 模式下「第一次 initChat 时 currentUser 还没
+    # 落地（identityKey 空）→ 第二次初始化拿到 id:x」会被误判成换用户，触发本函数清空输入区
+    # 草稿/附件并 resetConversationScopedState() 掐掉在途流——即实测必现的「输入框有光标没字」
+    # 与「会话仍在后台处理中，已恢复实时同步」。
+    assert "if (activeIdentityKey && identityKey !== activeIdentityKey) {" in init_chat
     assert "resetSessionForIdentityChange(identityKey, { preserveRequestedConversationId: true });" in init_chat
+    # 首次确立身份只登记、不清现场，否则上面那条防护会被绕过
+    assert "activeIdentityKey = identityKey;" in init_chat
     assert init_chat.index("identityKey !== activeIdentityKey") < init_chat.index("readStoredConversationId()")
 
 

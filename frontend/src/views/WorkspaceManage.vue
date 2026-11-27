@@ -2000,6 +2000,10 @@ const handleAskAi = (item: FsItem) => {
   const prompt = `请帮我读取并分析工作空间里的文件「${displayFileName(item.name)}」（路径：${logicalPath}），总结核心内容与关键结论。`
   // 必须用 send：fill 只会把问题填进聊天页输入框、不发送，用户点完看起来「什么都没发生」，
   // 而这颗菜单项的语义就是「直接让 AI 分析这个文件」。
+  //
+  // （此前 send 模式会出现「问题已发出 + 会话仍在后台处理中，已恢复实时同步」的恢复卡片，
+  //  根因是「首次确立身份」被误判成换用户触发了 resetSessionForIdentityChange，已在
+  //  EmbedChat 的 initChat 身份判定里修掉，与本入口的 send/fill 选择无关。）
   void router.push({
     path: "/dashboard/chat",
     query: {
