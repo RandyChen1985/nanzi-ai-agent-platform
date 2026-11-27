@@ -969,8 +969,8 @@ class DataAgentRunner(BaseExecutor):
     def _pending_state_to_data_run_state(pending_state: Dict[str, Any]) -> tuple[_DataRunState, Dict[str, Any]]:
         return chatbi_state.pending_state_to_data_run_state(pending_state)
 
-    async def _stream_agentscope_events(self, *, event_stream: Any, agent: Any | None=None, tools: list[RuntimeToolSpec], native_model: Any, state: _DataRunState | None=None, stream_meta: Dict[str, Any] | None=None, emit_final_guard: bool=True) -> AsyncGenerator[Dict[str, Any], None]:
-        async for _chunk in chatbi_react_stream.stream_agentscope_events(self, event_stream=event_stream, agent=agent, tools=tools, native_model=native_model, state=state, stream_meta=stream_meta, emit_final_guard=emit_final_guard):
+    async def _stream_agentscope_events(self, *, event_stream: Any, agent: Any | None=None, tools: list[RuntimeToolSpec], native_model: Any, state: _DataRunState | None=None, stream_meta: Dict[str, Any] | None=None, emit_final_guard: bool=True, record_synthesis_trace: bool=True) -> AsyncGenerator[Dict[str, Any], None]:
+        async for _chunk in chatbi_react_stream.stream_agentscope_events(self, event_stream=event_stream, agent=agent, tools=tools, native_model=native_model, state=state, stream_meta=stream_meta, emit_final_guard=emit_final_guard, record_synthesis_trace=record_synthesis_trace):
             yield _chunk
 
     @staticmethod

@@ -254,37 +254,44 @@ const stepDurationPercent = (step: any) => {
  * 这三种情况的处置完全不同（取消无需追查、失败要看轨迹、静默无返回才可能是异常）。
  */
 const emptyReplyView = (turn: ConversationTurn) => {
-  if (turn.status === 'cancelled') {
+  const status = (turn.status || '').trim().toLowerCase()
+  if (status === 'cancelled') {
     return {
       title: '该轮已取消，未产生回复',
       detail: '在模型返回前被中断或取消，因此没有回复内容。',
     }
   }
-  if (turn.status === 'error') {
+  if (status === 'interrupted') {
+    return {
+      title: '该轮已中断，未产生回复',
+      detail: '执行在中途被中断，因此没有产生完整回复，可在「轨迹」页签中查看中断前步骤。',
+    }
+  }
+  if (status === 'error') {
     return {
       title: '该轮执行失败，未产生回复',
       detail: '可在「轨迹」页签中查看具体的错误信息。',
     }
   }
-  if (turn.status === 'awaiting_permission') {
+  if (status === 'awaiting_permission') {
     return {
       title: '该轮正在等待工具授权，尚未产生回复',
       detail: '模型请求工具授权后挂起等待确认，可在「轨迹」页签中查看待确认工具。',
     }
   }
-  if (turn.status === 'awaiting_external_execution') {
+  if (status === 'awaiting_external_execution') {
     return {
       title: '该轮正在等待外部执行结果，尚未产生回复',
       detail: '工具已交给外部环境执行，尚未收到回传结果。',
     }
   }
-  if (turn.status === 'awaiting_user') {
+  if (status === 'awaiting_user') {
     return {
       title: '该轮正在等待用户交互，尚未产生回复',
       detail: '模型或子代理正在等待用户确认或授权，可在「轨迹」页签中查看详情。',
     }
   }
-  if (turn.status === 'rejected') {
+  if (status === 'rejected') {
     return {
       title: '该轮工具授权已被拒绝，未产生回复',
       detail: '用户拒绝了工具执行请求，因此未继续生成最终回复。',
