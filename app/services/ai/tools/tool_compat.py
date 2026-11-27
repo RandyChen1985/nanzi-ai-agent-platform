@@ -5,7 +5,7 @@ import inspect
 import typing
 from typing import Any, Callable, Type
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, create_model
 
 
 def _schema_from_signature(func: Callable[..., Any]) -> Type[BaseModel]:
@@ -21,7 +21,7 @@ def _schema_from_signature(func: Callable[..., Any]) -> Type[BaseModel]:
     前向引用）退回 ``str``，宁可丢类型也不能让 schema 变成不可生成的坏模型。
     """
     try:
-        hints = typing.get_type_hints(func)
+        hints = typing.get_type_hints(func, include_extras=True)
     except Exception:  # noqa: BLE001 - 注解解析失败不能影响工具注册
         hints = {}
 
@@ -32,7 +32,7 @@ def _schema_from_signature(func: Callable[..., Any]) -> Type[BaseModel]:
         if annotation is inspect._empty or isinstance(annotation, str):
             annotation = str
         default = param.default if param.default is not inspect._empty else ...
-        fields[name] = (annotation, Field(default=default))
+        fields[name] = (annotation, default)
     return create_model(f"{func.__name__}Args", **fields)
 
 

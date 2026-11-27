@@ -353,10 +353,28 @@ def _build_file_tool_metadata(
         extension = os.path.splitext(raw_path)[1]
         if extension:
             metadata["file_extension"] = extension
+        output_data = output.get("data") if isinstance(output.get("data"), dict) else {}
         if document_type == "word" and tool_name.endswith("_read") and action == "read_content":
+            raw_start = output_data.get("start")
+            if raw_start is None:
+                raw_start = tool_args.get("start")
+            raw_limit = output_data.get("limit")
+            if raw_limit is None:
+                raw_limit = tool_args.get("limit")
             metadata["paragraph_range"] = {
-                "start": tool_args.get("start", 0),
-                "limit": tool_args.get("limit", 20),
+                "start": 0 if raw_start is None else raw_start,
+                "limit": 20 if raw_limit is None else raw_limit,
+            }
+        elif document_type == "word" and tool_name.endswith("_read") and action == "read_tables":
+            raw_start = output_data.get("start")
+            if raw_start is None:
+                raw_start = tool_args.get("start")
+            raw_limit = output_data.get("limit")
+            if raw_limit is None:
+                raw_limit = tool_args.get("limit")
+            metadata["table_range"] = {
+                "start": 0 if raw_start is None else raw_start,
+                "limit": 10 if raw_limit is None else raw_limit,
             }
         if document_type == "excel":
             if tool_args.get("sheet_name"):
