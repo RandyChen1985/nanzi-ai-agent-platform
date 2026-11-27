@@ -321,6 +321,33 @@ def test_more_menu_holds_curated_entries_plus_admin_only_system_config(menu: str
         assert "adminOnly: true" in block
 
 
+def test_more_menu_exposes_chat_logs_right_after_token_usage() -> None:
+    """用户模式下也能回看自己的聊天日志，入口紧跟「Token 消耗」。
+
+    数据边界在接口层：非管理员走 getChatHistory，只返回本人记录，因此不需要 adminOnly；
+    没有 menu:chat_logs 的账号按默认 hide 策略不渲染，点了不会被守卫踢回来。
+    """
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    more_block = menu.split('key: "more"', 1)[1]
+
+    block = more_block.split('key: "chat_logs"', 1)[1].split("},", 1)[0]
+    assert 'label: "聊天日志"' in block
+    assert 'path: "/dashboard/chat-logs"' in block
+    assert 'permission: "menu:chat_logs"' in block
+    assert "adminOnly" not in block
+
+    # 位置：Token 消耗之后、系统概览之前
+    assert (
+        more_block.index('key: "token"')
+        < more_block.index('key: "chat_logs"')
+        < more_block.index('key: "overview"')
+    )
+
+    # 图标 key 必须同时在用户模式的联合类型里，否则 MenuIcon 只拿到空名退化成默认图标
+    icon_union = menu.split("export type UserModeIconKey", 1)[1].split("export interface", 1)[0]
+    assert '| "chat_logs"' in icon_union
+
+
 def test_workspace_page_hides_session_mount_action() -> None:
     """独立页不提供「挂载到会话」：那需要目标会话，只属于聊天抽屉。
 
