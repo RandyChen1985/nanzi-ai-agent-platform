@@ -1408,6 +1408,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
 
         from app.services.ai.runtime.agentscope.workspace import (
             append_session_workspace_sandbox_to_system_prompt,
+            normalize_runtime_messages_workspace_paths_for_sandbox,
         )
 
         system_content = await append_session_workspace_sandbox_to_system_prompt(
@@ -1419,17 +1420,13 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             tools=tools,
         )
 
-        from app.services.ai.time_anchor import (
-            append_time_anchor_for_user_question,
-            filter_redundant_time_tools,
-        )
+        from app.services.ai.time_anchor import append_time_anchor_for_user_question
 
         system_content = append_time_anchor_for_user_question(
             system_content,
             user_question,
             prepend=not use_cache_layout,
         )
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # AgentService 已按最终模型的 history_budget 完成窗口选择和摘录；
         # 知识库 runner 不能再次按固定条数截断，避免丢掉平台摘要。
@@ -1440,6 +1437,12 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 runtime_messages,
                 HumanMessage(content=session_artifact_context),
             )
+        runtime_messages = await normalize_runtime_messages_workspace_paths_for_sandbox(
+            runtime_messages,
+            user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
+        )
         runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         max_steps_str = await ConfigService.get("agent_max_iterations")

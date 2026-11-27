@@ -93,7 +93,12 @@ export interface WorkspaceUploadQueue {
   subscribe: (listener: () => void) => () => void
   cancel: (taskId: string) => void
   retry: (taskId: string) => void
+  /** 仅清除已成功（done）的任务，保留失败/已取消项以便重试或查看提示。 */
+  clearCompleted: () => void
+  /** 清除全部终态任务（done / failed / canceled）。 */
   clearFinished: () => void
+  /** 动态更新前端预检单文件字节上限（服务端配置下发后调用）。 */
+  setMaxBytes: (bytes: number) => void
   destroy: () => void
 }
 
@@ -160,7 +165,7 @@ export function createWorkspaceUploadQueue(
   const setTimer = options.setTimer ?? ((fn: () => void, ms: number) => setInterval(fn, ms) as any)
   const clearTimer = options.clearTimer ?? ((id: any) => clearInterval(id))
   const concurrency = Math.max(1, Math.floor(options.concurrency ?? DEFAULT_UPLOAD_CONCURRENCY))
-  const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY
+  let maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY
 
   const tasks = new Map<string, WorkspaceUploadTask>()
   const controllers = new Map<string, AbortController>()
@@ -276,23 +281,28 @@ export function createWorkspaceUploadQueue(
     for (const task of tasks.values()) {
       if (running >= concurrency) break
       if (task.status !== 'queued') continue
-      running += 1
-      startTask(task)
+      // 只有真正进入 transferring 才占用并发槽：预检直接失败的条目不能吃掉槽位，
+      // 否则「前 N 个超限文件 + 其后合法文件」会让后续文件永久停在「排队中」，
+      // 而 aggregate.active 一直为真，上传按钮与进度面板再也退不出来。
+      if (startTask(task)) running += 1
     }
   }
 
-  const startTask = (task: WorkspaceUploadTask) => {
+  /** 启动一个排队任务；返回 false 表示预检失败、未占用并发槽（调用方须继续尝试下一个）。 */
+  const startTask = (task: WorkspaceUploadTask): boolean => {
     if (task.size > maxBytes) {
       task.status = 'failed'
       task.error = `文件大小超出 ${formatLimit(maxBytes)} 上限`
-      return
+      notify()
+      return false
     }
 
     const file = files.get(task.id)
     if (!file) {
       task.status = 'failed'
       task.error = '文件已失效，请重新选择'
-      return
+      notify()
+      return false
     }
 
     const controller = new AbortController()
@@ -316,8 +326,7 @@ export function createWorkspaceUploadQueue(
       pump()
     }
 
-    Promise.resolve(
-      upload(file, {
+    Promise.resolve(      upload(file, {
         parentPath: task.parentPath,
         signal: controller.signal,
         onProgress: (payload) => {
@@ -362,6 +371,9 @@ export function createWorkspaceUploadQueue(
           task.remainingSeconds = null
         })
       })
+
+    // 已进入 transferring：占用了一个并发槽
+    return true
   }
 
   const enqueue = (incoming: UploadableFile[], parentPath: string): WorkspaceUploadTask[] => {
@@ -416,6 +428,17 @@ export function createWorkspaceUploadQueue(
     notify()
   }
 
+  const clearCompleted = () => {
+    for (const [id, task] of [...tasks.entries()]) {
+      if (task.status !== 'done') continue
+      tasks.delete(id)
+      files.delete(id)
+      rateBuckets.delete(id)
+      lastLoaded.delete(id)
+    }
+    notify()
+  }
+
   const clearFinished = () => {
     for (const [id, task] of [...tasks.entries()]) {
       if (!isTerminal(task.status)) continue
@@ -425,6 +448,12 @@ export function createWorkspaceUploadQueue(
       lastLoaded.delete(id)
     }
     notify()
+  }
+
+  const setMaxBytes = (bytes: number) => {
+    if (Number.isFinite(bytes) && bytes > 0) {
+      maxBytes = bytes
+    }
   }
 
   const destroy = () => {
@@ -445,5 +474,5 @@ export function createWorkspaceUploadQueue(
     }
   }
 
-  return { enqueue, snapshot, subscribe, cancel, retry, clearFinished, destroy }
+  return { enqueue, snapshot, subscribe, cancel, retry, clearCompleted, clearFinished, setMaxBytes, destroy }
 }

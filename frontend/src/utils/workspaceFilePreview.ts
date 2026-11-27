@@ -9,6 +9,7 @@ import {
   OFFICE_PREVIEW_EXTENSIONS,
   TEXT_EXTENSIONS,
   getWorkspaceFileExtension,
+  isPreviewableTextFileName,
   resolveDocumentViewerMime,
 } from './documentPreviewFormats'
 
@@ -39,12 +40,12 @@ export function resolveWorkspaceScriptLanguage(name: string): 'python' | 'shell'
 }
 
 export function canPreviewWorkspaceFile(name: string): boolean {
+  if (isPreviewableTextFileName(name)) return true
   const ext = getWorkspaceFileExtension(name)
   if (!ext) return false
   return (
     ext === '.pdf' ||
     IMAGE_EXTENSIONS.has(ext) ||
-    TEXT_EXTENSIONS.has(ext) ||
     OFFICE_EXTENSIONS.has(ext)
   )
 }
@@ -62,9 +63,7 @@ export function resolveWorkspaceCanvasType(name: string): WorkspaceCanvasType {
 }
 
 export function canWriteWorkspaceFile(name: string): boolean {
-  const ext = getWorkspaceFileExtension(name)
-  if (!ext) return false
-  return TEXT_EXTENSIONS.has(ext)
+  return isPreviewableTextFileName(name)
 }
 
 function sanitizeGeneratedFilenameBase(title: string): string {
@@ -434,6 +433,75 @@ export async function renameWorkspaceEntry(path: string, newName: string) {
   return axios.post('/api/v1/chat/fs/rename-entry', { path, new_name: newName })
 }
 
+export async function moveWorkspaceEntry(path: string, targetDir: string) {
+  return axios.post('/api/v1/chat/fs/move-entry', { path, target_dir: targetDir })
+}
+
+export interface WorkspaceUsageStats {
+  total_bytes: number
+  file_count: number
+  trash_bytes: number
+  trash_count: number
+  upload_max_bytes: number
+}
+
+export async function fetchWorkspaceUsage(refresh = false): Promise<WorkspaceUsageStats | null> {
+  const res = await axios.get('/api/v1/chat/fs/usage', {
+    params: refresh ? { refresh: 'true' } : undefined,
+  })
+  return (res.data?.data as WorkspaceUsageStats) ?? null
+}
+
+/** 打包下载多个文件或目录（ZIP 流式返回）。 */
+export async function batchDownloadWorkspaceEntries(options: {
+  paths: string[]
+  archiveName?: string
+  showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void
+}) {
+  const { paths, archiveName, showToast } = options
+  if (!paths.length) {
+    showToast('请先选择要下载的文件或文件夹', 'warning')
+    return
+  }
+  // 后端 BatchDownloadRequest 的 max_length=200：超了会先吃 422，再把整段校验 JSON 弹给用户
+  if (paths.length > 200) {
+    showToast(`一次最多打包 200 项（当前 ${paths.length} 项），请分批下载`, 'warning')
+    return
+  }
+  try {
+    const response = await axios.post(
+      '/api/v1/chat/fs/batch-download',
+      { paths, archive_name: archiveName || null },
+      { responseType: 'blob', timeout: 180000 },
+    )
+    const fallbackName =
+      archiveName ||
+      (paths.length === 1
+        ? `${paths[0]!.replace(/\\/g, '/').split('/').pop() || 'workspace'}.zip`
+        : `workspace-files-${paths.length}.zip`)
+    const filename = fallbackName.toLowerCase().endsWith('.zip') ? fallbackName : `${fallbackName}.zip`
+    const blobUrl = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(blobUrl)
+    showToast(`已开始下载 ${filename}`, 'success')
+  } catch (err: any) {
+    console.error('打包下载失败:', err)
+    const status = err?.response?.status
+    if (status === 422) {
+      showToast('一次最多打包 200 项，请分批下载', 'error')
+      return
+    }
+    const detail = await readErrorDetail(err?.response?.data)
+    const fallback = status === 413 ? '打包内容超出上限，请分批下载' : '打包下载失败，请稍后重试'
+    showToast(detail || fallback, 'error')
+  }
+}
+
 /** 解压工作区内的压缩包。同步接口，大包可能解很久，单独放宽超时。 */
 export async function extractWorkspaceArchive(options: {
   archivePath: string
@@ -463,8 +531,18 @@ export async function purgeWorkspaceEntry(path: string) {
   return axios.post('/api/v1/chat/fs/purge-entry', { path })
 }
 
-export async function emptyWorkspaceTrash() {
-  return axios.post('/api/v1/chat/fs/empty-trash')
+/**
+ * 清空回收站。
+ *
+ * `trashPath` 缺省时后端清「当前账号自己的回收站」；管理员浏览他人工作区的回收站时
+ * 必须把它传进去，否则清掉的是管理员自己的回收站，而对方条目原封不动。
+ */
+export async function emptyWorkspaceTrash(trashPath?: string) {
+  return axios.post(
+    '/api/v1/chat/fs/empty-trash',
+    null,
+    trashPath ? { params: { path: trashPath } } : undefined,
+  )
 }
 
 export interface WorkspaceUploadTransportOptions {

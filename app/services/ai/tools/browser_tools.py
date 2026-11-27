@@ -327,10 +327,23 @@ def _safe_browser_file_path(context: Any, file_path: str) -> Path:
     from app.utils.fs_access import get_user_private_workspace_root
     from app.utils.fs_paths import normalize_fs_path
 
-    normalized = normalize_fs_path(file_path)
-    candidate = Path(normalized).resolve() if normalized else None
+    raw = str(file_path or "").strip()
     user_root = get_user_private_workspace_root(_browser_user_info(context))
-    allowed_roots = [Path(user_root).resolve()] if user_root else []
+    user_root_path = Path(user_root).resolve() if user_root else None
+    candidate: Path | None = None
+    if raw == "/workspace" or raw.startswith("/workspace/"):
+        if user_root_path is not None:
+            rel = raw[len("/workspace") :].lstrip("/\\")
+            candidate = (user_root_path / rel).resolve()
+    else:
+        normalized = normalize_fs_path(raw)
+        if normalized:
+            candidate = Path(normalized).resolve()
+        if (candidate is None or not candidate.is_file()) and user_root_path is not None and raw and not Path(raw).is_absolute():
+            ws_candidate = (user_root_path / raw).resolve()
+            if ws_candidate.is_file():
+                candidate = ws_candidate
+    allowed_roots = [user_root_path] if user_root_path is not None else []
     allowed_roots.append(generated_files_root().resolve())
     if candidate is None or not candidate.is_file() or not any(
         candidate == root or root in candidate.parents for root in allowed_roots

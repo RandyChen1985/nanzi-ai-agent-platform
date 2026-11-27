@@ -133,7 +133,8 @@ def test_page_keeps_failed_batch_delete_selection_and_reports_load_failure():
     assert "await refreshCurrentViewAsync()" in src
     assert "failedPaths.forEach((path) => selectedPaths.add(path))" in src
     # 读取目录失败时保留旧列表（currentPath 未变，清空会让旧目录看起来「空了」）
-    load_block = src.split("const load = async (")[1].split("const navigate =")[0]
+    # load 已拆成 loadInner（真实读取）+ load（并发去重包装），断言仍锁「读取失败不清列表」
+    load_block = src.split("const loadInner = async (")[1].split("const navigate =")[0]
     assert "items.value = []" not in load_block
     assert "loadFailed.value = true" in load_block
     assert 'loadFailed ? "目录读取失败，请重试"' in src
@@ -143,5 +144,6 @@ def test_page_persists_type_filter_with_other_prefs():
     src = _read(PAGE)
     assert "typeFilter?: TypeFilterKey" in src
     assert "typeFilter: TYPE_FILTER_KEYS.find(" in src
-    assert "watch([viewMode, sortBy, typeFilter]" in src
-    assert "typeFilter: nextFilter" in src
+    # 四项偏好统一走一个 watch 落盘（此前两个 watch 会互相覆盖同一个 localStorage 键）
+    assert "watch([viewMode, sortBy, sortDir, typeFilter], persistPrefs)" in src
+    assert "typeFilter: typeFilter.value" in src

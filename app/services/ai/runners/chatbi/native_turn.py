@@ -19,6 +19,7 @@ from app.services.ai.runners.chatbi.constants import (
     MAX_REPAIR_WALL_SECONDS,
 )
 from app.services.ai.runners.chatbi.forced_tool_choice import ForcedFirstToolChoiceModel
+from app.services.ai.runners.chatbi.react_stream import append_native_synthesis_trace
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.repair_controller import ChatBIRepairController
 from app.services.ai.runners.chatbi.insight_meta import take_chatbi_insight_meta_event
@@ -138,6 +139,13 @@ async def _finalize_content_and_persist(
         }
         state.full_content += str(warning.get("content") or "")
         yield warning
+    # 仅在确认不会再触发 retraction 撤回、且去重与 grounding 风险提示均已落定后再写
+    # synthesis 轨迹，确保轨迹中的最终回答与落库 summary 严格一致。
+    append_native_synthesis_trace(
+        runner,
+        state=state,
+        model_name=model_name,
+    )
     insight_event = take_chatbi_insight_meta_event(
         state,
         evidence_metadata=getattr(runner, "_evidence_metadata", None),
@@ -266,6 +274,7 @@ async def run_native_agent_turn(
                 state=state,
                 stream_meta=stream_meta,
                 emit_final_guard=False,
+                record_synthesis_trace=False,
             ):
                 if is_interrupt_sse_chunk(chunk):
                     interrupted = True
@@ -495,6 +504,7 @@ async def run_native_agent_turn(
                 state=state,
                 stream_meta=stream_meta,
                 emit_final_guard=False,
+                record_synthesis_trace=False,
             ):
                 if is_interrupt_sse_chunk(chunk):
                     interrupted = True
@@ -718,6 +728,47 @@ async def run_native_agent_turn(
     if state.sql_fatal_error:
         async for chunk in runner._yield_sql_fatal_abort(state):
             yield chunk
+        if not interrupted:
+            await _persist_agent_state(
+                runner,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+            )
+        return
+
+    # 撤回后修复轮未能再吐字，但本轮已有成功非空 SQL 且无硬阻断错误时，
+    # 优先基于缓存 SQL 正常合成答复，避免直接落入 emit_final_guard 把有效查数误判为 error。
+    can_fallback_to_cached_sql = (
+        not state.full_content
+        and state.last_successful_sql_output is not None
+        and not state.sql_fatal_error
+        and not runner._is_schema_fatal(state)
+        and not state.sql_error
+        and not state.empty_sql_result
+        and not state.sql_static_risk
+        and not state.time_range_anomaly
+        and not state.sql_sandbox_blocked
+        and not state.failed_sql_repeat_gate_block
+        and not state.tool_loop_fuse_triggered
+        and not state.diagnostic_sql_pending_final
+    )
+    if can_fallback_to_cached_sql:
+        async for chunk in runner._synthesize_from_cached_sql_result(
+            runtime_messages=runtime_messages,
+            system_prompt=system_content,
+            user_question=user_question,
+            state=state,
+            reason="sql_without_followup_content",
+        ):
+            yield chunk
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
+        if insight_event is not None:
+            yield insight_event
         if not interrupted:
             await _persist_agent_state(
                 runner,

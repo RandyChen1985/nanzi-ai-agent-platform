@@ -77,9 +77,21 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   buildWorkspaceActionEntries,
   buildWorkspaceItemMenuContext,
+  isPublicWorkspaceItem,
 } from "@/utils/workspaceActionEntries"
-import type { WorkspaceActionKey } from "@/utils/workspaceActionEntries"
+import type { WorkspaceActionEntry, WorkspaceActionKey } from "@/utils/workspaceActionEntries"
 import { canPreviewWorkspaceFile } from "@/utils/workspaceFilePreview"
+
+export type ManageRowActionKey =
+  | WorkspaceActionKey
+  | "move"
+  | "copy-to-workspace"
+  | "download-zip"
+  | "ask-ai"
+
+export interface ManageRowActionEntry extends Omit<WorkspaceActionEntry, "key"> {
+  key: ManageRowActionKey
+}
 
 interface RowItem {
   name: string
@@ -125,10 +137,15 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
+  (e: "open-dir", item: RowItem): void
   (e: "preview", item: RowItem): void
   (e: "download", item: RowItem): void
+  (e: "download-zip", item: RowItem): void
   (e: "share", item: RowItem): void
   (e: "copy-and-share", item: RowItem): void
+  (e: "copy-to-workspace", item: RowItem): void
+  (e: "ask-ai", item: RowItem): void
+  (e: "move", item: RowItem): void
   (e: "rename", item: RowItem): void
   (e: "copy-path", item: RowItem): void
   (e: "extract", item: RowItem): void
@@ -154,7 +171,7 @@ const menuStyle = computed(() => ({
   left: `${menuPos.value.left}px`,
 }))
 
-const entries = computed(() => {
+const entries = computed<ManageRowActionEntry[]>(() => {
   const target = {
     name: props.item.name,
     path: props.item.path,
@@ -175,14 +192,45 @@ const entries = computed(() => {
     }),
   )
 
-  return raw
+  const base: ManageRowActionEntry[] = raw
     .filter((entry) => entry.key !== "mount") // 独立页没有会话，不展示挂载
-    .filter((entry) => entry.key !== "open-dir") // 打开目录由行本身承担
     .map((entry) => ({
       ...entry,
       // 抽屉里「画布打开预览」这个名字依赖画布宿主，这里改成通用的「预览」
       label: entry.key === "preview" ? "预览" : entry.key === "download" ? "下载" : entry.label,
     }))
+
+  // 独立页扩展动作：保持与抽屉的基础语义一致，同时补齐文件管理高频能力
+  const result: ManageRowActionEntry[] = []
+  const isPublic = isPublicWorkspaceItem(props.item, props.userWorkspaceRoot)
+  const canMove =
+    !props.inTrash &&
+    !props.isTrashRoot &&
+    !props.isSystemProtected &&
+    !isPublic &&
+    props.canManage
+
+  for (const item of base) {
+    result.push(item)
+    // 目录紧跟「打开目录」提供「打包下载」（排除回收站根与回收站子树）
+    if (item.key === "open-dir" && props.item.is_dir && !props.inTrash && !props.isTrashRoot) {
+      result.push({ key: "download-zip", label: "打包下载", icon: "📦" })
+    }
+    // 公共文件紧跟「复制并分享」提供单独「复制到我的目录」，无需强制走分享流程
+    if (item.key === "copy-and-share" && !props.item.is_dir) {
+      result.push({ key: "copy-to-workspace", label: "复制到我的目录", icon: "📥" })
+    }
+    // 普通文件紧跟「复制路径」提供「用 AI 分析」与「复制到我的目录」
+    if (item.key === "copy-path" && !props.item.is_dir && !props.inTrash) {
+      result.push({ key: "ask-ai", label: "用 AI 分析", icon: "✨" })
+    }
+    // 可管理条目紧跟「重命名」提供「移动到…」
+    if (item.key === "rename" && canMove) {
+      result.push({ key: "move", label: "移动到…", icon: "📁" })
+    }
+  }
+
+  return result
 })
 
 const updateMenuPosition = () => {
@@ -228,23 +276,38 @@ watch(open, (val) => {
   emit("open-change", val)
 })
 
-const run = (key: WorkspaceActionKey) => {
+const run = (key: ManageRowActionKey) => {
   open.value = false
   switch (key) {
+    case "open-dir":
+      emit("open-dir", props.item)
+      break
     case "preview":
       emit("preview", props.item)
       break
     case "download":
       emit("download", props.item)
       break
+    case "download-zip":
+      emit("download-zip", props.item)
+      break
     case "rename":
       emit("rename", props.item)
+      break
+    case "move":
+      emit("move", props.item)
       break
     case "share":
       emit("share", props.item)
       break
     case "copy-and-share":
       emit("copy-and-share", props.item)
+      break
+    case "copy-to-workspace":
+      emit("copy-to-workspace", props.item)
+      break
+    case "ask-ai":
+      emit("ask-ai", props.item)
       break
     case "copy-path":
       emit("copy-path", props.item)

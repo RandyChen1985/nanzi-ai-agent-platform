@@ -1424,9 +1424,9 @@ async def test_data_agent_runner_execute_streams_agentscope_native_text(
                 "get_dataset_schema",
                 "execute_sql_query",
             ]
-            # data agent 的工具集不含 get_current_time：当前时间由 AgentScope 的
-            # InjectionConfig（runtime state 注入）提供，不再单独暴露成工具。
-            assert "get_current_time" not in tool_names
+            # 已注入时间锚点时仍保留 get_current_time 注册，避免与自定义提示词冲突
+            # 触发 ToolGuard ghost 拦截报红（重复取时由 ToolLoopDetector 熔断兜底）。
+            assert "get_current_time" in tool_names
             tool_results = [
                 block
                 for msg in messages

@@ -45,6 +45,8 @@ def test_build_data_query_time_anchor_block_uses_anchor_dates():
     assert "今年（年初至今天）：2026-01-01 至 2026-06-10" in block
     assert "去年：2025-01-01 至 2025-12-31" in block
     assert "禁止臆测年份或月份" in block
+    assert "无需再调用 get_current_time / resolve_relative_dates" in block
+    assert "视为已由本锚点满足" in block
 
 
 def test_build_data_query_time_anchor_block_year_boundary_month():
@@ -93,7 +95,8 @@ def test_append_time_anchor_skips_plain_greeting():
     assert append_time_anchor_for_user_question(base, "你好") == base
 
 
-def test_filter_redundant_time_tools_when_anchor_present():
+def test_filter_redundant_time_tools_keeps_tools_even_when_anchor_present():
+    """已注入时间锚点时仍保留取时工具，避免与智能体自定义提示词冲突触发 ToolGuard 拦截报红。"""
     from app.services.ai.time_anchor import filter_redundant_time_tools
 
     class _Tool:
@@ -102,7 +105,11 @@ def test_filter_redundant_time_tools_when_anchor_present():
 
     tools = [_Tool("get_current_time"), _Tool("resolve_relative_dates"), _Tool("memory_search")]
     filtered = filter_redundant_time_tools(tools, "[当前时间锚点]\n- 今天：2026-06-10")
-    assert [t.name for t in filtered] == ["memory_search"]
+    assert [t.name for t in filtered] == [
+        "get_current_time",
+        "resolve_relative_dates",
+        "memory_search",
+    ]
 
 
 def test_filter_redundant_time_tools_keeps_tools_without_anchor():
@@ -115,6 +122,21 @@ def test_filter_redundant_time_tools_keeps_tools_without_anchor():
     tools = [_Tool("get_current_time"), _Tool("memory_search")]
     filtered = filter_redundant_time_tools(tools, "普通系统提示")
     assert [t.name for t in filtered] == ["get_current_time", "memory_search"]
+
+
+def test_runners_do_not_strip_time_tools_after_anchor_injection():
+    """各 runner 不再因注入时间锚点而移除取时工具，防止自定义提示词调用 get_current_time 命中 ToolGuard。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    runner_files = [
+        root / "app/services/ai/runners/assistant_agent_runner.py",
+        root / "app/services/ai/runners/knowledge_agent_runner.py",
+        root / "app/services/ai/runners/chatbi/agent_builder.py",
+    ]
+    for path in runner_files:
+        source = path.read_text(encoding="utf-8")
+        assert "filter_redundant_time_tools(" not in source, f"{path.name} 不应再硬移除取时工具"
 
 
 def test_resolve_relative_date_phrases_batch():

@@ -800,7 +800,16 @@ async def list_accessible_directories() -> str:
                 ),
                 "permission": "read_write",
                 "category": "user_uploads",
-                "description": "用户上传的会话附件目录。存放用户在聊天界面上传的文件与原始数据资料。",
+                "description": (
+                    "用户上传的会话附件目录。存放用户在聊天界面上传的文件与原始数据资料。"
+                    + (
+                        f"在 {effective_policy} 沙箱模式下，Bash、Read/Write/Edit/Glob/Grep、"
+                        f"Word/Excel、read_image、edit_image、browser_upload 及 publish_generated_file "
+                        f"均可直接使用 {sandbox_root.rstrip('/')}/uploads/... 访问。"
+                        if workspace_mounted
+                        else ""
+                    )
+                ),
                 "recommended_for": ["读取用户上传的文件", "查找会话原始输入资料"],
             },
             {
@@ -1103,9 +1112,18 @@ async def list_accessible_directories() -> str:
             "platform_help_files": platform_help_files,
             "usage_guidelines": [
                 (
-                    f"1. 在沙箱环境（{effective_policy}）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash"
-                    f"（沙箱内以 {sandbox_root} 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，"
-                    "不能把 Bash 的容器路径直接当作文件工具路径；"
+                    (
+                        f"1. 在沙箱环境（{effective_policy}）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash"
+                        f"（以 {sandbox_root} 开头），禁止直接把宿主机 backend_service_path（/app/data/...）传给沙箱 Bash；"
+                        f"本人工作区内的 {sandbox_root}/uploads、{sandbox_root}/docs、{sandbox_root}/sessions/... "
+                        "已全工具打通，可直接用于 Read/Write/Edit/Glob/Grep、Word/Excel、read_image、edit_image、"
+                        "browser_upload、send_email 附件及 publish_generated_file（文件工具亦支持 paths.file_tools 相对路径）；"
+                        "但 /tmp 等容器专属路径及未挂载的公共目录不可交给宿主机文件工具；"
+                        if workspace_mounted
+                        else f"1. 在沙箱环境（{effective_policy}）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash"
+                        f"（沙箱内以 {sandbox_root} 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，"
+                        "不能把 Bash 的容器路径直接当作文件工具路径；"
+                    )
                     if is_sandbox
                     else "1. 当前为 local 执行策略：Bash 与 Read/Write/Edit/Glob/Grep 使用同一套后端真实路径"
                     "（见各目录的 paths.bash / paths.file_tools），不存在 /workspace 容器命名空间；"

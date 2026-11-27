@@ -151,7 +151,9 @@ def build_data_query_time_anchor_block(
         "【相对时间使用规则】【相对时间 SQL 规则】\n"
         "1. 用户问题含相对时间时，必须使用以上锚点换算为具体 YYYY-MM-DD 起止日（含 API/SQL/MCP 参数），禁止臆测年份或月份。\n"
         "2. 「本月/当月」默认按「月初至今（含今天）」；若用户明确要求整月，使用「本月完整自然月」起止日。\n"
-        "3. 已注入本锚点时，优先直接引用锚点日期；每轮用户问题内 get_current_time / resolve_relative_dates 最多各调用 1 次，禁止重复取时。\n"
+        "3. 本锚点已提供当前精确时刻与常用相对日期，优先直接引用，无需再调用 get_current_time / resolve_relative_dates"
+        "（即使其他提示步骤要求先获取当前时间，也视为已由本锚点满足）；"
+        "仅在需查询其他时区或锚点未覆盖的日期换算时最多各调用 1 次，禁止重复取时。\n"
         "4. ChatBI 执行 SQL 时，WHERE 须写出具体日期字面量，不得只写「本月」等模糊词。"
     )
 
@@ -311,7 +313,11 @@ def mentions_relative_time_language(text: str) -> bool:
     return bool(_RELATIVE_TIME_LANGUAGE.search(q))
 
 
-# 与【当前时间锚点】功能重叠的取时工具：锚点已注入时本轮不再暴露，避免模型空转重复取时。
+# 与【当前时间锚点】功能重叠的取时工具名集合。
+# 注意：锚点已注入时不再从本轮 tools 硬移除这些工具——业务自定义提示词或历史轮次可能
+# 仍驱动模型调用 get_current_time，硬移除会触发 ToolGuard ghost tool 报红并白耗一轮
+# LLM 推理，且跨轮次 tools 列表抖动不利于 Prompt Cache；重复取时由提示词引导跳过 +
+# ToolLoopDetector（_TIME_ANCHOR_REPEAT_THRESHOLD = 2）兜底熔断。
 TIME_QUERY_TOOL_NAMES = frozenset({"get_current_time", "resolve_relative_dates"})
 
 
@@ -320,14 +326,13 @@ def system_prompt_has_time_anchor(system_content: str | None) -> bool:
 
 
 def filter_redundant_time_tools(tools: list, system_content: str | None) -> list:
-    """若 system prompt 已含时间锚点，则移除取时/相对日期解析工具。"""
-    if not tools or not system_prompt_has_time_anchor(system_content):
-        return list(tools or [])
-    return [
-        tool
-        for tool in tools
-        if str(getattr(tool, "name", "") or "") not in TIME_QUERY_TOOL_NAMES
-    ]
+    """历史兼容入口：不再因已注入时间锚点而硬移除取时工具。
+
+    保留函数签名避免外部调用方 ImportError；防重复取时由锚点提示词引导跳过与
+    ``ToolLoopDetector``（单轮 2 次熔断）共同保证。
+    """
+    _ = system_content
+    return list(tools or [])
 
 
 def should_attach_time_anchor_block(user_question: str | None) -> bool:

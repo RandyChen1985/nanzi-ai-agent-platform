@@ -9,10 +9,29 @@
 export const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 export const TEXT_EXTENSIONS = new Set([
-  '.txt', '.md', '.csv', '.json', '.sql', '.py', '.js', '.ts',
-  '.sh', '.xml', '.html', '.css', '.yaml', '.yml', '.ini', '.conf',
-  '.log', '.env', '.htm',
+  '.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.sql', '.py', '.js', '.ts',
+  '.jsx', '.tsx', '.mjs', '.cjs', '.vue', '.sh', '.bash', '.xml', '.html', '.css',
+  '.yaml', '.yml', '.ini', '.conf', '.toml', '.log', '.env', '.htm',
+  '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.rb', '.diff', '.patch',
 ])
+
+/** 常见无扩展名的纯文本文件名（与后端 TEXT_PREVIEW_BASENAMES 同口径）。 */
+export const TEXT_BASENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'readme',
+  'license',
+  'procfile',
+  'gemfile',
+  'rakefile',
+])
+
+export function isPreviewableTextFileName(name: string): boolean {
+  const base = String(name || '').replace(/\\/g, '/').split('/').pop() || ''
+  const ext = getWorkspaceFileExtension(base)
+  if (ext) return TEXT_EXTENSIONS.has(ext)
+  return TEXT_BASENAMES.has(base.toLowerCase())
+}
 
 export const OFFICE_EXTENSIONS = new Set([
   '.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx', '.ppt',

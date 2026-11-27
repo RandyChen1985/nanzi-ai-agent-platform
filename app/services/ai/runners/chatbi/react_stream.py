@@ -48,6 +48,31 @@ def _upgrade_to_federated_query_exc():
     return UpgradeToFederatedQuery
 
 
+def append_native_synthesis_trace(
+    runner: Any,
+    *,
+    state: DataRunState,
+    model_name: Any,
+) -> None:
+    """将已确认不会再被撤回的最终正文写入 synthesis 轨迹步骤。"""
+    if not state.full_content:
+        return
+    runner._increment_step()
+    runner.trace_buffer.append(
+        AgentExecutionStep(
+            step_number=runner.step_counter,
+            event_type="synthesis",
+            agent_name=runner.config.agent_name,
+            model=model_name or runner.config.model_name,
+            temperature=resolve_config_temperature(runner.config),
+            tool_output={"content": state.full_content},
+            raw_log=state.full_content,
+            execution_time_ms=(time.time() - state.start_synthesis) * 1000,
+            timestamp=datetime.fromtimestamp(state.start_synthesis),
+        )
+    )
+
+
 async def stream_agentscope_events(
     runner: Any,
     *,
@@ -58,6 +83,7 @@ async def stream_agentscope_events(
     state: DataRunState | None = None,
     stream_meta: Dict[str, Any] | None = None,
     emit_final_guard: bool = True,
+    record_synthesis_trace: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
     state = state or DataRunState()
     stream_meta = stream_meta or {}
@@ -563,20 +589,11 @@ async def stream_agentscope_events(
         if guard_emitted:
             return
 
-    if state.full_content:
-        runner._increment_step()
-        runner.trace_buffer.append(
-            AgentExecutionStep(
-                step_number=runner.step_counter,
-                event_type="synthesis",
-                agent_name=runner.config.agent_name,
-                model=getattr(native_model, "model", runner.config.model_name),
-                temperature=resolve_config_temperature(runner.config),
-                tool_output={"content": state.full_content},
-                raw_log=state.full_content,
-                execution_time_ms=(time.time() - state.start_synthesis) * 1000,
-                timestamp=datetime.fromtimestamp(state.start_synthesis),
-            )
+    if record_synthesis_trace and state.full_content:
+        append_native_synthesis_trace(
+            runner,
+            state=state,
+            model_name=getattr(native_model, "model", runner.config.model_name),
         )
 
 async def emit_final_guard(
@@ -597,10 +614,23 @@ async def emit_final_guard(
         or state.sql_sandbox_blocked
         or runner._is_schema_fatal(state)
     )
-    if state.full_content or state.ready_to_answer or not has_guard_condition:
+    # 曾撤回过临时正文且后续修复轮没有产出任何新回复时，不能因为 ready_to_answer 仍为 True
+    # 或常规 guard 条件已清空而静默返回，否则会导致前端与历史表空答。
+    retracted_without_reply = bool(state.provisional_content_retracted and not state.full_content)
+    if state.full_content or (
+        not retracted_without_reply and (state.ready_to_answer or not has_guard_condition)
+    ):
         return
-    guard_title = "阻止未查数回答"
-    guard_details = "模型在满足 ChatBI 查数顺序前尝试直接回答，已拦截该输出。"
+    guard_title = (
+        "修复轮未产出最终回复"
+        if retracted_without_reply and not has_guard_condition
+        else "阻止未查数回答"
+    )
+    guard_details = (
+        "上一轮临时回复已撤回，后续修复轮未产出可展示正文，已输出兜底提示。"
+        if retracted_without_reply and not has_guard_condition
+        else "模型在满足 ChatBI 查数顺序前尝试直接回答，已拦截该输出。"
+    )
     if runner._is_schema_fatal(state):
         _, content = runner._schema_fatal_response(state)
     elif (
@@ -769,6 +799,7 @@ async def retract_provisional_content_before_repair(
     )
     state.full_content = ""
     state.content_emitted = False
+    state.provisional_content_retracted = True
     state.current_text_block_emitted = False
     state.text_blocks_emitted_since_last_tool = 0
     # 撤回可见正文后重置正文时序；保留成功 SQL 时序，便于后续走「工具后无收口」合成。

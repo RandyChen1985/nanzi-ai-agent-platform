@@ -21,6 +21,8 @@ class DataRunState:
     full_content: str = ""
     blocked_content: str = ""
     content_emitted: bool = False
+    # 曾撤回过已下发给前端的临时正文；若后续修复轮未能再产出正文，final_guard 不可静默跳过。
+    provisional_content_retracted: bool = False
     # 可见正文 vs 成功 SQL 的相对时序（单调递增）。用于判定「工具后无收口正文」。
     event_seq: int = 0
     last_visible_content_at: int = 0

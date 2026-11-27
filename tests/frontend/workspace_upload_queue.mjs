@@ -400,4 +400,39 @@ const flush = async () => {
   queue.destroy()
 }
 
+// --- 11. 预检失败不占并发槽：前 N 个超限文件不得拖死其后的合法文件 ---
+{
+  const clock = makeClock()
+  const { upload, calls } = makeUploader()
+  const queue = createWorkspaceUploadQueue({
+    upload, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+    concurrency: 3, maxBytes: 100,
+  })
+
+  queue.enqueue([
+    fakeFile('big1.bin', 200),
+    fakeFile('big2.bin', 200),
+    fakeFile('big3.bin', 200),
+    fakeFile('ok.txt', 10),
+  ], '/ws')
+
+  check('超限项预检失败后合法文件仍发起请求（不占并发槽）', () => {
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].file.name, 'ok.txt')
+    assert.equal(queue.snapshot().aggregate.failed, 3)
+  })
+
+  calls[0].resolve({ data: { data: { name: 'ok.txt' } } })
+  await flush()
+
+  check('合法文件完成后队列退出 active，不会永久卡在「上传中…」', () => {
+    const snap = queue.snapshot()
+    assert.equal(snap.aggregate.done, 1)
+    assert.equal(snap.aggregate.failed, 3)
+    assert.equal(snap.aggregate.active, false)
+  })
+
+  queue.destroy()
+}
+
 console.log(`工作空间上传队列行为测试全部通过（${passed} 项）`)

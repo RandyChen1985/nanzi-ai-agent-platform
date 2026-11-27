@@ -121,6 +121,16 @@ const initChat = () => {
     const embedQuery = new URLSearchParams();
     if (String(route.query.preview || '') === '1') embedQuery.set('preview', '1');
     if (String(route.query.new || '') === '1') embedQuery.set('new', '1');
+    // 门户提问同时塞进挂件 URL：`INIT_CONFIG` 那条路要经过握手 + 主初始化，任何一步提前
+    // return（认证未就绪 / 消息没送达 / 重推）都只留一条 console.warn，用户端就是「点了
+    // 没反应」。URL 在 iframe 首帧就能读到，作为兜底；request_id 与 INIT_CONFIG 里的一致，
+    // 挂件侧按它去重，两条路不会发两次。
+    const pendingPortalQuestion = String(route.query.portal_question || '').trim();
+    if (pendingPortalQuestion) {
+        embedQuery.set('ask', pendingPortalQuestion);
+        embedQuery.set('ask_action', route.query.portal_action === 'fill' ? 'fill' : 'send');
+        embedQuery.set('ask_id', portalQuestionRequestId);
+    }
     const embedSearch = embedQuery.toString();
     iframeUrl.value = `/embed/chat${embedSearch ? `?${embedSearch}` : ''}`;
     iframeKey.value += 1;

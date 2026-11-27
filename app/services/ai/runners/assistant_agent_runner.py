@@ -144,7 +144,6 @@ from app.services.ai.tool_capability import (
     resolve_tool_capabilities,
 )
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
-from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +441,16 @@ def _is_strict_evidence_bufferable_chunk(chunk: Dict[str, Any]) -> bool:
     }:
         return True
     return not chunk_type and "content" in chunk
+
+
+def _is_subagent_handoff_interrupt_chunk(chunk: Dict[str, Any]) -> bool:
+    """是否为委派子代理经旁路队列发出的交接暂停事件（父轮次当场结束、不走主会话 resume）。"""
+    chunk_type = str(chunk.get("type") or "")
+    if chunk_type == "permission_required":
+        return bool(chunk.get("subagent") or chunk.get("source_agent_display_name"))
+    if chunk_type == "user_question":
+        return bool(chunk.get("source_agent_display_name") or chunk.get("source_agent_name"))
+    return False
 
 
 class _ForcedFirstToolChoiceModel:
@@ -1372,7 +1381,9 @@ class AssistantAgentRunner(BaseExecutor):
         chunks_buffer = []
         full_text = ""
         has_attempted_tool = False
-        interrupted = False
+        self_interrupted = False
+        subagent_handoff_interrupted = False
+        trace_start_index = len(self.trace_buffer)
         strict_tool_evidence_required = False
         strict_tool_evidence_types = frozenset()
         strict_evidence_contracts: tuple[dict[str, Any], ...] = ()
@@ -1384,7 +1395,10 @@ class AssistantAgentRunner(BaseExecutor):
 
         async for chunk in self._merge_agent_context_event_stream(self._execute_core(history), ctx):
             if is_interrupt_sse_chunk(chunk):
-                interrupted = True
+                if _is_subagent_handoff_interrupt_chunk(chunk):
+                    subagent_handoff_interrupted = True
+                else:
+                    self_interrupted = True
 
             if (
                 chunk.get("type") == "log"
@@ -1447,7 +1461,17 @@ class AssistantAgentRunner(BaseExecutor):
 
         # 权限确认/外部执行挂起时，当前轮尚未完成，不能提前把暂存文本判定为无证据。
         # 恢复入口会根据挂起的工具重新建立同一轮证据门禁。
-        if interrupted:
+        # 若因自身挂起丢弃了 chunks_buffer 中的暂存正文，同步清理未下发给用户的 synthesis 轨迹，
+        # 避免出现「轨迹有最终回答、对话区空白」的账目分裂。
+        if self_interrupted:
+            if chunks_buffer:
+                self._prune_unemitted_synthesis_traces(trace_start_index)
+            return
+
+        # 仅发生子代理旁路交接挂起时，父轮次当场结束（不走主会话 resume）。
+        # 若主助手未产出任何引导正文则直接结束，避免对着空文本误触发 grounding 降级文案；
+        # 若主助手已生成引导正文，则继续走完下方 grounding 审核，既不丢弃正文也不绕过反幻觉门禁。
+        if subagent_handoff_interrupted and not chunks_buffer and not full_text.strip():
             return
 
         should_intercept = (
@@ -1517,6 +1541,7 @@ class AssistantAgentRunner(BaseExecutor):
                         evaluated_requirement
                     ),
                 }
+                self._sync_downgraded_synthesis_trace(trace_start_index, guidance.content)
                 if grounding_block_mode == "stream_with_retraction":
                     yield {
                         "type": "retraction",
@@ -1610,6 +1635,54 @@ class AssistantAgentRunner(BaseExecutor):
 
         # 回答已完整产出，此刻才能判定模型真正引用了哪些知识库切片（工具路径引用量）。
         await self._record_knowledge_citation_metrics(full_text, ctx)
+
+    def _prune_unemitted_synthesis_traces(self, start_index: int) -> None:
+        """丢弃被严格缓冲拦截、未下发给用户的本轮 synthesis 轨迹。
+
+        仅作用于本轮（`start_index` 之后）且属于当前主助手自身（无 `subagent` 元数据）的
+        `event_type == "synthesis"` 步骤：0-token 步骤直接移除；若该步骤承载独立合成模型的
+        非零 Token（如 synthesis_fallback），保留计量但清除未下发正文并标注 suppressed。
+        """
+        if not self.trace_buffer or start_index >= len(self.trace_buffer):
+            return
+        kept = list(self.trace_buffer[:start_index])
+        for step in self.trace_buffer[start_index:]:
+            meta = getattr(step, "meta_info", None)
+            is_subagent_step = isinstance(meta, dict) and bool(meta.get("subagent"))
+            if getattr(step, "event_type", None) != "synthesis" or is_subagent_step:
+                kept.append(step)
+                continue
+            has_tokens = bool(
+                (getattr(step, "prompt_tokens", 0) or 0)
+                or (getattr(step, "completion_tokens", 0) or 0)
+                or (getattr(step, "total_tokens", 0) or 0)
+            )
+            if not has_tokens:
+                continue
+            step.tool_output = {"content": "", "suppressed_by_interrupt": True}
+            step.raw_log = ""
+            kept.append(step)
+        self.trace_buffer[:] = kept
+
+    def _sync_downgraded_synthesis_trace(
+        self,
+        start_index: int,
+        replacement_content: str,
+    ) -> None:
+        """grounding 门禁将正文降级替换为安全说明后，同步更新轨迹里的 synthesis 内容。"""
+        if not self.trace_buffer or start_index >= len(self.trace_buffer):
+            return
+        for idx in range(len(self.trace_buffer) - 1, start_index - 1, -1):
+            step = self.trace_buffer[idx]
+            meta = getattr(step, "meta_info", None)
+            is_subagent_step = isinstance(meta, dict) and bool(meta.get("subagent"))
+            if getattr(step, "event_type", None) == "synthesis" and not is_subagent_step:
+                step.tool_output = {
+                    "content": replacement_content,
+                    "grounding_downgraded": True,
+                }
+                step.raw_log = replacement_content
+                break
 
     async def _record_knowledge_citation_metrics(self, full_text: str, ctx: Any) -> None:
         """统计本轮回答里真正被引用的知识库切片。
@@ -1757,11 +1830,12 @@ class AssistantAgentRunner(BaseExecutor):
             user_query,
             prepend=not use_cache_layout,
         )
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # 最后一道对齐：提示词里的「本轮可用工具」是 preflight 阶段算的，上面的
-        # 可复用结果裁剪 / 时间工具去重只改 tools。清单里留着调不到的工具会让模型
-        # 照着调用、撞 ghost tool 白名单白跑一轮，所以这里按最终 tools 重写该段。
+        # 可复用结果裁剪只改 tools。清单里留着调不到的工具会让模型照着调用、撞
+        # ghost tool 白名单白跑一轮，所以这里按最终 tools 重写该段。
+        # 注：不再因已注入时间锚点而移除 get_current_time / resolve_relative_dates，
+        # 避免与智能体自定义提示词冲突触发 ToolGuard 拦截报红（重复取时由 ToolLoopDetector 熔断兜底）。
         from app.services.ai.agent_prompts import prune_unregistered_tool_inventory
 
         system_content = prune_unregistered_tool_inventory(
@@ -1863,6 +1937,7 @@ class AssistantAgentRunner(BaseExecutor):
 
         from app.services.ai.runtime.agentscope.workspace import (
             append_session_workspace_sandbox_to_system_prompt,
+            normalize_runtime_messages_workspace_paths_for_sandbox,
         )
 
         system_content = await append_session_workspace_sandbox_to_system_prompt(
@@ -1883,6 +1958,12 @@ class AssistantAgentRunner(BaseExecutor):
                 runtime_messages,
                 HumanMessage(content=session_artifact_context),
             )
+        runtime_messages = await normalize_runtime_messages_workspace_paths_for_sandbox(
+            runtime_messages,
+            user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
+        )
         runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         # --- ReAct Mode (With Tools) ---
@@ -3455,7 +3536,6 @@ class AssistantAgentRunner(BaseExecutor):
 
         restored_state = AgentState.model_validate(pending.snapshot.agent_state)
         system_content = str(ctx.get("system_content", ""))
-        tools = filter_redundant_time_tools(tools, system_content)
 
         # 恢复挂起执行时 tools 重新按配置解析（不再经过可复用结果裁剪），而
         # system_content 来自快照，两边可能再次错位；同样以最终 tools 为准对齐。
@@ -3703,6 +3783,7 @@ class AssistantAgentRunner(BaseExecutor):
                 )
                 buffered_content: List[Dict[str, Any]] = []
                 grounding_candidate_text = ""
+                resume_trace_start_index = len(self.trace_buffer)
                 try:
                     async for chunk in self._stream_agentscope_native_events(
                         event_stream=agent.reply_stream(resume_event),
@@ -3766,6 +3847,9 @@ class AssistantAgentRunner(BaseExecutor):
                 # Resume 也必须更新同一份最终工具元数据；否则保存点可能继续
                 # 使用恢复前的旧摘要，把失败/中间结果带入下一轮上下文。
                 self._last_turn_tool_meta = state
+
+                if interrupted and buffered_content:
+                    self._prune_unemitted_synthesis_traces(resume_trace_start_index)
 
                 if (buffered_content or grounding_candidate_text) and not interrupted:
                     candidate_text = grounding_candidate_text or "".join(
@@ -3837,6 +3921,10 @@ class AssistantAgentRunner(BaseExecutor):
                                     evaluated_requirement
                                 ),
                             }
+                            self._sync_downgraded_synthesis_trace(
+                                resume_trace_start_index,
+                                guidance.content,
+                            )
                             if grounding_block_mode == "stream_with_retraction":
                                 yield {
                                     "type": "retraction",

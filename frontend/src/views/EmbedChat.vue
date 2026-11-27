@@ -740,7 +740,7 @@
                 <span class="hidden sm:inline">编辑</span>
               </button>
               <button
-                @click="copyMessage(visibleStreamBody(msg))"
+                @click="copyMessage(splitUserMessageContent(msg.content).userPart || visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
@@ -14456,6 +14456,24 @@ onMounted(() => {
   if (query.get("preview") === "1") {
     isPreviewSession = true;
     console.log("[LifeCycle] Preview mode: clean temporary conversation, no resume.");
+  }
+  // 宿主把门户提问同时塞进了 URL（`ask`）：只入队，仍由主初始化结束后统一消费；
+  // request_id 与 INIT_CONFIG 里的相同，挂件按它去重，两条路只会发一次。
+  // 消费完立刻从地址栏摘掉，刷新不再重放。
+  const askFromUrl = String(query.get("ask") || "").trim();
+  if (askFromUrl) {
+    queueHostPortalQuestion({
+      query: askFromUrl,
+      action: query.get("ask_action") === "fill" ? "fill" : "send",
+      request_id: query.get("ask_id") || "",
+    });
+    for (const key of ["ask", "ask_action", "ask_id"]) query.delete(key);
+    const remainingSearch = query.toString();
+    window.history.replaceState(
+      {},
+      "",
+      `${window.location.pathname}${remainingSearch ? `?${remainingSearch}` : ""}${window.location.hash}`,
+    );
   }
   // 用户模式「新建任务」：`new=1` = 跳过续接、开一条正式的空白会话。
   // 与 preview 同时出现时以 preview 为准（预览不落盘，优先级更高）。

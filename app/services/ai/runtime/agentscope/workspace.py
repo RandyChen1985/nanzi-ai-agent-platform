@@ -6701,6 +6701,13 @@ async def append_session_workspace_sandbox_to_system_prompt(
         user_name=user_name,
         user_info=user_info,
     )
+    user_workspace_root = resolve_user_workspace_root(
+        root=root,
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    uploads_dir = os.path.join(user_workspace_root, "uploads") if user_workspace_root else None
     from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
 
     try:
@@ -6721,9 +6728,10 @@ async def append_session_workspace_sandbox_to_system_prompt(
         sandbox_logical_root = None
     logical_session_workdir = None
     logical_docs_dir = None
+    logical_uploads_dir = None
     logical_public_docs_dir = None
     if sandbox_logical_root:
-        # 只有 docker/k8s 把宿主用户工作区（docs/sessions）挂进沙箱；e2b/ssh 的
+        # 只有 docker/k8s 把宿主用户工作区（docs/sessions/uploads）挂进沙箱；e2b/ssh 的
         # `<root>/docs`、`<root>/sessions/<id>` 并不存在，不能在提示词里声称。
         if effective_policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
             logical_session_workdir = os.path.join(
@@ -6732,6 +6740,7 @@ async def append_session_workspace_sandbox_to_system_prompt(
                 os.path.basename(session_workdir),
             )
             logical_docs_dir = os.path.join(sandbox_logical_root, USER_DOCS_DIR_NAME)
+            logical_uploads_dir = os.path.join(sandbox_logical_root, "uploads")
             # K8s 适配器固定挂载 subPath docs（k8s_workspace.py 传 public_docs_mounted=True），
             # 与目录清单 resource_catalog_tools 的判定保持一致；否则同一轮里提示词会说
             # 「公共 docs 未挂载」而目录清单说已挂载，模型无所适从。
@@ -6767,6 +6776,8 @@ async def append_session_workspace_sandbox_to_system_prompt(
         logical_session_workdir=logical_session_workdir,
         logical_docs_dir=logical_docs_dir,
         logical_public_docs_dir=logical_public_docs_dir,
+        uploads_dir=uploads_dir,
+        logical_uploads_dir=logical_uploads_dir,
         public_skills_path=public_skills_path,
         personal_skills_path=personal_skills_path,
         sandbox_skills_dir=sandbox_skills_dir,
@@ -7833,8 +7844,271 @@ class _WorkspaceFileAccessNativeTool:
         return generator(self._map(tool_input))
 
 
+SANDBOX_BASH_PATH_HEALING_HINT = (
+    "\n\n[沙箱路径提示] 当前 Bash 运行在隔离沙箱中（工作区根目录为 /workspace），"
+    "宿主机 /app/data/... 路径在容器内不可见。"
+    "本人上传附件请使用 /workspace/uploads/...，文档请使用 /workspace/docs/...；"
+    "平台公共文档请改用 Read/Glob/Grep 工具读取。"
+)
+
+_SANDBOX_BASH_NOT_FOUND_MARKERS = (
+    "no such file or directory",
+    "filenotfounderror",
+    "cannot access",
+    "cannot open",
+    "not found",
+)
+
+
+def _host_workspace_aliases(host_root: str) -> tuple[str, ...]:
+    """收集当前用户宿主工作区可能出现的前缀别名（严格限定本人 user_key，按最长优先）。"""
+    cleaned = str(host_root or "").strip()
+    if not cleaned:
+        return ()
+    candidates: list[str] = []
+    for raw in (os.path.abspath(cleaned), os.path.realpath(cleaned)):
+        normalized = raw.rstrip("/\\")
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    # 兼容本地开发宿主路径与容器化 `/app/data/agent_workspaces/<user_key>` 混写场景，
+    # 仅映射当前用户自己的 user_key，绝不扩大到他人工作区或公共目录。
+    marker = "/agent_workspaces/"
+    for item in list(candidates):
+        normalized_slash = item.replace("\\", "/")
+        idx = normalized_slash.find(marker)
+        if idx != -1:
+            tail = normalized_slash[idx + len(marker) :].strip("/")
+            if tail and "/" not in tail:
+                docker_alias = f"/app/data/agent_workspaces/{tail}"
+                if docker_alias not in candidates:
+                    candidates.append(docker_alias)
+    candidates.sort(key=len, reverse=True)
+    return tuple(candidates)
+
+
+def rewrite_host_workspace_paths_to_sandbox(
+    text: str,
+    *,
+    host_root: str,
+    logical_root: str = DOCKER_WORKSPACE_LOGICAL_ROOT,
+) -> tuple[str, bool]:
+    """将文本中出现的当前用户宿主工作区精确前缀改写为沙箱逻辑根（默认 ``/workspace``）。
+
+    采用前后边界约束，避免 ``agent_workspaces/ddd_1`` 误匹配 ``agent_workspaces/ddd_15``，
+    且只替换当前用户自己的工作区根，不会触碰他人目录或公共目录。
+    """
+    source = str(text or "")
+    if not source or not host_root:
+        return source, False
+    target_root = (logical_root or DOCKER_WORKSPACE_LOGICAL_ROOT).rstrip("/") or "/workspace"
+    rewritten = source
+    changed = False
+    for alias in _host_workspace_aliases(host_root):
+        if alias == target_root or alias not in rewritten:
+            continue
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9_.\-/])"
+            + re.escape(alias)
+            + r"(?=/|\s|['\"`;|&)>\]}）。，、,]|$)"
+        )
+        updated, count = pattern.subn(target_root, rewritten)
+        if count > 0:
+            rewritten = updated
+            changed = True
+    return rewritten, changed
+
+
+def _rewrite_attachment_text_for_sandbox(
+    text: str,
+    *,
+    host_root: str,
+    logical_root: str = DOCKER_WORKSPACE_LOGICAL_ROOT,
+) -> tuple[str, bool]:
+    """将用户消息中当前用户附件的宿主绝对路径规范为沙箱统一工作区路径。"""
+    rewritten, changed = rewrite_host_workspace_paths_to_sandbox(
+        text,
+        host_root=host_root,
+        logical_root=logical_root,
+    )
+    if not changed:
+        return text, False
+    target_root = (logical_root or DOCKER_WORKSPACE_LOGICAL_ROOT).rstrip("/") or "/workspace"
+    rewritten = rewritten.replace(
+        f"其安全托管后的服务器绝对路径是：{target_root}/",
+        f"其工作区统一路径是（Bash 与文件/文档工具通用）：{target_root}/",
+    )
+    return rewritten, True
+
+
+async def normalize_runtime_messages_workspace_paths_for_sandbox(
+    messages: list[Any],
+    *,
+    user_id: int | str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> list[Any]:
+    """在 Docker/K8s 沙箱模式下，将进 LLM 的 HumanMessage 内本人宿主路径规范为 ``/workspace/...``。
+
+    不修改数据库历史，仅返回供本轮模型消费的消息列表副本；local / e2b / ssh 策略下原样返回。
+    """
+    if not messages:
+        return list(messages or [])
+    from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
+
+    try:
+        effective_policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+            SANDBOX_POLICY_LOCAL,
+        )
+    except Exception:  # noqa: BLE001 - 配置读取异常时安全降级
+        return list(messages)
+
+    if effective_policy not in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
+        return list(messages)
+
+    try:
+        root = await resolve_workspace_root()
+    except Exception:  # noqa: BLE001
+        root = default_workspace_root()
+    host_root = resolve_user_workspace_root(
+        root=root,
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not host_root:
+        return list(messages)
+
+    logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
+    normalized_list: list[Any] = []
+    for msg in messages:
+        msg_type = str(getattr(msg, "type", "") or "").lower()
+        if msg_type != "human":
+            normalized_list.append(msg)
+            continue
+        content = getattr(msg, "content", None)
+        if isinstance(content, str):
+            updated, changed = _rewrite_attachment_text_for_sandbox(
+                content,
+                host_root=host_root,
+                logical_root=logical_root,
+            )
+            if changed:
+                model_copy = getattr(msg, "model_copy", None)
+                normalized_list.append(
+                    model_copy(update={"content": updated})
+                    if callable(model_copy)
+                    else type(msg)(content=updated)
+                )
+            else:
+                normalized_list.append(msg)
+            continue
+        if isinstance(content, list):
+            any_changed = False
+            new_blocks = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                    updated_text, block_changed = _rewrite_attachment_text_for_sandbox(
+                        block["text"],
+                        host_root=host_root,
+                        logical_root=logical_root,
+                    )
+                    if block_changed:
+                        any_changed = True
+                        new_blocks.append({**block, "text": updated_text})
+                        continue
+                new_blocks.append(block)
+            if any_changed:
+                model_copy = getattr(msg, "model_copy", None)
+                normalized_list.append(
+                    model_copy(update={"content": new_blocks})
+                    if callable(model_copy)
+                    else type(msg)(content=new_blocks)
+                )
+            else:
+                normalized_list.append(msg)
+            continue
+        normalized_list.append(msg)
+    return normalized_list
+
+
+def enhance_sandbox_bash_error_message(
+    text: str,
+    *,
+    command: str = "",
+) -> str:
+    """当沙箱 Bash 报错文件不存在且命令含宿主机 ``/app/data/`` 路径时，追加精准容器路径提示。"""
+    raw = str(text or "")
+    if not raw or "[沙箱路径提示]" in raw:
+        return raw
+    if "/app/data" not in str(command or "") and "/agent_workspaces/" not in str(command or ""):
+        return raw
+    lower = raw.lower()
+    if any(marker in lower for marker in _SANDBOX_BASH_NOT_FOUND_MARKERS):
+        return f"{raw}{SANDBOX_BASH_PATH_HEALING_HINT}"
+    return raw
+
+
+def _augment_sandbox_bash_chunk(chunk: Any, *, command: str) -> Any:
+    if isinstance(chunk, str):
+        return enhance_sandbox_bash_error_message(chunk, command=command)
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        updated = enhance_sandbox_bash_error_message(content, command=command)
+        if updated != content:
+            model_copy = getattr(chunk, "model_copy", None)
+            if callable(model_copy):
+                return model_copy(update={"content": updated})
+            try:
+                setattr(chunk, "content", updated)
+            except Exception:
+                pass
+        return chunk
+    if isinstance(content, list):
+        changed = False
+        new_blocks = []
+        for block in content:
+            text_val = getattr(block, "text", None)
+            if isinstance(text_val, str):
+                updated_text = enhance_sandbox_bash_error_message(text_val, command=command)
+                if updated_text != text_val:
+                    changed = True
+                    model_copy = getattr(block, "model_copy", None)
+                    if callable(model_copy):
+                        new_blocks.append(model_copy(update={"text": updated_text}))
+                        continue
+                    try:
+                        block_copy = copy.copy(block)
+                        setattr(block_copy, "text", updated_text)
+                        new_blocks.append(block_copy)
+                        continue
+                    except Exception:
+                        pass
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                updated_text = enhance_sandbox_bash_error_message(block["text"], command=command)
+                if updated_text != block["text"]:
+                    changed = True
+                    new_blocks.append({**block, "text": updated_text})
+                    continue
+            new_blocks.append(block)
+        if changed:
+            model_copy = getattr(chunk, "model_copy", None)
+            if callable(model_copy):
+                return model_copy(update={"content": new_blocks})
+            try:
+                setattr(chunk, "content", new_blocks)
+            except Exception:
+                pass
+    return chunk
+
+
+async def _wrap_sandbox_bash_stream(stream: Any, *, command: str) -> Any:
+    async for chunk in stream:
+        yield _augment_sandbox_bash_chunk(chunk, command=command)
+
+
 class _SandboxSessionBashNativeTool:
-    """Keep Docker Bash's default cwd aligned with the current session."""
+    """Keep Docker/K8s Bash's cwd aligned with the current session and auto-rewrite host workspace paths."""
 
     def __init__(self, native_tool: Any, host_root: str, session_workdir: str) -> None:
         self._native_tool = native_tool
@@ -7856,19 +8130,43 @@ class _SandboxSessionBashNativeTool:
     def _map_cwd(self, cwd: Any) -> Any:
         if not cwd:
             return self._default_cwd()
-        raw = str(cwd)
+        raw, _ = rewrite_host_workspace_paths_to_sandbox(
+            str(cwd),
+            host_root=self._host_root,
+            logical_root=DOCKER_WORKSPACE_LOGICAL_ROOT,
+        )
         logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
         if raw == logical_root or raw.startswith(f"{logical_root}/"):
             return raw[len(logical_root):].lstrip("/\\") or "."
         return raw
 
+    def _rewrite_command(self, command: Any) -> tuple[Any, bool]:
+        if not isinstance(command, str) or not command:
+            return command, False
+        return rewrite_host_workspace_paths_to_sandbox(
+            command,
+            host_root=self._host_root,
+            logical_root=DOCKER_WORKSPACE_LOGICAL_ROOT,
+        )
+
     async def __call__(self, **kwargs: Any) -> Any:
         mapped = dict(kwargs)
         mapped["cwd"] = self._map_cwd(mapped.get("cwd"))
+        raw_command = mapped.get("command")
+        rewritten_cmd, cmd_changed = self._rewrite_command(raw_command)
+        if cmd_changed:
+            logger.info(
+                "[workspace] Rewrote current-user host workspace prefix to %s in sandbox Bash command",
+                DOCKER_WORKSPACE_LOGICAL_ROOT,
+            )
+            mapped["command"] = rewritten_cmd
+        effective_command = str(mapped.get("command") or "")
         result = self._native_tool(**mapped)
         if inspect.isawaitable(result):
             result = await result
-        return result
+        if inspect.isasyncgen(result):
+            return _wrap_sandbox_bash_stream(result, command=effective_command)
+        return _augment_sandbox_bash_chunk(result, command=effective_command)
 
 
 #: 票据文件名前缀。带上 jti 才能让同一会话的并行 Bash 互不覆盖。

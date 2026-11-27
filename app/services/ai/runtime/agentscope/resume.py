@@ -508,6 +508,15 @@ class AgentScopeResumeHandler:
                     current_reasoning=full_reasoning_content or None,
                     current_content=full_response_content,
                 )
+                # 仅在恢复轮以 success 收尾、且合并挂起前半段后的完整正文仍为空时兜底，
+                # 与主执行流 ExecutionStep:260 保持同一开关与文案，绝不误伤 rejected / 二次挂起。
+                if execution_status == "success" and not (merged_response_content or "").strip():
+                    fallback_fn = getattr(agent_service, "_maybe_empty_response_fallback", None)
+                    if callable(fallback_fn):
+                        fallback_text = await fallback_fn()
+                        if fallback_text:
+                            merged_response_content = fallback_text
+                            yield {"content": fallback_text, "status": "success"}
                 should_persist_history = bool(
                     conversation_id
                     and _should_persist_turn_history(

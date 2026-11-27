@@ -521,8 +521,11 @@ def test_workspace_rows_open_on_double_click() -> None:
     page = _read("frontend/src/views/WorkspaceManage.vue")
 
     assert 'const openItem = (item: FsItem) => {' in page
+    # 列表视图：整行双击打开
     assert '@dblclick="openItem(item)"' in page
-    assert '@dblclick.stop="openItem(item)"' in page
+    # 卡片视图：目录单击即进入（触屏友好），文件才用双击开预览
+    assert '@dblclick.stop="item.is_dir ? undefined : openItem(item)"' in page
+    assert '@click="item.is_dir ? navigate(item.path) : undefined"' in page
     assert "if (item.is_dir) {" in page
 
 

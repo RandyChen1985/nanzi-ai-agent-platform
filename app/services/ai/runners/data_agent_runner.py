@@ -691,7 +691,17 @@ class DataAgentRunner(BaseExecutor):
             yield chunk
             if chunk.get("status") == "error" and not chunk.get("type"):
                 return
+        from app.services.ai.runtime.agentscope.workspace import (
+            normalize_runtime_messages_workspace_paths_for_sandbox,
+        )
+
         runtime_messages = [message for message in normalize_messages_for_llm(convert_history_to_messages(history, strip_thought=True)) if not isinstance(message, SystemMessage)]
+        runtime_messages = await normalize_runtime_messages_workspace_paths_for_sandbox(
+            runtime_messages,
+            user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
+        )
         raw_user_question = (
             str(self.current_user_query)
             if self.current_user_query is not None
@@ -959,8 +969,8 @@ class DataAgentRunner(BaseExecutor):
     def _pending_state_to_data_run_state(pending_state: Dict[str, Any]) -> tuple[_DataRunState, Dict[str, Any]]:
         return chatbi_state.pending_state_to_data_run_state(pending_state)
 
-    async def _stream_agentscope_events(self, *, event_stream: Any, agent: Any | None=None, tools: list[RuntimeToolSpec], native_model: Any, state: _DataRunState | None=None, stream_meta: Dict[str, Any] | None=None, emit_final_guard: bool=True) -> AsyncGenerator[Dict[str, Any], None]:
-        async for _chunk in chatbi_react_stream.stream_agentscope_events(self, event_stream=event_stream, agent=agent, tools=tools, native_model=native_model, state=state, stream_meta=stream_meta, emit_final_guard=emit_final_guard):
+    async def _stream_agentscope_events(self, *, event_stream: Any, agent: Any | None=None, tools: list[RuntimeToolSpec], native_model: Any, state: _DataRunState | None=None, stream_meta: Dict[str, Any] | None=None, emit_final_guard: bool=True, record_synthesis_trace: bool=True) -> AsyncGenerator[Dict[str, Any], None]:
+        async for _chunk in chatbi_react_stream.stream_agentscope_events(self, event_stream=event_stream, agent=agent, tools=tools, native_model=native_model, state=state, stream_meta=stream_meta, emit_final_guard=emit_final_guard, record_synthesis_trace=record_synthesis_trace):
             yield _chunk
 
     @staticmethod
