@@ -1941,6 +1941,7 @@ async def test_docker_workspace_adapter_applies_cgroup_limits(tmp_path):
     await workspace._create_and_start_container()
 
     host_config = captured["config"]["HostConfig"]
+    assert host_config["Init"] is True
     assert host_config["Memory"] == 2 * 1024 * 1024 * 1024
     # swap 上限与内存一致：否则内存打满后会继续吃宿主机 swap，整机卡死。
     assert host_config["MemorySwap"] == 2 * 1024 * 1024 * 1024

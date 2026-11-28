@@ -69,7 +69,12 @@ def build_docker_workspace_with_extra_binds(
             if self.env:
                 config["Env"] = [f"{key}={value}" for key, value in self.env.items()]
 
-            host_config: dict[str, Any] = {}
+            host_config: dict[str, Any] = {
+                # 启用 Docker 内置 tini 作为 PID 1：容器主命令是 ``sleep infinity``，
+                # 它不会对脱离父进程的孤儿进程调用 wait()，长跑容器会不断累积
+                # ``<defunct>`` 僵尸进程并耗尽下方 ``PidsLimit`` 配额。
+                "Init": True,
+            }
             binds: list[str] = []
             if self.host_workdir is not None:
                 os.makedirs(self.host_workdir, exist_ok=True)

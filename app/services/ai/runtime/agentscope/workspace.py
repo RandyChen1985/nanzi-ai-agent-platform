@@ -53,6 +53,9 @@ _k8s_workspace_cache: dict[str, Any] = {}
 _k8s_workspace_refcounts: dict[str, int] = {}
 _k8s_workspace_locks: dict[str, asyncio.Lock] = {}
 _k8s_workspace_last_used: dict[str, float] = {}
+#: 最近一次确认「K8s 沙箱 Pod 确实还在运行」的探测时间（monotonic），见
+#: :data:`K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS`。
+_k8s_workspace_verified_at: dict[str, float] = {}
 _k8s_workspace_reaper_task: asyncio.Task[None] | None = None
 _workspace_sandbox_refs: dict[str, str] = {}
 #: 未命中的工作区准备按 cache_key 单飞（见 :func:`_await_workspace_build`）：preflight
@@ -198,6 +201,13 @@ DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS = 30.0
 #: 单次存活探测的超时（秒）。探测发生在 ``cache_key`` 锁内，daemon 卡住时不能让它
 #: 把该沙箱上所有请求一起拖死：超时按「还活着」处理，宁可多跑一盘 404 也不锁死。
 DOCKER_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS = 5.0
+#: K8s 缓存命中沙箱的存活探测 TTL 与单次探测超时（与 Docker 侧同口径）。
+K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS = 30.0
+K8S_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS = 5.0
+#: 进程优雅退出（shutdown）时并发关闭单个沙箱的超时上限（秒）。
+#: ``docker stop`` 默认只给 10 秒宽限期，Linux 下单个 Docker 容器 close() 还要
+#: 执行 ``chown -R``（最长 10s），串行关闭极易被 SIGKILL 打断并遗留孤儿容器。
+SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS = 8.0
 K8S_WORKSPACE_IDLE_SECONDS = 900.0
 K8S_WORKSPACE_REAPER_INTERVAL_SECONDS = 60.0
 
@@ -3051,6 +3061,18 @@ def _sandbox_workspace_id_pattern(user_key: str) -> str:
     return rf"(?:{'|'.join(sorted(variants))})"
 
 
+def _docker_workspace_label_filters() -> dict[str, list[str]]:
+    """构造符合 Docker Engine API 规范的容器标签过滤条件。
+
+    Docker ``/containers/json`` 的 ``filters`` 要求 ``map[string][]string``，而
+    ``aiodocker.containers.DockerContainers.list`` 不会调用 ``clean_filters``，
+    若传入标量字符串 ``{"label": "agentscope.workspace=true"}`` 会被直接序列化
+    成非数组 JSON，Docker Daemon 100% 返回 400 Bad Request，导致孤儿清理与标签
+    反查全部失效。因此这里始终返回单元素列表。
+    """
+    return {"label": ["agentscope.workspace=true"]}
+
+
 async def _docker_sandbox_container_names(
     client: Any,
     *,
@@ -3092,10 +3114,10 @@ async def _docker_sandbox_container_names(
     pattern = _sandbox_workspace_id_pattern(user_key)
     try:
         listed = await client.containers.list(
-            all=True, filters={"label": "agentscope.workspace=true"}
+            all=True, filters=_docker_workspace_label_filters()
         )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[workspace] Docker label scan for %s failed: %s", user_key, exc)
+        logger.warning("[workspace] Docker label scan for %s failed: %s", user_key, exc)
         listed = []
     # 标签扫描命中的容器按创建时间倒序：技能集合变了之后，**最新**的那台才是当前技能
     # 集合对应的沙箱；没有 Created 字段（老 API/测试替身）时保持列表原序。
@@ -3184,12 +3206,12 @@ def _resolve_sandbox_user_key(
 
 
 async def _docker_workspace_container_alive(workspace: Any) -> bool:
-    """容器是否**真的**还在；只把 404 判成「不在」。
+    """容器是否**真的**在运行；404 或非运行/僵死态（Exited/Dead/OOMKilled/Paused）判成「不在」。
 
-    ``is_alive`` 不反映外部删除（``docker rm`` / daemon prune / OOM / 别的实例
-    ``create_or_replace``），所以这里问一次 Docker。其它异常一律判「还在」：探测本身
-    失败（daemon 抖动、超时、权限）不该触发重建——重建会 ``create_or_replace`` 掉一台
-    可能好着的容器，代价远大于多跑一盘 404。
+    ``is_alive`` 不反映外部删除、OOMKill 或异常退出（``docker rm`` / daemon prune /
+    OOM / 别的实例 ``create_or_replace``），所以这里问一次 Docker 并检查 ``State``。
+    其它异常一律判「还在」：探测本身失败（daemon 抖动、超时、权限）不该触发重建——
+    重建会 ``create_or_replace`` 掉一台可能好着的容器，代价远大于多跑一盘 404。
     """
     container = getattr(workspace, "_container", None)
     show = getattr(container, "show", None)
@@ -3198,9 +3220,20 @@ async def _docker_workspace_container_alive(workspace: Any) -> bool:
     try:
         result = show()
         if inspect.isawaitable(result):
-            await asyncio.wait_for(
+            details = await asyncio.wait_for(
                 result, timeout=DOCKER_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS
             )
+        else:
+            details = result
+        if isinstance(details, dict):
+            state = details.get("State")
+            if isinstance(state, dict):
+                if state.get("Dead") is True or state.get("OOMKilled") is True:
+                    return False
+                if state.get("Paused") is True:
+                    return False
+                if "Running" in state and not state.get("Running"):
+                    return False
         return True
     except asyncio.TimeoutError:
         logger.debug("[workspace] container liveness probe timed out (treated as alive)")
@@ -3405,6 +3438,76 @@ async def _evict_docker_workspace_cache_entry(
     return 1 if sandbox_ws is not None else 0
 
 
+async def _k8s_workspace_pod_alive(workspace: Any) -> bool:
+    """K8s 沙箱 Pod 是否**真的**还在运行；404 / Terminating / 终态判成「不在」。
+
+    与 :func:`_docker_workspace_container_alive` 同口径：``is_alive`` 只是进程内
+    布尔属性，Pod 被驱逐（Evicted）、节点重启、OOM 进入 Failed 或被人工删除后它仍为
+    True。只有拿到明确的非空 ``pod_name`` 时才发集群读请求；集群不可达、无凭据或超时
+    一律保守按「还活着」处理，避免抖动时误重建。
+    """
+    raw_pod_name = getattr(workspace, "_pod_name", None)
+    if not isinstance(raw_pod_name, str) or not raw_pod_name.strip():
+        raw_pod_name = getattr(workspace, "pod_name", None)
+    if not isinstance(raw_pod_name, str) or not raw_pod_name.strip():
+        return getattr(workspace, "is_alive", True) is not False
+    pod_name = raw_pod_name.strip()
+
+    raw_namespace = getattr(workspace, "_namespace", None)
+    if not isinstance(raw_namespace, str) or not raw_namespace.strip():
+        raw_namespace = getattr(workspace, "namespace", None)
+    if isinstance(raw_namespace, str) and raw_namespace.strip():
+        namespace = raw_namespace.strip()
+    else:
+        from app.services.ai.runtime.agentscope.k8s_workspace import (
+            resolve_sandbox_namespace,
+        )
+
+        namespace = resolve_sandbox_namespace(None)
+
+    try:
+        from app.services.ai.runtime.agentscope.k8s_workspace import (
+            read_k8s_sandbox_pod,
+        )
+
+        info = await asyncio.wait_for(
+            read_k8s_sandbox_pod(namespace=namespace, pod_name=pod_name),
+            timeout=K8S_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.debug("[workspace] k8s pod liveness probe timed out (treated as alive)")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "[workspace] k8s pod liveness probe failed (treated as alive): %s", exc
+        )
+        return True
+
+    if not isinstance(info, dict) or not info.get("available"):
+        return True
+    if info.get("found") is False:
+        return False
+    if info.get("deleting") is True:
+        return False
+    phase = str(info.get("phase") or "").strip()
+    if phase in {"Failed", "Succeeded", "Unknown"}:
+        return False
+    return True
+
+
+def _k8s_sandbox_confirmed_alive(cache_key: str) -> bool:
+    """缓存里的 K8s 沙箱是否**刚被确认还活着**（存活探测窗口之内）。
+
+    与 :func:`_docker_sandbox_confirmed_alive` 保持同口径：刚创建或最近
+    :data:`K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS` 内探测存活才允许构建路径直接复用，
+    否则走惰性代理，避免过期条目在纯对话首 token 前当场重建 Pod。
+    """
+    verified_at = _k8s_workspace_verified_at.get(cache_key, 0.0)
+    if not verified_at:
+        return False
+    return (time.monotonic() - verified_at) < K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS
+
+
 async def _acquire_k8s_workspace(
     *,
     root: str,
@@ -3415,11 +3518,27 @@ async def _acquire_k8s_workspace(
 
     与 Docker 侧同一约定：Pod 名与 subPath 技能目录都带技能集合令牌，物理沙箱与缓存
     条目一一对应（否则第二个集合会 ``_ensure_pod`` 掉第一个集合正在用的 Pod）。
+    命中缓存时按 :data:`K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS` 做一次存在性与运行态
+    探测，Pod 被驱逐/删除/进入 Failed 时就地逐出并重建。
     """
     cache_key = _k8s_workspace_cache_key(root, user_key, skill_paths)
     lock = _k8s_workspace_locks.setdefault(cache_key, asyncio.Lock())
+    stale: tuple[Any, list[Any]] | None = None
     async with lock:
         workspace = _k8s_workspace_cache.get(cache_key)
+        if workspace is not None and getattr(workspace, "is_alive", True) is not False:
+            now = time.monotonic()
+            verified_at = _k8s_workspace_verified_at.get(cache_key, 0.0)
+            if now - verified_at >= K8S_WORKSPACE_ALIVE_PROBE_TTL_SECONDS:
+                if await _k8s_workspace_pod_alive(workspace):
+                    _k8s_workspace_verified_at[cache_key] = now
+                else:
+                    logger.warning(
+                        "[workspace] K8s 沙箱 Pod 已不存在或进入异常终态，逐出并重建: %s",
+                        cache_key,
+                    )
+                    stale = _drop_k8s_workspace_entry_locked(cache_key)
+                    workspace = None
         if workspace is None or getattr(workspace, "is_alive", True) is False:
             workspace = await _policy_k8s_workspace(
                 skill_paths,
@@ -3429,10 +3548,23 @@ async def _acquire_k8s_workspace(
             )
             _k8s_workspace_cache[cache_key] = workspace
             _k8s_workspace_refcounts[cache_key] = 0
+            _k8s_workspace_verified_at[cache_key] = time.monotonic()
         _k8s_workspace_refcounts[cache_key] = (
             _k8s_workspace_refcounts.get(cache_key, 0) + 1
         )
         _k8s_workspace_last_used[cache_key] = time.monotonic()
+
+    if stale is not None:
+        stale_sandbox, stale_pairs = stale
+        closed_ids: set[int] = set()
+        to_close: list[Any] = [stale_sandbox]
+        for cached in stale_pairs:
+            to_close.extend(_normalize_workspace_pair(cached))
+        for item in to_close:
+            if item is None or id(item) in closed_ids:
+                continue
+            closed_ids.add(id(item))
+            await _close_workspace_safely(item, reason="k8s pod disappeared or unhealthy")
     return workspace, cache_key
 
 
@@ -3444,6 +3576,7 @@ def _drop_k8s_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]:
     sandbox = _k8s_workspace_cache.pop(cache_key, None)
     _k8s_workspace_refcounts.pop(cache_key, None)
     _k8s_workspace_last_used.pop(cache_key, None)
+    _k8s_workspace_verified_at.pop(cache_key, None)
     pairs: list[Any] = []
     for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
         if sandbox_ref != cache_key:
@@ -3844,10 +3977,16 @@ def _prune_idle_workspace_locks() -> int:
 #: 进程看来同样"无人认领"。多副本部署必须把 ``sandbox_orphan_reconcile`` 设为 false
 #: （或先把活跃沙箱注册表搬到 Redis），否则副本之间会互删正在使用的沙箱。
 SANDBOX_ORPHAN_RECONCILE_KEY = "sandbox_orphan_reconcile"
-#: 只有创建时间超过它才允许回收：新建中的沙箱（含另一路并发刚拉起的）绝不动。
+#: 只有创建时间超过它才允许回收运行中的孤儿沙箱：新建中的沙箱（含另一路并发刚拉起的）绝不动。
 SANDBOX_ORPHAN_MIN_AGE_SECONDS = 1800.0
 #: 对账周期：与空闲回收同一循环，但按更长的间隔执行（默认 10 分钟）。
 SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS = 600.0
+#: 明确进入终态的僵死沙箱（Docker Exited/Dead，K8s Failed/Succeeded/Unknown）回收前的宽限期（秒）。
+SANDBOX_ZOMBIE_TERMINAL_MIN_AGE_SECONDS = 60.0
+#: Docker 卡在 Created（尚未启动）超过该时长视为启动失败僵死容器（秒）。
+SANDBOX_ZOMBIE_CREATED_MIN_AGE_SECONDS = 300.0
+#: K8s 沙箱 Pod 卡在 Pending 超过该时长视为调度/拉镜像/挂载失败僵死 Pod（秒）。
+SANDBOX_K8S_PENDING_ZOMBIE_SECONDS = 600.0
 
 
 async def _orphan_reconcile_enabled() -> bool:
@@ -3879,6 +4018,94 @@ def _live_sandbox_workspace_ids(cache: dict[str, Any]) -> set[str]:
     return workspace_ids
 
 
+def _snapshot_cached_sandboxes(
+    cache: dict[str, Any],
+    last_used_map: dict[str, float],
+) -> dict[str, list[tuple[str, float | None, str | None]]]:
+    """快照本进程缓存条目：``workspace_id -> [(cache_key, last_used, container_id), ...]``。
+
+    供对账清理僵死沙箱时做并发防误删校验：若扫描与逐出之间已有请求并发重建了
+    新沙箱（``last_used`` 变化或容器 ID 变化），绝不能把刚建好的新沙箱误逐出。
+    """
+    snapshot: dict[str, list[tuple[str, float | None, str | None]]] = {}
+    for cache_key, workspace in list(cache.items()):
+        wid = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if not wid:
+            continue
+        container_id = getattr(workspace, "_platform_container_id", None)
+        if not container_id:
+            container_obj = getattr(workspace, "_container", None)
+            raw_cid = getattr(container_obj, "id", None)
+            container_id = str(raw_cid) if isinstance(raw_cid, str) and raw_cid else None
+        snapshot.setdefault(str(wid), []).append(
+            (cache_key, last_used_map.get(cache_key), container_id)
+        )
+    return snapshot
+
+
+async def _is_sandbox_policy_active(expected_policy: str) -> bool:
+    """尽力判断当前生效的沙箱策略是否为 ``expected_policy``（用于降噪非当前策略的连接告警）。"""
+    try:
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
+
+        effective = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+            SANDBOX_POLICY_LOCAL,
+        )
+        return effective == expected_policy
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _docker_container_zombie_reason(
+    raw: Any,
+    *,
+    age: float,
+    terminal_min_age: float = SANDBOX_ZOMBIE_TERMINAL_MIN_AGE_SECONDS,
+    created_min_age: float = SANDBOX_ZOMBIE_CREATED_MIN_AGE_SECONDS,
+) -> str | None:
+    """判断 Docker 容器列表项是否处于明确的僵死/异常终态。
+
+    ``/containers/json`` 返回的 ``State`` 为小写状态字符串（如 ``running``、
+    ``exited``、``dead``、``created``）。已终止或长期未启动的容器无论是否在进程
+    缓存中都无法继续服务，清理它们在多副本部署下同样安全。
+    """
+    if not isinstance(raw, dict):
+        return None
+    state = str(raw.get("State") or "").strip().lower()
+    if state in {"exited", "dead"} and age >= terminal_min_age:
+        return f"state={state}"
+    if state == "created" and age >= created_min_age:
+        return "state=created_stuck"
+    return None
+
+
+def _k8s_pod_zombie_reason(
+    pod: Any,
+    *,
+    age: float,
+    terminal_min_age: float = SANDBOX_ZOMBIE_TERMINAL_MIN_AGE_SECONDS,
+    pending_min_age: float = SANDBOX_K8S_PENDING_ZOMBIE_SECONDS,
+) -> str | None:
+    """判断 K8s Pod 是否处于明确的僵死/异常终态（含 Evicted 与卡死 Pending）。"""
+    metadata = getattr(pod, "metadata", None)
+    if getattr(metadata, "deletion_timestamp", None):
+        return None
+    status = getattr(pod, "status", None)
+    phase = str(getattr(status, "phase", "") or "").strip()
+    if phase in {"Failed", "Succeeded", "Unknown"} and age >= terminal_min_age:
+        reason = str(getattr(status, "reason", "") or "").strip()
+        return f"phase={phase}({reason})" if reason else f"phase={phase}"
+    if phase == "Pending" and age >= pending_min_age:
+        return "phase=Pending_stuck"
+    return None
+
+
 def _container_label(container: Any, key: str) -> str:
     """从 aiodocker 容器对象上读一个 label（兼容测试替身与真实返回）。"""
     raw = getattr(container, "_container", None)
@@ -3899,8 +4126,18 @@ async def reconcile_orphan_docker_workspaces(
     *,
     min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
     now: float | None = None,
+    reclaim_running_orphans: bool = True,
+    zombie_terminal_min_age_seconds: float = SANDBOX_ZOMBIE_TERMINAL_MIN_AGE_SECONDS,
+    zombie_created_min_age_seconds: float = SANDBOX_ZOMBIE_CREATED_MIN_AGE_SECONDS,
 ) -> int:
-    """回收本进程不再认知的 Docker 沙箱容器，返回回收数量。
+    """回收孤儿与僵死 Docker 沙箱容器，返回回收数量。
+
+    覆盖两类目标：
+    1. **僵死/异常终态容器**（``exited`` / ``dead`` / 卡死 ``created``）：无论是否仍在
+       进程注册表中、无论 ``reclaim_running_orphans`` 是否开启都直接清理，并同步摘除
+       本进程缓存条目；
+    2. **运行中孤儿容器**：仅在 ``reclaim_running_orphans=True`` 时回收不在本进程
+       注册表且物理创建超过 ``min_age_seconds`` 的容器。
 
     任何一步失败都只告警：对账是尽力而为的清理，绝不能影响正常的沙箱创建与回收。
     """
@@ -3911,15 +4148,21 @@ async def reconcile_orphan_docker_workspaces(
         return 0
 
     current = time.time() if now is None else now
-    live_ids = _live_sandbox_workspace_ids(_docker_workspace_cache)
+    cached_snapshot = _snapshot_cached_sandboxes(
+        _docker_workspace_cache, _docker_workspace_last_used
+    )
+    live_ids = set(cached_snapshot.keys())
     client: Any | None = None
     try:
         client = aiodocker.Docker()
         listed = await client.containers.list(
-            all=True, filters={"label": "agentscope.workspace=true"}
+            all=True, filters=_docker_workspace_label_filters()
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[workspace] orphan container scan failed: %s", exc)
+        if await _is_sandbox_policy_active(SANDBOX_POLICY_DOCKER):
+            logger.warning("[workspace] orphan container scan failed: %s", exc)
+        else:
+            logger.debug("[workspace] orphan container scan skipped (docker unavailable): %s", exc)
         if client is not None:
             with contextlib.suppress(Exception):
                 await client.close()
@@ -3929,7 +4172,7 @@ async def reconcile_orphan_docker_workspaces(
     try:
         for item in listed or []:
             workspace_id = _container_label(item, "agentscope.workspace.id")
-            if not workspace_id or workspace_id in live_ids:
+            if not workspace_id:
                 continue
             raw = getattr(item, "_container", None)
             try:
@@ -3937,25 +4180,63 @@ async def reconcile_orphan_docker_workspaces(
             except (TypeError, ValueError):
                 created = 0.0
             # 拿不到创建时间就保守跳过：宁可留一台孤儿，也不能误删刚拉起的沙箱。
-            if created <= 0 or current - created < min_age_seconds:
+            if created <= 0:
                 continue
+            age = current - created
+            zombie_reason = _docker_container_zombie_reason(
+                raw,
+                age=age,
+                terminal_min_age=zombie_terminal_min_age_seconds,
+                created_min_age=zombie_created_min_age_seconds,
+            )
+            is_running_orphan = (
+                reclaim_running_orphans
+                and workspace_id not in live_ids
+                and age >= min_age_seconds
+            )
+            if not zombie_reason and not is_running_orphan:
+                continue
+
+            evicted = 0
+            if zombie_reason and workspace_id in cached_snapshot:
+                item_id = str(getattr(item, "id", "") or "")
+                for key, expected_last_used, cached_cid in cached_snapshot[workspace_id]:
+                    # 缓存若指向另一台容器 ID（已被并发重建），绝不误逐出新容器
+                    if cached_cid and item_id and cached_cid != item_id:
+                        continue
+                    evicted += await _evict_docker_workspace_cache_entry(
+                        key,
+                        reason=f"docker sandbox zombie ({zombie_reason})",
+                        expected_last_used=expected_last_used,
+                    )
+
             name = _container_name(item)
+            deleted_ok = False
             try:
+                # item.delete() 按容器 ID 删除，即使并发重建了同名新容器也绝不会误删新容器
                 await item.delete(force=True)
+                deleted_ok = True
             except Exception as exc:  # noqa: BLE001
-                if getattr(exc, "status", None) != 404:
+                if getattr(exc, "status", None) == 404:
+                    deleted_ok = evicted > 0
+                else:
                     logger.warning(
-                        "[workspace] Failed to reclaim orphan container %s: %s",
+                        "[workspace] Failed to reclaim %s container %s: %s",
+                        "zombie" if zombie_reason else "orphan",
                         name,
                         exc,
                     )
+                    continue
+            if not deleted_ok and evicted == 0:
                 continue
             removed += 1
             logger.warning(
-                "[workspace] Reclaimed orphan docker sandbox container=%s workspace_id=%s age=%.0fs",
+                "[workspace] Reclaimed %s docker sandbox container=%s workspace_id=%s age=%.0fs%s",
+                "zombie" if zombie_reason else "orphan",
                 name,
                 workspace_id,
-                current - created,
+                age,
+                f" ({zombie_reason})" if zombie_reason else "",
             )
             # 容器没了，它在宿主机上的技能集合目录也成了孤儿。对账不经过逐出函数，
             # 而目录回收只挂在逐出路径上，这里必须显式补一次，否则进程每重启一轮就
@@ -3974,8 +4255,11 @@ async def reconcile_orphan_k8s_workspaces(
     *,
     min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
     now: float | None = None,
+    reclaim_running_orphans: bool = True,
+    zombie_terminal_min_age_seconds: float = SANDBOX_ZOMBIE_TERMINAL_MIN_AGE_SECONDS,
+    zombie_pending_min_age_seconds: float = SANDBOX_K8S_PENDING_ZOMBIE_SECONDS,
 ) -> int:
-    """回收本进程不再认知的 K8s 沙箱 Pod，返回回收数量（语义同 Docker 版）。"""
+    """回收孤儿与僵死 K8s 沙箱 Pod，返回回收数量（语义同 Docker 版）。"""
     try:
         from kubernetes_asyncio import client as k8s_client
         from kubernetes_asyncio import config as k8s_async_config
@@ -4002,7 +4286,10 @@ async def reconcile_orphan_k8s_workspaces(
             return 0
 
     current = time.time() if now is None else now
-    live_ids = _live_sandbox_workspace_ids(_k8s_workspace_cache)
+    cached_snapshot = _snapshot_cached_sandboxes(
+        _k8s_workspace_cache, _k8s_workspace_last_used
+    )
+    live_ids = set(cached_snapshot.keys())
     removed = 0
     try:
         async with k8s_client.ApiClient() as api_client:
@@ -4016,30 +4303,92 @@ async def reconcile_orphan_k8s_workspaces(
                 labels = getattr(metadata, "labels", None) or {}
                 workspace_id = str(labels.get("agentscope.workspace.id") or "")
                 pod_name = str(getattr(metadata, "name", "") or "")
-                if not pod_name or not workspace_id or workspace_id in live_ids:
+                if not pod_name or not workspace_id:
                     continue
                 try:
                     created = float(metadata.creation_timestamp.timestamp())
                 except Exception:  # noqa: BLE001
                     created = 0.0
-                if created <= 0 or current - created < min_age_seconds:
+                if created <= 0:
                     continue
+                age = current - created
+                zombie_reason = _k8s_pod_zombie_reason(
+                    pod,
+                    age=age,
+                    terminal_min_age=zombie_terminal_min_age_seconds,
+                    pending_min_age=zombie_pending_min_age_seconds,
+                )
+                is_running_orphan = (
+                    reclaim_running_orphans
+                    and workspace_id not in live_ids
+                    and age >= min_age_seconds
+                )
+                if not zombie_reason and not is_running_orphan:
+                    continue
+
+                evicted = 0
+                replaced_concurrently = False
+                if zombie_reason and workspace_id in cached_snapshot:
+                    for key, expected_last_used, _cached_cid in cached_snapshot[
+                        workspace_id
+                    ]:
+                        evicted_one = await _evict_k8s_workspace_cache_entry(
+                            key,
+                            reason=f"k8s sandbox zombie ({zombie_reason})",
+                            expected_last_used=expected_last_used,
+                        )
+                        evicted += evicted_one
+                        if evicted_one == 0 and key in _k8s_workspace_cache:
+                            replaced_concurrently = True
+                # 并发重建已将同名 Pod 换成全新活条目：绝不能再按 pod_name 误删新 Pod
+                if replaced_concurrently:
+                    continue
+
+                deleted_ok = False
+                pod_uid = getattr(metadata, "uid", None)
+                delete_kwargs: dict[str, Any] = {
+                    "name": pod_name,
+                    "namespace": namespace,
+                }
+                if isinstance(pod_uid, str) and pod_uid.strip():
+                    # 原子校验 Pod UID，防止扫描与删除之间并发重建同名新 Pod 被误删
+                    delete_kwargs["body"] = k8s_client.V1DeleteOptions(
+                        preconditions=k8s_client.V1Preconditions(uid=pod_uid.strip())
+                    )
                 try:
-                    await core_v1.delete_namespaced_pod(
-                        name=pod_name, namespace=namespace
-                    )
+                    try:
+                        await core_v1.delete_namespaced_pod(**delete_kwargs)
+                    except TypeError:
+                        # 兼容仅接受 (name, namespace) 的简化测试替身
+                        delete_kwargs.pop("body", None)
+                        await core_v1.delete_namespaced_pod(**delete_kwargs)
+                    deleted_ok = True
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "[workspace] Failed to reclaim orphan pod %s: %s", pod_name, exc
-                    )
+                    status_code = getattr(exc, "status", None)
+                    if status_code == 404:
+                        deleted_ok = evicted > 0
+                    elif status_code in (409, 412):
+                        # UID precondition 失败：同名 Pod 已被并发重建，安全跳过
+                        continue
+                    else:
+                        logger.warning(
+                            "[workspace] Failed to reclaim %s pod %s: %s",
+                            "zombie" if zombie_reason else "orphan",
+                            pod_name,
+                            exc,
+                        )
+                        continue
+                if not deleted_ok and evicted == 0:
                     continue
                 removed += 1
                 logger.warning(
-                    "[workspace] Reclaimed orphan k8s sandbox pod=%s namespace=%s workspace_id=%s age=%.0fs",
+                    "[workspace] Reclaimed %s k8s sandbox pod=%s namespace=%s workspace_id=%s age=%.0fs%s",
+                    "zombie" if zombie_reason else "orphan",
                     pod_name,
                     namespace,
                     workspace_id,
-                    current - created,
+                    age,
+                    f" ({zombie_reason})" if zombie_reason else "",
                 )
                 # 同上：Pod 没了，它的技能集合目录也要跟着回收（K8s 用 PVC 内路径）。
                 await _reclaim_orphan_sandbox_skills_dir_for_workspace_id(
@@ -4048,6 +4397,41 @@ async def reconcile_orphan_k8s_workspaces(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[workspace] orphan pod scan failed: %s", exc)
     return removed
+
+
+async def _evict_cached_workspaces_on_shutdown(
+    cache_keys: list[str],
+    evict_fn: Callable[..., Awaitable[int]],
+    *,
+    backend_label: str,
+    timeout_seconds: float = SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS,
+) -> None:
+    """并发关闭本进程缓存的沙箱，单台带超时保护，避免串行清理超过容器退出宽限期。"""
+    if not cache_keys:
+        return
+
+    async def _evict_one(key: str) -> None:
+        try:
+            await asyncio.wait_for(
+                evict_fn(key, reason="application shutdown"),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[workspace] Timed out closing %s workspace on shutdown (%.1fs): %s",
+                backend_label,
+                timeout_seconds,
+                key,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[workspace] Failed closing %s workspace on shutdown (%s): %s",
+                backend_label,
+                key,
+                exc,
+            )
+
+    await asyncio.gather(*(_evict_one(key) for key in cache_keys))
 
 
 async def _docker_workspace_reaper_loop(
@@ -4075,6 +4459,9 @@ async def _docker_workspace_reaper_loop(
         try:
             if await _orphan_reconcile_enabled():
                 await reconcile_orphan_docker_workspaces()
+            else:
+                # 多副本关闭运行中孤儿回收时，仍安全清理明确终态/卡死的僵死容器
+                await reconcile_orphan_docker_workspaces(reclaim_running_orphans=False)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -4102,7 +4489,7 @@ def start_docker_workspace_reaper(
 
 
 async def stop_docker_workspace_reaper() -> None:
-    """Stop the idle reaper and close remaining cached Docker workspaces."""
+    """Stop the idle reaper and close remaining cached Docker workspaces concurrently."""
     global _docker_workspace_reaper_task
     task = _docker_workspace_reaper_task
     _docker_workspace_reaper_task = None
@@ -4113,11 +4500,11 @@ async def stop_docker_workspace_reaper() -> None:
         except asyncio.CancelledError:
             pass
 
-    for cache_key in list(_docker_workspace_cache):
-        await _evict_docker_workspace_cache_entry(
-            cache_key,
-            reason="application shutdown",
-        )
+    await _evict_cached_workspaces_on_shutdown(
+        list(_docker_workspace_cache),
+        _evict_docker_workspace_cache_entry,
+        backend_label="Docker",
+    )
 
 
 async def _k8s_workspace_reaper_loop(
@@ -4145,6 +4532,9 @@ async def _k8s_workspace_reaper_loop(
         try:
             if await _orphan_reconcile_enabled():
                 await reconcile_orphan_k8s_workspaces()
+            else:
+                # 多副本关闭运行中孤儿回收时，仍安全清理明确终态/卡死的僵死 Pod
+                await reconcile_orphan_k8s_workspaces(reclaim_running_orphans=False)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -4172,7 +4562,7 @@ def start_k8s_workspace_reaper(
 
 
 async def stop_k8s_workspace_reaper() -> None:
-    """Stop the K8s idle reaper and close remaining cached K8s workspaces."""
+    """Stop the K8s idle reaper and close remaining cached K8s workspaces concurrently."""
     global _k8s_workspace_reaper_task
     task = _k8s_workspace_reaper_task
     _k8s_workspace_reaper_task = None
@@ -4183,11 +4573,11 @@ async def stop_k8s_workspace_reaper() -> None:
         except asyncio.CancelledError:
             pass
 
-    for cache_key in list(_k8s_workspace_cache):
-        await _evict_k8s_workspace_cache_entry(
-            cache_key,
-            reason="application shutdown",
-        )
+    await _evict_cached_workspaces_on_shutdown(
+        list(_k8s_workspace_cache),
+        _evict_k8s_workspace_cache_entry,
+        backend_label="K8s",
+    )
 
 
 async def _policy_e2b_workspace(
@@ -5133,7 +5523,13 @@ async def get_local_workspace(
                     elif policy == SANDBOX_POLICY_K8S:
                         k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
                         existing_k8s = _k8s_workspace_cache.get(k_key)
-                        if existing_k8s is not None and getattr(existing_k8s, "is_alive", True) is not False:
+                        # 与 Docker 侧同口径：必须刚确认 Pod 存活才直接复用，否则交惰性代理，
+                        # 避免缓存里留着已驱逐/已删除的 Pod 时在纯对话首 token 前触发重建。
+                        if (
+                            existing_k8s is not None
+                            and getattr(existing_k8s, "is_alive", True) is not False
+                            and _k8s_sandbox_confirmed_alive(k_key)
+                        ):
                             is_already_alive = True
 
                     if lazy_sandbox and not is_already_alive:
@@ -5569,9 +5965,10 @@ async def stop_docker_workspace(
     # 1. 逐出进程内缓存
     await _evict_all_workspaces_for_user(sandbox_user_key, reason="user requested container stop")
 
-    # 2. 尝试停止 Docker 实体容器
-    #    一个用户可能有多台沙箱（每技能集合一台），容器名带令牌，因此按标签反查全部候选
-    #    并逐台停掉——只按 `<user_key>` 拼一个名字会漏掉真正在跑的那台。
+    # 2. 强制删除 Docker 实体容器（与 K8s stop_k8s_workspace 删 Pod 对齐）
+    #    用户工作区文件持久化在宿主机 bind mount 中，只 stop 不 delete 会在宿主机上留下
+    #    Exited 僵死容器占用容器名与容器层；一个用户可能有多台（每技能集合一台），按标签
+    #    反查全部候选并逐台彻底移除。
     try:
         import aiodocker
         client = aiodocker.Docker()
@@ -5581,14 +5978,11 @@ async def stop_docker_workspace(
             ):
                 try:
                     container = await client.containers.get(container_name)
-                    details = await container.show()
-                    state = details.get("State") if isinstance(details, dict) else {}
-                    if state.get("Running"):
-                        await container.stop()
+                    await container.delete(force=True)
                 except Exception as exc:  # noqa: BLE001
                     if getattr(exc, "status", None) != 404:
                         logger.warning(
-                            "[workspace] Failed to stop container %s: %s",
+                            "[workspace] Failed to remove container %s during stop: %s",
                             container_name,
                             exc,
                         )
@@ -6637,6 +7031,7 @@ def clear_workspace_cache() -> None:
     _k8s_workspace_refcounts.clear()
     _k8s_workspace_locks.clear()
     _k8s_workspace_last_used.clear()
+    _k8s_workspace_verified_at.clear()
     # 用户级准备锁只保护同步的目录准备动作，不会被长期持有；这里一并清掉，
     # 避免测试/长生命周期进程里按路径无限累积。
     _sandbox_host_prepare_locks.clear()
