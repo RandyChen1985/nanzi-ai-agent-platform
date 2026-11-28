@@ -27,6 +27,55 @@ from app.services.secrets import center
 pytestmark = pytest.mark.no_infrastructure
 
 
+def _call_arguments(source: str, start: int) -> str:
+    """取出从 ``start`` 起那次调用的实参区间（按括号配对，跳过字符串与注释）。
+
+    不能退化成「到下一个写入调用为止」切窗：两次写入之间常常夹着 GET 响应映射
+    （``is_global: Boolean(row.is_global)``），本次写入一旦漏传字段，窗口里的读路径
+    就会把它掩盖成绿——这个假绿在反向验证时真实出现过。
+    """
+    open_index = source.find("(", start)
+    if open_index < 0:
+        return ""
+    depth = 0
+    index = open_index
+    quote: str | None = None
+    while index < len(source):
+        char = source[index]
+        if quote is not None:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+            index += 1
+            continue
+        if source.startswith("//", index):
+            newline = source.find("\n", index)
+            if newline < 0:
+                break
+            index = newline
+            continue
+        if source.startswith("/*", index):
+            close = source.find("*/", index + 2)
+            if close < 0:
+                break
+            index = close + 2
+            continue
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return source[open_index : index + 1]
+        index += 1
+    raise ValueError("括号不配对，取不出调用实参区间——源码写法变了，请检查本函数的配对逻辑")
+
+
 class TestRequestModelCarriesTheFlag:
     def test_bind_request_has_is_global(self):
         assert "is_global" in endpoint.BindRequest.model_fields
@@ -153,12 +202,28 @@ class TestPersonalScopeStaysPersonal:
         import re
 
         source = self._source()
-        writes = len(re.findall(
-            r"axios\.(?:post|delete)\(\s*['\"]/api/portal/secrets/bindings", source
-        ))
-        flags = source.count("is_global: isGlobalBinding.value")
-        assert writes > 0
-        assert flags == writes, f"{writes} 处写入只带了 {flags} 个 is_global"
+        # 只认真正打到绑定接口的调用，并带上路径边界，避免把 `/bindings/batch`
+        # 或注释里的字符串算成一次写入。
+        pattern = re.compile(
+            r"axios\.(?:post|delete)\(\s*['\"]/api/portal/secrets/bindings(?:/batch)?['\"]"
+        )
+        calls = list(pattern.finditer(source))
+        assert calls, f"{self.PATH}: 没找到绑定写入调用"
+
+        problems: list[str] = []
+        for call in calls:
+            # 逐次调用按括号配对取出**本次的实参区间**再检查，而不是全局数 `is_global:`：
+            # 全局计数会把 GET 读路径里的 `is_global: Boolean(row.is_global)` 数进来；
+            # 退一步用「到下一个写入调用为止」切窗也不行——两次写入之间往往夹着 GET 映射
+            # （McpServerRegistry 里就有），一旦本次写入漏传，窗口里的读路径会把它掩盖成绿。
+            body = _call_arguments(source, call.start())
+            if not re.search(r"is_global:\s*\S", body):
+                line = source[: call.start()].count("\n") + 1
+                problems.append(f"{self.PATH}:{line} 的绑定写入没有显式 is_global")
+        assert not problems, (
+            "这些写入漏传 is_global，会落成个人绑定（只有管理员自己能用）：\n"
+            + "\n".join(problems)
+        )
 
     def test_computed_reads_scope_prop(self):
         assert "const isGlobalBinding = computed(() => props.scope === 'global')" in self._source()

@@ -14,8 +14,10 @@ pydantic 只在 tool_compat 自己的命名空间里找 ``Optional``，找不到
 from __future__ import annotations
 
 import json
+from typing import Annotated, Literal
 
 import pytest
+from pydantic import Field
 
 from app.services.ai.tools import tool_compat
 
@@ -71,10 +73,13 @@ async def test_function_tool_ainvoke_filters_unknown_arguments():
 
 
 def test_literal_and_annotated_field_descriptions_are_preserved():
-    """Annotated[..., Field(description=...)] 与 Literal 枚举在 JSON Schema 中必须保留。"""
-    from typing import Annotated, Literal
-    from pydantic import Field
+    """Annotated[..., Field(description=...)] 与 Literal 枚举在 JSON Schema 中必须保留。
 
+    `Annotated` / `Literal` / `Field` 必须**模块级导入**，不能写在函数体内：本文件有
+    ``from __future__ import annotations``，注解是字符串，``get_type_hints`` 只在函数
+    所在模块的全局命名空间里解析——写在函数里会解析失败、按设计降级成 ``str``，于是
+    schema 里没有 enum。真实工具（word_document_tool 等）都是模块级导入，这才是被测的写法。
+    """
     def _office_tool(
         action: Annotated[Literal["inspect", "read_content"], Field(description="要执行的操作")],
         limit: Annotated[int, Field(description="分页条数")] = 20,

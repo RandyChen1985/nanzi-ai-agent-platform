@@ -57,13 +57,28 @@ def test_reveal_only_in_injection_and_policy():
 
 
 def test_every_injection_site_registers_for_redaction():
-    """每个 reveal() 旁边都要有登记，否则那条链路的结果不会被打码。"""
+    """每个 reveal() 旁边都要有登记，否则那条链路的结果不会被打码。
+
+    只校验单向包含（每处 reveal 之后必须出现登记），不要求登记数与 reveal 数相等：
+    平台 MCP 巡检走 ``SecretResolver._decrypt`` 直接拿明文、并不经过 ``reveal()``，
+    但同样登记了掩码——那处多出来的登记是更安全的写法，不该被判红。
+    """
     source = (ROOT / "app/services/secrets/injection.py").read_text(encoding="utf-8")
 
     reveals = source.count(".reveal()")
-    registers = source.count("register_injected(plain)")
     assert reveals == 5, f"注入点数量变了（{reveals}），确认是否需要同步调整契约"
-    assert registers == reveals, f"有 {reveals} 处 reveal，却只有 {registers} 处登记"
+
+    problems: list[str] = []
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if ".reveal()" not in line or line.strip().startswith("#"):
+            continue
+        # 同一行紧跟，或紧接着的几行里登记（够覆盖「先取值再处理」的写法）
+        window = "\n".join(lines[index : index + 4])
+        if "register_injected(" not in window:
+            problems.append(f"app/services/secrets/injection.py:{index + 1}: {line.strip()[:70]}")
+
+    assert not problems, "这些 reveal() 之后没有登记掩码：\n" + "\n".join(problems)
 
 
 def test_script_channel_reveals_are_registered():

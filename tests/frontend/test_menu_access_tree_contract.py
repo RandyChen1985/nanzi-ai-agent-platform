@@ -24,7 +24,7 @@ CONSTANTS = ROOT / "frontend/src/constants/permissions.ts"
 USERS = ROOT / "frontend/src/views/Users.vue"
 SSR_SCRIPT = ROOT / "tests/frontend/menu_access_tree_ssr.cjs"
 
-from menu_tree_fixture import frontend_permission_tree  # noqa: E402
+from tests.frontend.menu_tree_fixture import frontend_permission_tree  # noqa: E402
 
 pytestmark = pytest.mark.no_infrastructure
 

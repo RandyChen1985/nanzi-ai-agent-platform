@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from known_failures import (
+from tests.known_failures import (
     CATEGORIES,
     load_known_failures,
     mark_known_failures,

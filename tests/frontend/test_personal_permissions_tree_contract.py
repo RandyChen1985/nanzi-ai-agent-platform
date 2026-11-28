@@ -27,7 +27,7 @@ TREE = ROOT / "frontend/src/components/personal/PersonalPermissionTree.vue"
 TREE_NODE = ROOT / "frontend/src/components/personal/PersonalPermissionTreeNode.vue"
 SSR_SCRIPT = ROOT / "tests/frontend/personal_permission_tree_ssr.cjs"
 
-from menu_tree_fixture import frontend_permission_tree  # noqa: E402
+from tests.frontend.menu_tree_fixture import frontend_permission_tree  # noqa: E402
 
 pytestmark = pytest.mark.no_infrastructure
 

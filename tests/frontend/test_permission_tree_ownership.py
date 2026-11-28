@@ -21,7 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
-from menu_tree_fixture import run_node  # noqa: E402  (需要在 rootdir 判定后导入)
+from tests.frontend.menu_tree_fixture import run_node  # noqa: E402  (需要在 rootdir 判定后导入)
 
 
 def _run(expression: str):
