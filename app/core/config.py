@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     DATABASE_POOL_TIMEOUT: int = 10
     # 建立 TCP 连接的超时（秒），MySQL(aiomysql) 与 PostgreSQL(psycopg) 都支持。
     DATABASE_CONNECT_TIMEOUT: int = 10
+    # 同步阻塞驱动（pymysql/psycopg 阻塞连接，如 APScheduler 的 SQLAlchemyJobStore）
+    # 单条语句的读/写超时（秒）。异步链路的等价保护是 TCP keepalive + 事件循环，
+    # 同步链路没有事件循环可打断，只能由驱动自己设超时：表被元数据锁挡住时（迁移脚本
+    # 的 ALTER 未提交），靠它把「无限期挂起」变成 N 秒后报错，由上层降级处理。
+    # 注意 libpq（PostgreSQL）没有 statement 级超时参数，pg 侧仅 connect_timeout 生效。
+    DATABASE_SYNC_READ_TIMEOUT: int = 15
     # TCP keepalive：aiomysql 0.3.x 的 connect() 没有 read_timeout 参数（那是
     # pymysql 的 API），半开连接无法靠「读超时」回收，只能让内核探测后断开。
     # 空闲 60s 开始探测，间隔 10s，连续 3 次无响应即关闭 socket；客户端 read 随即

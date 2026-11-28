@@ -1696,6 +1696,47 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
         )
 
 
+def _append_url_query(url: str, params: Dict[str, Any]) -> str:
+    """把驱动参数拼到 SQLAlchemy URL 的 query 上（已存在同名参数则不覆盖）。"""
+    query = url.split("?", 1)[1] if "?" in url else ""
+    existing_keys = {part.split("=", 1)[0] for part in query.split("&") if part}
+    extra = [
+        f"{key}={value}"
+        for key, value in params.items()
+        if key not in existing_keys and value is not None
+    ]
+    if not extra:
+        return url
+    separator = "&" if query else "?"
+    return f"{url}{separator}{'&'.join(extra)}"
+
+
+def _build_jobstore_url() -> str:
+    """给 APScheduler jobstore 的**同步**连接串补上驱动级超时。
+
+    为什么必须补：``SQLAlchemyJobStore`` 用的是同步 pymysql/psycopg，而
+    ``AsyncIOScheduler.start()`` 与随后每一次 ``add_job()`` 都在**事件循环线程里**
+    直接执行 SQL。两个坏处叠加起来就是「启动无声挂死」：
+
+    - 默认没有 connect/read 超时：主库不可达时 SYN 重传要挂 1~2 分钟；
+    - 同步执行会堵住事件循环，``asyncio.wait_for`` 的计时器根本轮不上，
+      上层再怎么加 deadline 都救不回来。
+
+    更常见也更隐蔽的一种卡法是「库是通的、但表被元数据锁挡住」：迁移脚本里的
+    ``ALTER TABLE`` 未提交时，jobstore 建表/写入等 MDL 会一直等下去，MySQL 默认
+    ``lock_wait_timeout`` 是一年，等于永久。补上 read/write 超时后，这类等待会变成
+    N 秒后的驱动异常，由 ``app/main.py`` lifespan 里已有的 ``except`` 降级成
+    「服务以无调度器状态运行」，而不是整个 API 起不来。
+    """
+    params: Dict[str, Any] = {"connect_timeout": settings.DATABASE_CONNECT_TIMEOUT}
+    if settings.normalized_database_type != "postgresql":
+        # pymysql 支持语句级读写超时；libpq（psycopg）没有对应参数，pg 侧只能靠
+        # connect_timeout + 服务端自身的 statement_timeout。
+        params["read_timeout"] = settings.DATABASE_SYNC_READ_TIMEOUT
+        params["write_timeout"] = settings.DATABASE_SYNC_READ_TIMEOUT
+    return _append_url_query(settings.DATABASE_SYNC_URL, params)
+
+
 class TaskSchedulerService:
     _instance = None
     _scheduler: Optional[AsyncIOScheduler] = None
@@ -1709,7 +1750,9 @@ class TaskSchedulerService:
         if self._scheduler and self._scheduler.running:
             return
 
-        db_url = settings.DATABASE_SYNC_URL
+        # jobstore 是同步驱动：连接串必须自带 connect/read 超时，否则库不可达或
+        # 表被元数据锁挡住时会在事件循环线程里无限期等待（详见 _build_jobstore_url）。
+        db_url = _build_jobstore_url()
         # Use a custom table name to ensure a clean slate and match project conventions
         job_stores = {
             # jobstore 是同步 engine，且会长期持有连接：MySQL 重启或 wait_timeout
@@ -1727,15 +1770,32 @@ class TaskSchedulerService:
         from pytz import timezone
         from app.services.platform_timezone import get_cached_platform_timezone, refresh_platform_timezone
 
+        # 这次读库是启动链上的第二个挂起点：它读 system_configs，库被元数据锁挡住时
+        # 会一直等下去。调用方（lifespan）虽然也有 deadline，但这里先自己掐表，
+        # 让「卡在读配置」这件事有独立的、语义明确的日志，而不是笼统的装载超时。
         try:
-            await refresh_platform_timezone()
+            await asyncio.wait_for(refresh_platform_timezone(), timeout=5)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "刷新平台时区超时（5s），调度器沿用上一次缓存的时区继续装载，"
+                "请检查主库 system_configs 是否被锁或不可达。"
+            )
         except Exception as exc:
             logger.warning("Failed to refresh platform timezone before scheduler start: %s", exc)
 
         tz = timezone(get_cached_platform_timezone())
 
-        self._scheduler = AsyncIOScheduler(jobstores=job_stores, timezone=tz)
-        self._scheduler.start()
+        # 先启动局部实例、成功后再挂到 self 上：start() 内部会同步建表（jobstore
+        # start），一旦它超时/报错，self._scheduler 保持 None，shutdown 路径不会再去
+        # 碰一个半初始化的调度器（sync shutdown 同样会同步访问 jobstore）。
+        scheduler = AsyncIOScheduler(jobstores=job_stores, timezone=tz)
+        boot_started = time.monotonic()
+        scheduler.start()
+        self._scheduler = scheduler
+        logger.info(
+            "⏱️ APScheduler 启动完成（jobstore 建连/建表就绪）耗时 %.2fs",
+            time.monotonic() - boot_started,
+        )
 
         # 注册系统日志与分区清理常驻任务，每日凌晨 2:00 运行
         self._scheduler.add_job(
