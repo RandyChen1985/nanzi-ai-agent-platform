@@ -1308,15 +1308,124 @@ const triggerBrandingIconUpload = () => {
   brandingIconInput.value?.click()
 }
 
+// Apple touch icon 规格：与 frontend/public/apple-touch-icon.png 保持一致的口径。
+// iOS 会自己给桌面图标套圆角并在外层垫黑底，透明四角会直接变成黑边，
+// 所以这里必须输出「满版渐变铺底 + 内容居中」的不透明方图。
+const APPLE_TOUCH_ICON_SIZE = 180
+const APPLE_TOUCH_ICON_CONTENT_RATIO = 0.72
+const APPLE_TOUCH_ICON_GRADIENT = ['#4c4ce6', '#4464ee'] as const
+// 源图不透明像素覆盖率高于这条线就认为它自带整块背景（如满版方形 logo / 圆角底板），
+// 此时按 cover 铺满，避免「渐变底 + 内缩的一张带底图标」叠出双层圆角。
+const APPLE_TOUCH_ICON_FULL_BLEED_RATIO = 0.55
+
+/**
+ * 估算源图的不透明像素覆盖率（0~1）：只用来判断「满版图」还是「孤立图标」。
+ *
+ * 缩到 64×64 采样即可，没必要按原尺寸逐像素；SVG 这类浏览器取不到像素尺寸时返回 0，
+ * 走保守的 contain 内缩分支。
+ */
+const measureOpaqueCoverage = (image: HTMLImageElement): number => {
+  try {
+    const probeSize = 64
+    const probe = document.createElement('canvas')
+    probe.width = probeSize
+    probe.height = probeSize
+    const probeCtx = probe.getContext('2d')
+    if (!probeCtx) return 0
+    probeCtx.drawImage(image, 0, 0, probeSize, probeSize)
+    const { data } = probeCtx.getImageData(0, 0, probeSize, probeSize)
+    let opaquePixels = 0
+    for (let index = 3; index < data.length; index += 4) {
+      if ((data[index] ?? 0) > 200) opaquePixels += 1
+    }
+    return opaquePixels / (probeSize * probeSize)
+  } catch {
+    // getImageData 在跨源污染的画布上会抛错；探针失败只影响排版策略，不该让上传失败
+    return 0
+  }
+}
+
+/**
+ * 把用户选的品牌图合成为 iOS 桌面图标（180×180 满版不透明 PNG）。
+ *
+ * 合成放在浏览器里做而不是后端：上传源可能是 SVG，后端要渲染 SVG 就得引 cairosvg/Pillow
+ * 这类依赖和系统库；浏览器本身就能渲染 SVG，顺带零新增运行时依赖。
+ * 合成失败返回 null——调用方只上传 favicon，桌面图标由后端路由回退默认图。
+ */
+const buildAppleTouchIconBlob = async (source: Blob): Promise<Blob | null> => {
+  if (typeof document === 'undefined') return null
+  const objectUrl = URL.createObjectURL(source)
+  try {
+    const image = await new Promise<HTMLImageElement | null>((resolve) => {
+      const element = new Image()
+      element.onload = () => resolve(element)
+      element.onerror = () => resolve(null)
+      element.src = objectUrl
+    })
+    if (!image) return null
+
+    const canvas = document.createElement('canvas')
+    canvas.width = APPLE_TOUCH_ICON_SIZE
+    canvas.height = APPLE_TOUCH_ICON_SIZE
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+
+    const gradient = ctx.createLinearGradient(0, 0, APPLE_TOUCH_ICON_SIZE, APPLE_TOUCH_ICON_SIZE)
+    gradient.addColorStop(0, APPLE_TOUCH_ICON_GRADIENT[0])
+    gradient.addColorStop(1, APPLE_TOUCH_ICON_GRADIENT[1])
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, APPLE_TOUCH_ICON_SIZE, APPLE_TOUCH_ICON_SIZE)
+
+    const naturalWidth = image.naturalWidth || image.width || 0
+    const naturalHeight = image.naturalHeight || image.height || 0
+    const fullBleed = measureOpaqueCoverage(image) >= APPLE_TOUCH_ICON_FULL_BLEED_RATIO
+    // 满版图用 cover 铺满（自带圆角/底板的图透明角直接透出渐变底，不会出现内层方块）；
+    // 孤立的透明图标用 contain 内缩到内容框。
+    // 没有内嵌尺寸的 SVG 在部分浏览器里 naturalWidth 为 0：按内容框铺满，
+    // 仍然保证结果是不透明正方形，不至于画出一张空白图。
+    const box = APPLE_TOUCH_ICON_SIZE * APPLE_TOUCH_ICON_CONTENT_RATIO
+    const scale = naturalWidth > 0 && naturalHeight > 0
+      ? (fullBleed
+        ? Math.max(APPLE_TOUCH_ICON_SIZE / naturalWidth, APPLE_TOUCH_ICON_SIZE / naturalHeight)
+        : Math.min(box / naturalWidth, box / naturalHeight))
+      : 1
+    const drawWidth = naturalWidth > 0 ? naturalWidth * scale : box
+    const drawHeight = naturalHeight > 0 ? naturalHeight * scale : box
+    ctx.drawImage(
+      image,
+      (APPLE_TOUCH_ICON_SIZE - drawWidth) / 2,
+      (APPLE_TOUCH_ICON_SIZE - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    )
+
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 const uploadBrandingIconDirectly = async (fileOrBlob: File | Blob, filename = 'icon.png') => {
   brandingIconUploading.value = true
   try {
-    const form = new FormData()
     const uploadFile = fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], filename, { type: fileOrBlob.type })
+    const form = new FormData()
     form.append('file', uploadFile)
+    // 桌面图标（Apple touch icon）另存一份：iOS 只抓 /apple-touch-icon.png，
+    // 且必须是满版不透明的 180×180，不能直接复用带透明底的 favicon。
+    const appleTouchBlob = await buildAppleTouchIconBlob(uploadFile)
+    if (appleTouchBlob) {
+      form.append('apple_touch_icon', new File([appleTouchBlob], 'apple-touch-icon.png', { type: 'image/png' }))
+    }
     const res = await axios.post('/api/portal/system/branding/icon', form)
     brandingConfig.value.icon_url = res.data.icon_url
-    showToast('图标上传成功', 'success')
+    if (appleTouchBlob) {
+      showToast('图标上传成功（iPhone 桌面图标需重新添加到主屏幕才会更新）', 'success')
+    } else {
+      showToast('图标上传成功，但桌面图标合成失败，iPhone 桌面将沿用默认图标', 'warning')
+    }
   } catch (err: any) {
     showToast(err.response?.data?.detail || '上传失败', 'error')
   } finally {
@@ -4927,7 +5036,7 @@ onUnmounted(() => {
                   />
                 </div>
               </div>
-              <p class="text-xs text-gray-400 mt-1">用于登录页、侧栏左上角与浏览器标签图标（PNG/JPEG/WebP/SVG，最大 512KB）</p>
+              <p class="text-xs text-gray-400 mt-1">用于登录页、侧栏左上角、浏览器标签与 iPhone 桌面图标（PNG/JPEG/WebP/SVG，最大 512KB）；桌面图标会上传时自动生成满版不透明版本，但 iPhone 上需要先删除旧图标再重新「添加到主屏幕」才会更新</p>
             </div>
 
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-2 border-t border-gray-100">

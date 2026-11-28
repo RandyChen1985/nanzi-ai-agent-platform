@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="512x512" href="/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!--
+      主屏 Web App：从桌面图标打开时全屏、不再出 Safari 地址栏。
+      桌面图标本身由后端 /apple-touch-icon.png 按品牌开关分流（前端改不了 iOS 抓取时机），
+      桌面名称与状态栏颜色由 useBranding 跟随品牌配置运行时覆盖。
+    -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="NanZi AI Agent" />
+    <meta name="theme-color" content="#4c4ce6" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"

@@ -685,6 +685,47 @@ branding_dir = os.path.join(base_dir, "data", "branding")
 app.mount("/branding", StaticFiles(directory=branding_dir), name="branding")
 
 
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def serve_apple_touch_icon():
+    """iOS「添加到主屏幕」的桌面图标：品牌自定义时返回上传的合成图，否则回退内置默认图。
+
+    ``index.html`` 里这个路径是硬编码的，iOS 只在用户点「添加到主屏幕」那一刻抓一次，
+    不会跟随前端对 ``link[rel="icon"]`` 的运行时改写——所以必须由后端带头做分流，
+    否则管理员换了品牌 Logo 之后，新添加到桌面的图标仍是平台默认的那个。
+
+    自定义图只在「品牌已启用 + ``icon_url`` 指向上传文件 + 合成图确实存在」三者同时成立时
+    才返回：``icon_url`` 被手填成外链时无法保证满版不透明，宁可回退默认图，也不要把一张
+    带透明黑角的图送到桌面上。
+    """
+    from app.services.branding_settings_service import (
+        APPLE_TOUCH_ICON_FILENAME,
+        BrandingSettingsService,
+    )
+
+    default_icon = os.path.join(frontend_dist, "apple-touch-icon.png")
+    custom_icon = os.path.join(branding_dir, APPLE_TOUCH_ICON_FILENAME)
+
+    enabled = False
+    icon_url = ""
+    try:
+        raw = await BrandingSettingsService.get_raw_settings()
+        enabled = bool(raw.get("enabled"))
+        icon_url = str(raw.get("icon_url") or "")
+    except Exception:  # 配置读取异常按默认图标兜底，不要 500 让 iOS 什么都抓不到
+        enabled = False
+
+    target = BrandingSettingsService.resolve_apple_touch_icon_path(
+        enabled=enabled,
+        icon_url=icon_url,
+        custom_icon_path=custom_icon,
+        default_icon_path=default_icon,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Not Found")
+    # no-cache 只做强制回源校验：桌面图标由 iOS 缓存，改图后仍需重新「添加到主屏幕」。
+    return FileResponse(target, media_type="image/png", headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
     # Skip API routes (handled above)

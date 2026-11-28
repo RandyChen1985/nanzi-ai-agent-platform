@@ -67,8 +67,13 @@ def test_ready_flag_gates_first_paint_and_favicon_uses_snapshot() -> None:
     source = _read(USE_BRANDING)
 
     assert "brandingReady.value = true" in source
-    # 有快照时模块加载阶段就把 favicon 设好（标签页图标不闪）
-    assert "if (cachedBranding) applyFavicon(cachedBranding.icon_url)" in source
+    # 有快照时模块加载阶段就把 favicon 设好（标签页图标不闪）；
+    # 同一次快照里一并覆盖主屏 Web App 的桌面名称（apple-mobile-web-app-title）
+    assert "if (cachedBranding) {" in source
+    snapshot_block = source[source.index("if (cachedBranding) {"):]
+    snapshot_block = snapshot_block[: snapshot_block.index("}") + 1]
+    assert "applyFavicon(cachedBranding.icon_url)" in snapshot_block
+    assert "applyHomeScreenTitle()" in snapshot_block
     # 对外暴露，供页面用 v-if 判据
     assert "brandingReady," in source
 

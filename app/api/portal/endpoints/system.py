@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.config_service import ConfigService
 from app.schemas.branding import BrandingSettingsUpdate
-from app.services.branding_settings_service import BrandingSettingsService
+from app.services.branding_settings_service import (
+    APPLE_TOUCH_ICON_FILENAME,
+    BRANDING_UPLOAD_DIR,
+    BrandingSettingsService,
+)
 from app.services.ai.ragflow_client import RagFlowClient
 from app.schemas.system_config import ConfigHistoryItem
 import logging
@@ -24,13 +28,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-BRANDING_UPLOAD_DIR = "data/branding"
 ALLOWED_ICON_TYPES = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
     "image/webp": ".webp",
     "image/svg+xml": ".svg",
 }
+# Apple touch icon 由前端 canvas 合成为 PNG 后随原图提交，固定 image/png。
+ALLOWED_APPLE_TOUCH_ICON_TYPES = {"image/png": ".png"}
 MAX_ICON_BYTES = 512 * 1024
 
 @router.get("/configs/{key}/history", response_model=List[ConfigHistoryItem])
@@ -1098,9 +1103,16 @@ async def update_branding_settings(
 @router.post("/branding/icon")
 async def upload_branding_icon(
     file: UploadFile = File(...),
+    apple_touch_icon: Optional[UploadFile] = File(None),
     user: Dict = Depends(require_permission("element", "element:system:config_save")),
 ):
-    """上传品牌 Logo / Favicon（PNG/JPEG/WebP/SVG，最大 512KB）。"""
+    """上传品牌 Logo / Favicon（PNG/JPEG/WebP/SVG，最大 512KB）。
+
+    可同时提交 ``apple_touch_icon``：前端用 canvas 合成的 180×180 满版不透明 PNG，
+    专供 iOS「添加到主屏幕」使用。它是**可选**的——SVG（或浏览器合成失败）时前端
+    不传，此时会删掉上一次的自定义桌面图标，让 `/apple-touch-icon.png` 回退默认图，
+    而不是让换了品牌的实例继续挂着上一家的桌面图标。
+    """
     content_type = (file.content_type or "").lower()
     ext = ALLOWED_ICON_TYPES.get(content_type)
     if not ext:
@@ -1110,14 +1122,34 @@ async def upload_branding_icon(
     if len(data) > MAX_ICON_BYTES:
         raise HTTPException(status_code=400, detail="图片大小不能超过 512KB")
 
+    apple_touch_data: Optional[bytes] = None
+    if apple_touch_icon is not None:
+        touch_type = (apple_touch_icon.content_type or "").lower()
+        if touch_type not in ALLOWED_APPLE_TOUCH_ICON_TYPES:
+            raise HTTPException(status_code=400, detail="桌面图标必须是 PNG 图片")
+        apple_touch_data = await apple_touch_icon.read()
+        if len(apple_touch_data) > MAX_ICON_BYTES:
+            raise HTTPException(status_code=400, detail="桌面图标大小不能超过 512KB")
+
     os.makedirs(BRANDING_UPLOAD_DIR, exist_ok=True)
     filename = f"icon{ext}"
     save_path = os.path.join(BRANDING_UPLOAD_DIR, filename)
     with open(save_path, "wb") as f:
         f.write(data)
 
+    apple_touch_path = os.path.join(BRANDING_UPLOAD_DIR, APPLE_TOUCH_ICON_FILENAME)
+    if apple_touch_data is not None:
+        with open(apple_touch_path, "wb") as f:
+            f.write(apple_touch_data)
+    elif os.path.isfile(apple_touch_path):
+        try:
+            os.remove(apple_touch_path)
+        except OSError as exc:
+            # 删不掉不影响主流程：路由侧还会校验文件是否属于当前品牌，最坏是多一张旧图
+            logging.warning("Failed to remove stale apple touch icon %s: %s", apple_touch_path, exc)
+
     icon_url = f"/branding/{filename}?t={int(time.time())}"
-    return {"icon_url": icon_url}
+    return {"icon_url": icon_url, "apple_touch_icon": bool(apple_touch_data)}
 
 
 @router.post("/branding/icon/reset")
@@ -1126,8 +1158,9 @@ async def reset_branding_icon(
 ):
     """还原品牌 Logo / Favicon 为平台默认图标，并清理已上传的自定义图标文件。"""
     removed: List[str] = []
-    for ext in sorted(set(ALLOWED_ICON_TYPES.values())):
-        filename = f"icon{ext}"
+    filenames = [f"icon{ext}" for ext in sorted(set(ALLOWED_ICON_TYPES.values()))]
+    filenames.append(APPLE_TOUCH_ICON_FILENAME)
+    for filename in filenames:
         path = os.path.join(BRANDING_UPLOAD_DIR, filename)
         if not os.path.isfile(path):
             continue
