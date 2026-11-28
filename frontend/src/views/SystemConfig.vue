@@ -20,6 +20,10 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import ModelSelect from '../components/common/ModelSelect.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
+import SandboxInstancesModal, {
+  type SandboxAdminBackend,
+  type SandboxAdminSummary,
+} from '../components/system/SandboxInstancesModal.vue'
 import Switch from '../components/Switch.vue'
 import { copyToClipboard } from '../utils/clipboard'
 import { useRouter, useRoute } from 'vue-router'
@@ -410,6 +414,85 @@ const copyDockerPrebuildLogs = async () => {
 
 const targetSandboxPolicy = () =>
   configGroups.value?.sandbox?.find(x => x.key === 'sandbox_policy')?.value ?? 'local'
+
+const sandboxManageBackend = computed<SandboxAdminBackend | null>(() => {
+  const p = targetSandboxPolicy()
+  return p === 'docker' || p === 'k8s' ? p : null
+})
+
+const sandboxOrphanReconcileEnabled = computed(() => {
+  const raw = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_orphan_reconcile')?.value
+  if (raw === undefined || raw === null || raw === '') return true
+  return ['true', '1', 'yes', 'on'].includes(String(raw).trim().toLowerCase())
+})
+
+const sandboxInstancesModalOpen = ref(false)
+const sandboxInstancesSummaryLoading = ref(false)
+const sandboxInstancesSummary = ref<{
+  backend: SandboxAdminBackend | null
+  available: boolean
+  scopeLabel: string
+  summary: SandboxAdminSummary
+}>({
+  backend: null,
+  available: false,
+  scopeLabel: '',
+  summary: { all: 0, managed: 0, orphan: 0, zombie: 0 },
+})
+let sandboxSummarySeq = 0
+
+const fetchSandboxInstancesSummary = async () => {
+  // 与其它沙箱管理动作同权：无 element:system:config_save 时直接短路，避免静默 403
+  if (!canSave) return
+  const backend = sandboxManageBackend.value
+  if (!backend) return
+  const seq = ++sandboxSummarySeq
+  sandboxInstancesSummaryLoading.value = true
+  try {
+    const res = await axios.get('/api/v1/admin/sandbox/instances', {
+      params: { backend, include_stats: false },
+    })
+    if (seq !== sandboxSummarySeq) return
+    const data = res.data?.data ?? res.data
+    sandboxInstancesSummary.value = {
+      backend,
+      available: Boolean(data?.available),
+      scopeLabel: data?.scope_label || '',
+      summary: data?.summary ?? { all: 0, managed: 0, orphan: 0, zombie: 0 },
+    }
+  } catch {
+    if (seq !== sandboxSummarySeq) return
+    sandboxInstancesSummary.value = {
+      backend,
+      available: false,
+      scopeLabel: '',
+      summary: { all: 0, managed: 0, orphan: 0, zombie: 0 },
+    }
+  } finally {
+    if (seq === sandboxSummarySeq) {
+      sandboxInstancesSummaryLoading.value = false
+    }
+  }
+}
+
+const openSandboxInstancesModal = () => {
+  if (!canSave || !sandboxManageBackend.value) return
+  sandboxInstancesModalOpen.value = true
+}
+
+const handleSandboxSummaryChange = (payload: {
+  backend: SandboxAdminBackend
+  summary: SandboxAdminSummary
+  available: boolean
+  scopeLabel: string
+}) => {
+  sandboxInstancesSummary.value = {
+    backend: payload.backend,
+    available: payload.available,
+    scopeLabel: payload.scopeLabel,
+    summary: payload.summary,
+  }
+}
 
 /** 平台后端进程运行环境：docker=部署在容器内，host=运行在宿主机（由后端动态探测注入） */
 const runtimeEnv = computed(() =>
@@ -838,6 +921,19 @@ const realizedActiveCategory = computed(() => {
   // 缺省成空串表示「没有可展示的分组」
   return cats[0] ?? ''
 })
+
+watch(
+  [activeTab, realizedActiveCategory, sandboxManageBackend],
+  ([tab, cat, backend]) => {
+    if (tab === 'configs' && cat === 'sandbox' && backend && canSave) {
+      fetchSandboxInstancesSummary()
+    } else if (!backend) {
+      ++sandboxSummarySeq
+      sandboxInstancesSummaryLoading.value = false
+    }
+  },
+  { immediate: true },
+)
 /**
  * 把当前分组卡片滚到它所在滚动容器的顶部。
  *
@@ -1579,6 +1675,11 @@ const fetchConfigs = async () => {
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
               item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
+            }
+            if (item.key === 'sandbox_idle_time') {
+              // 库里的描述只说「超过该时长自动关闭」，没提被会话引用时阈值会放宽，导致管理员在
+              // 沙箱实例面板看到「60 分钟后空闲回收」而配置写 15，误以为配置没生效。这里补上口径。
+              item.description = `${item.description || ''} 注意：仍被会话持有引用（进程受管）的沙箱，空闲阈值按 4 倍放宽（如设 15 分钟则实际约 60 分钟回收），引用释放后回到该值；沙箱实例面板会标出当前生效的倍数。`.trim()
             }
         })
     }
@@ -5278,6 +5379,20 @@ onUnmounted(() => {
                      </div>
                      <span class="ml-auto shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500" :title="`共 ${totalConfigCountFor(String(category))} 项配置`">{{ totalConfigCountFor(String(category)) }} 项</span>
                      <button
+                       v-if="String(category) === 'sandbox' && canSave && sandboxManageBackend"
+                       type="button"
+                       class="ml-3 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-white px-3 py-1 text-xs font-medium text-primary shadow-sm transition-colors hover:bg-primary/5"
+                       @click="openSandboxInstancesModal"
+                     >
+                       <ServerStackIcon v-if="sandboxManageBackend === 'k8s'" class="h-3.5 w-3.5" />
+                       <CubeIcon v-else class="h-3.5 w-3.5" />
+                       <span>{{ sandboxManageBackend === 'k8s' ? '管理 K8s Pod' : '管理 Docker 容器' }}</span>
+                       <span
+                         v-if="sandboxInstancesSummary.backend === sandboxManageBackend && sandboxInstancesSummary.available"
+                         class="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums text-primary"
+                       >{{ sandboxInstancesSummary.summary.all }}</span>
+                     </button>
+                     <button
                        v-if="String(category) === 'email' && canSave"
                        type="button"
                        class="ml-3 shrink-0 rounded-lg border border-primary/30 bg-white px-3 py-1 text-xs font-medium text-primary shadow-sm transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
@@ -5651,6 +5766,54 @@ onUnmounted(() => {
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                 切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、k8s、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
                              </p>
+
+                             <!-- Docker / K8s 沙箱实例运行态概览与管理弹层入口（与保存配置同权） -->
+                             <div
+                               v-if="canSave && (item.value === 'docker' || item.value === 'k8s')"
+                               class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 border-l-[3px] bg-gray-50/70 px-3.5 py-2.5"
+                               :class="(sandboxInstancesSummary.backend === item.value && (sandboxInstancesSummary.summary.orphan + sandboxInstancesSummary.summary.zombie) > 0) ? 'border-l-amber-500' : 'border-l-primary'"
+                             >
+                               <div class="min-w-0 space-y-1">
+                                 <div class="flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-800">
+                                   <span>{{ item.value === 'k8s' ? 'Kubernetes 沙箱 Pod 运行态' : 'Docker 沙箱容器运行态' }}</span>
+                                   <span
+                                     v-if="sandboxInstancesSummary.backend === item.value && sandboxInstancesSummary.scopeLabel"
+                                     class="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
+                                   >{{ sandboxInstancesSummary.scopeLabel }}</span>
+                                 </div>
+                                 <div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-gray-600">
+                                   <template v-if="sandboxInstancesSummaryLoading && sandboxInstancesSummary.backend !== item.value">
+                                     <span class="text-gray-400">正在拉取实时实例数量…</span>
+                                   </template>
+                                   <template v-else-if="sandboxInstancesSummary.backend === item.value && sandboxInstancesSummary.available">
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                                       受管运行 <strong class="tabular-nums text-gray-900">{{ sandboxInstancesSummary.summary.managed }}</strong>
+                                     </span>
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                       孤儿残留 <strong class="tabular-nums" :class="sandboxInstancesSummary.summary.orphan > 0 ? 'text-amber-600' : 'text-gray-900'">{{ sandboxInstancesSummary.summary.orphan }}</strong>
+                                     </span>
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                                       僵死异常 <strong class="tabular-nums" :class="sandboxInstancesSummary.summary.zombie > 0 ? 'text-rose-600' : 'text-gray-900'">{{ sandboxInstancesSummary.summary.zombie }}</strong>
+                                     </span>
+                                   </template>
+                                   <template v-else>
+                                     <span class="text-gray-500">可查看全部运行中/孤儿/僵死沙箱，支持日志排查、手动 Kill 与重置</span>
+                                   </template>
+                                 </div>
+                               </div>
+                               <button
+                                 type="button"
+                                 class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-primary-dark"
+                                 @click="openSandboxInstancesModal"
+                               >
+                                 <ServerStackIcon v-if="item.value === 'k8s'" class="h-3.5 w-3.5" />
+                                 <CubeIcon v-else class="h-3.5 w-3.5" />
+                                 <span>{{ item.value === 'k8s' ? '查看与管理沙箱 Pod' : '查看与管理沙箱容器' }}</span>
+                               </button>
+                             </div>
 
                              <div v-if="item.value === 'k8s'" class="mt-3 text-xs bg-sky-50/70 p-3.5 rounded-xl border border-sky-100 leading-relaxed space-y-3">
                                  <div class="space-y-1">
@@ -8273,6 +8436,16 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <SandboxInstancesModal
+      v-if="sandboxManageBackend"
+      :show="sandboxInstancesModalOpen"
+      :backend="sandboxManageBackend"
+      :can-manage="canSave"
+      :orphan-reconcile-enabled="sandboxOrphanReconcileEnabled"
+      @close="sandboxInstancesModalOpen = false"
+      @summary-change="handleSandboxSummaryChange"
+    />
 
     <ChatTour
       ref="sysTourRef"

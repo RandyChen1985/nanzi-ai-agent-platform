@@ -855,3 +855,158 @@ async def check_k8s_rbac_endpoint(
         message=result.get("message") or "success",
     )
 
+
+class AdminSandboxBatchRequest(BaseModel):
+    """管理员批量 Kill / 重启沙箱实例请求。"""
+
+    backend: Literal["docker", "k8s", "auto"] = "auto"
+    target_ids: list[str]
+
+
+class AdminSandboxCleanupStaleRequest(BaseModel):
+    """管理员一键清理孤儿/僵死沙箱请求。"""
+
+    backend: Literal["docker", "k8s", "auto"] = "auto"
+    include_running_orphans: bool = True
+
+
+@router.get(
+    "/admin/sandbox/instances",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="管理员查看全部 Docker/K8s 沙箱实例与状态汇总",
+)
+async def list_admin_sandbox_instances_endpoint(
+    backend: Literal["docker", "k8s", "auto"] = Query("auto"),
+    include_stats: bool = Query(False, description="是否并发拉取实时 CPU/内存/PIDs 资源占用"),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
+):
+    from app.services.ai.runtime.agentscope.sandbox_admin import (
+        SandboxAdminTargetError,
+        list_admin_sandboxes,
+    )
+
+    try:
+        data = await list_admin_sandboxes(
+            backend=backend,
+            include_stats=include_stats,
+        )
+    except SandboxAdminTargetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return StandardResponse(data=data, message="success")
+
+
+@router.get(
+    "/admin/sandbox/instances/{target_id}/detail",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="管理员查看单个沙箱实例详情与最近日志",
+)
+async def get_admin_sandbox_instance_detail_endpoint(
+    target_id: str,
+    backend: Literal["docker", "k8s", "auto"] = Query("auto"),
+    tail: int = Query(100, ge=1, le=500),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
+):
+    from app.services.ai.runtime.agentscope.sandbox_admin import (
+        SandboxAdminTargetError,
+        get_admin_sandbox_detail,
+    )
+
+    try:
+        data = await get_admin_sandbox_detail(
+            backend=backend,
+            target_id=target_id,
+            tail=tail,
+        )
+    except SandboxAdminTargetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return StandardResponse(data=data, message="success")
+
+
+@router.post(
+    "/admin/sandbox/instances/kill",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="管理员强制 Kill 并销毁指定沙箱实例",
+)
+async def kill_admin_sandbox_instances_endpoint(
+    body: AdminSandboxBatchRequest,
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
+):
+    from app.services.ai.runtime.agentscope.sandbox_admin import (
+        SandboxAdminTargetError,
+        kill_admin_sandboxes,
+    )
+
+    if not body.target_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个沙箱实例")
+    if len(body.target_ids) > 200:
+        raise HTTPException(status_code=400, detail="单次批量操作最多支持 200 台沙箱实例")
+    try:
+        data = await kill_admin_sandboxes(
+            backend=body.backend,
+            target_ids=body.target_ids,
+        )
+    except SandboxAdminTargetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return StandardResponse(
+        data=data,
+        message=f"销毁完成：成功 {data['succeeded']} 台，失败 {data['failed']} 台",
+    )
+
+
+@router.post(
+    "/admin/sandbox/instances/restart",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="管理员重置指定沙箱实例（销毁旧容器/Pod 并清理缓存，下次自动重建）",
+)
+async def restart_admin_sandbox_instances_endpoint(
+    body: AdminSandboxBatchRequest,
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
+):
+    from app.services.ai.runtime.agentscope.sandbox_admin import (
+        SandboxAdminTargetError,
+        restart_admin_sandboxes,
+    )
+
+    if not body.target_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个沙箱实例")
+    if len(body.target_ids) > 200:
+        raise HTTPException(status_code=400, detail="单次批量操作最多支持 200 台沙箱实例")
+    try:
+        data = await restart_admin_sandboxes(
+            backend=body.backend,
+            target_ids=body.target_ids,
+        )
+    except SandboxAdminTargetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return StandardResponse(
+        data=data,
+        message=f"重置完成：成功 {data['succeeded']} 台，失败 {data['failed']} 台",
+    )
+
+
+@router.post(
+    "/admin/sandbox/instances/cleanup-stale",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="管理员一键清理孤儿与僵死沙箱实例",
+)
+async def cleanup_stale_admin_sandbox_instances_endpoint(
+    body: AdminSandboxCleanupStaleRequest,
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
+):
+    from app.services.ai.runtime.agentscope.sandbox_admin import (
+        SandboxAdminTargetError,
+        cleanup_stale_admin_sandboxes,
+    )
+
+    try:
+        data = await cleanup_stale_admin_sandboxes(
+            backend=body.backend,
+            include_running_orphans=body.include_running_orphans,
+        )
+    except SandboxAdminTargetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return StandardResponse(
+        data=data,
+        message=f"一键清理完成：成功回收 {data['succeeded']} 台，失败 {data['failed']} 台",
+    )
+
