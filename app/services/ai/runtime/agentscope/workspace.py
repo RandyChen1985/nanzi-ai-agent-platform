@@ -4404,11 +4404,19 @@ async def _evict_cached_workspaces_on_shutdown(
     evict_fn: Callable[..., Awaitable[int]],
     *,
     backend_label: str,
-    timeout_seconds: float = SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
 ) -> None:
-    """并发关闭本进程缓存的沙箱，单台带超时保护，避免串行清理超过容器退出宽限期。"""
+    """并发关闭本进程缓存的沙箱，单台带超时保护，避免串行清理超过容器退出宽限期。
+
+    ``timeout_seconds`` 默认「调用时」再取 :data:`SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS`，
+    不能写成 ``timeout_seconds: float = SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS``：默认参数
+    在函数定义时求值，会把导入瞬间的常量钉死，之后改常量、改配置乃至测试 monkeypatch
+    都不再生效（曾导致关停并发保护用例实测卡满 5s 才返回）。
+    """
     if not cache_keys:
         return
+    if timeout_seconds is None:
+        timeout_seconds = SANDBOX_SHUTDOWN_CLOSE_TIMEOUT_SECONDS
 
     async def _evict_one(key: str) -> None:
         try:
