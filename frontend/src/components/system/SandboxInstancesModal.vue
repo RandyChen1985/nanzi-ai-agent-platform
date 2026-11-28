@@ -867,7 +867,7 @@ onUnmounted(() => {
               <MagnifyingGlassIcon class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <input
                 v-model="searchKeyword"
-                type="text"
+                type="search"
                 placeholder="搜索用户名、容器/Pod 名、ID 或技能令牌..."
                 class="h-8 w-full rounded-lg border border-gray-200 bg-white py-1 pl-8 pr-3 text-xs text-gray-800 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
