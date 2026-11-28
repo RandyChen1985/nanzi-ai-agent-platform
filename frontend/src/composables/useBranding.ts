@@ -77,14 +77,36 @@ export function applyDocumentTitle(pageTitle?: string) {
   document.title = pageTitle ? `${pageTitle} - ${name}` : name
 }
 
+/**
+ * 主屏 Web App 的桌面名称跟随品牌。
+ *
+ * iOS 加到主屏幕时读 `apple-mobile-web-app-title`（不再回退 `<title>`），而这个 meta
+ * 是 `index.html` 里的静态值；管理员改了产品名后，新添加的桌面图标仍会叫默认名。
+ * 这里只覆盖名称：桌面图标由后端 `/apple-touch-icon.png` 分流，前端改不了抓取时机。
+ */
+function applyHomeScreenTitle() {
+  if (typeof document === 'undefined') return
+  const name = branding.value.product_name || DEFAULT_BRANDING.product_name
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]')
+  if (!meta) {
+    meta = document.createElement('meta')
+    meta.name = 'apple-mobile-web-app-title'
+    document.head.appendChild(meta)
+  }
+  meta.content = name
+}
+
 export function resolveRepoUrl(): string {
   if (branding.value.hide_version_link) return ''
   return DEFAULT_REPO_URL
 }
 
-// 有快照时立刻设好 tab 图标：否则浏览器会先用 index.html 里的默认 favicon，
-// 等接口回来才换（和页面里的 logo 是同一类闪烁，只是发生在标签页上）。
-if (cachedBranding) applyFavicon(cachedBranding.icon_url)
+// 有快照时立刻设好 tab 图标与桌面名称：否则浏览器会先用 index.html 里的默认值，
+// 等接口回来才换（和页面里的 logo 是同一类闪烁，只是发生在标签页与桌面图标上）。
+if (cachedBranding) {
+  applyFavicon(cachedBranding.icon_url)
+  applyHomeScreenTitle()
+}
 
 export async function loadBranding(force = false): Promise<PublicBranding> {
   if (!force && loadPromise) return loadPromise
@@ -103,6 +125,7 @@ export async function loadBranding(force = false): Promise<PublicBranding> {
       // 无论成功还是失败，都已经有了「本次会话能确定的值」，可以画 logo 了
       brandingReady.value = true
       applyFavicon(branding.value.icon_url)
+      applyHomeScreenTitle()
       applyDocumentTitle()
     }
     return branding.value

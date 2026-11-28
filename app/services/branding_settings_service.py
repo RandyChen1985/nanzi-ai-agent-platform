@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -14,6 +15,17 @@ _PROMPT_BRAND_NAME_TTL_SECONDS = 60.0
 DEFAULT_PRODUCT_NAME = "NanZi AI Agent"
 DEFAULT_LOGIN_SUBTITLE = "Your Intelligent Agent Platform"
 DEFAULT_ICON_URL = "/favicon.svg"
+
+# 品牌图标上传目录（与 main.py 里 `/branding` 静态挂载同源）。
+BRANDING_UPLOAD_DIR = "data/branding"
+
+# Apple touch icon 单独一份文件。
+#
+# iOS「添加到主屏幕」只认 index.html 里硬编码的 `/apple-touch-icon.png`，不会跟随
+# `link[rel="icon"]` 的运行时改写；而它又要求满版不透明（iOS 自己套圆角、垫黑底，
+# 透明四角在桌面上就是黑边）。所以品牌自定义图标上传时，由前端在浏览器里合成为
+# 180×180 满版 PNG 一起提交，落盘成这个文件，再由后端的固定路径路由按品牌开关分流。
+APPLE_TOUCH_ICON_FILENAME = "icon-apple-touch.png"
 DEFAULT_AGENT_NAME = "NanZi · AI"
 # 历史默认名：读取时映射到新兜底，不写库
 _LEGACY_DEFAULT_AGENT_NAMES = frozenset({"南孜智能助手", "南孜 · 智能助手"})
@@ -150,6 +162,25 @@ class BrandingSettingsService:
             "copyright_text": raw["copyright_text"],
             "default_agent_name": _normalize_default_agent_name(raw["default_agent_name"]),
         }
+
+    @staticmethod
+    def resolve_apple_touch_icon_path(
+        *,
+        enabled: bool,
+        icon_url: str,
+        custom_icon_path: str,
+        default_icon_path: str,
+    ) -> Optional[str]:
+        """决定 ``/apple-touch-icon.png`` 该回哪张图；两张都不可用时返回 ``None``。
+
+        只有「品牌已启用 + ``icon_url`` 指向上传文件 + 合成图确实存在」三条同时成立才用自定义图：
+        ``icon_url`` 被手填成外链时无法保证满版不透明，宁可回退默认图，也不要把一张透明四角的
+        图送到 iOS 桌面上（iOS 会给透明区域垫黑底）。
+        """
+        uses_uploaded_icon = bool(enabled) and (icon_url or "").strip().startswith("/branding/icon.")
+        if uses_uploaded_icon and os.path.isfile(custom_icon_path):
+            return custom_icon_path
+        return default_icon_path if os.path.isfile(default_icon_path) else None
 
     @classmethod
     async def reset_icon(cls, changed_by: str = "system") -> Dict[str, Any]:

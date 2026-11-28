@@ -20,6 +20,10 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import ModelSelect from '../components/common/ModelSelect.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
+import SandboxInstancesModal, {
+  type SandboxAdminBackend,
+  type SandboxAdminSummary,
+} from '../components/system/SandboxInstancesModal.vue'
 import Switch from '../components/Switch.vue'
 import { copyToClipboard } from '../utils/clipboard'
 import { useRouter, useRoute } from 'vue-router'
@@ -410,6 +414,85 @@ const copyDockerPrebuildLogs = async () => {
 
 const targetSandboxPolicy = () =>
   configGroups.value?.sandbox?.find(x => x.key === 'sandbox_policy')?.value ?? 'local'
+
+const sandboxManageBackend = computed<SandboxAdminBackend | null>(() => {
+  const p = targetSandboxPolicy()
+  return p === 'docker' || p === 'k8s' ? p : null
+})
+
+const sandboxOrphanReconcileEnabled = computed(() => {
+  const raw = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_orphan_reconcile')?.value
+  if (raw === undefined || raw === null || raw === '') return true
+  return ['true', '1', 'yes', 'on'].includes(String(raw).trim().toLowerCase())
+})
+
+const sandboxInstancesModalOpen = ref(false)
+const sandboxInstancesSummaryLoading = ref(false)
+const sandboxInstancesSummary = ref<{
+  backend: SandboxAdminBackend | null
+  available: boolean
+  scopeLabel: string
+  summary: SandboxAdminSummary
+}>({
+  backend: null,
+  available: false,
+  scopeLabel: '',
+  summary: { all: 0, managed: 0, orphan: 0, zombie: 0 },
+})
+let sandboxSummarySeq = 0
+
+const fetchSandboxInstancesSummary = async () => {
+  // 与其它沙箱管理动作同权：无 element:system:config_save 时直接短路，避免静默 403
+  if (!canSave) return
+  const backend = sandboxManageBackend.value
+  if (!backend) return
+  const seq = ++sandboxSummarySeq
+  sandboxInstancesSummaryLoading.value = true
+  try {
+    const res = await axios.get('/api/v1/admin/sandbox/instances', {
+      params: { backend, include_stats: false },
+    })
+    if (seq !== sandboxSummarySeq) return
+    const data = res.data?.data ?? res.data
+    sandboxInstancesSummary.value = {
+      backend,
+      available: Boolean(data?.available),
+      scopeLabel: data?.scope_label || '',
+      summary: data?.summary ?? { all: 0, managed: 0, orphan: 0, zombie: 0 },
+    }
+  } catch {
+    if (seq !== sandboxSummarySeq) return
+    sandboxInstancesSummary.value = {
+      backend,
+      available: false,
+      scopeLabel: '',
+      summary: { all: 0, managed: 0, orphan: 0, zombie: 0 },
+    }
+  } finally {
+    if (seq === sandboxSummarySeq) {
+      sandboxInstancesSummaryLoading.value = false
+    }
+  }
+}
+
+const openSandboxInstancesModal = () => {
+  if (!canSave || !sandboxManageBackend.value) return
+  sandboxInstancesModalOpen.value = true
+}
+
+const handleSandboxSummaryChange = (payload: {
+  backend: SandboxAdminBackend
+  summary: SandboxAdminSummary
+  available: boolean
+  scopeLabel: string
+}) => {
+  sandboxInstancesSummary.value = {
+    backend: payload.backend,
+    available: payload.available,
+    scopeLabel: payload.scopeLabel,
+    summary: payload.summary,
+  }
+}
 
 /** 平台后端进程运行环境：docker=部署在容器内，host=运行在宿主机（由后端动态探测注入） */
 const runtimeEnv = computed(() =>
@@ -838,6 +921,19 @@ const realizedActiveCategory = computed(() => {
   // 缺省成空串表示「没有可展示的分组」
   return cats[0] ?? ''
 })
+
+watch(
+  [activeTab, realizedActiveCategory, sandboxManageBackend],
+  ([tab, cat, backend]) => {
+    if (tab === 'configs' && cat === 'sandbox' && backend && canSave) {
+      fetchSandboxInstancesSummary()
+    } else if (!backend) {
+      ++sandboxSummarySeq
+      sandboxInstancesSummaryLoading.value = false
+    }
+  },
+  { immediate: true },
+)
 /**
  * 把当前分组卡片滚到它所在滚动容器的顶部。
  *
@@ -1308,15 +1404,124 @@ const triggerBrandingIconUpload = () => {
   brandingIconInput.value?.click()
 }
 
+// Apple touch icon 规格：与 frontend/public/apple-touch-icon.png 保持一致的口径。
+// iOS 会自己给桌面图标套圆角并在外层垫黑底，透明四角会直接变成黑边，
+// 所以这里必须输出「满版渐变铺底 + 内容居中」的不透明方图。
+const APPLE_TOUCH_ICON_SIZE = 180
+const APPLE_TOUCH_ICON_CONTENT_RATIO = 0.72
+const APPLE_TOUCH_ICON_GRADIENT = ['#4c4ce6', '#4464ee'] as const
+// 源图不透明像素覆盖率高于这条线就认为它自带整块背景（如满版方形 logo / 圆角底板），
+// 此时按 cover 铺满，避免「渐变底 + 内缩的一张带底图标」叠出双层圆角。
+const APPLE_TOUCH_ICON_FULL_BLEED_RATIO = 0.55
+
+/**
+ * 估算源图的不透明像素覆盖率（0~1）：只用来判断「满版图」还是「孤立图标」。
+ *
+ * 缩到 64×64 采样即可，没必要按原尺寸逐像素；SVG 这类浏览器取不到像素尺寸时返回 0，
+ * 走保守的 contain 内缩分支。
+ */
+const measureOpaqueCoverage = (image: HTMLImageElement): number => {
+  try {
+    const probeSize = 64
+    const probe = document.createElement('canvas')
+    probe.width = probeSize
+    probe.height = probeSize
+    const probeCtx = probe.getContext('2d')
+    if (!probeCtx) return 0
+    probeCtx.drawImage(image, 0, 0, probeSize, probeSize)
+    const { data } = probeCtx.getImageData(0, 0, probeSize, probeSize)
+    let opaquePixels = 0
+    for (let index = 3; index < data.length; index += 4) {
+      if ((data[index] ?? 0) > 200) opaquePixels += 1
+    }
+    return opaquePixels / (probeSize * probeSize)
+  } catch {
+    // getImageData 在跨源污染的画布上会抛错；探针失败只影响排版策略，不该让上传失败
+    return 0
+  }
+}
+
+/**
+ * 把用户选的品牌图合成为 iOS 桌面图标（180×180 满版不透明 PNG）。
+ *
+ * 合成放在浏览器里做而不是后端：上传源可能是 SVG，后端要渲染 SVG 就得引 cairosvg/Pillow
+ * 这类依赖和系统库；浏览器本身就能渲染 SVG，顺带零新增运行时依赖。
+ * 合成失败返回 null——调用方只上传 favicon，桌面图标由后端路由回退默认图。
+ */
+const buildAppleTouchIconBlob = async (source: Blob): Promise<Blob | null> => {
+  if (typeof document === 'undefined') return null
+  const objectUrl = URL.createObjectURL(source)
+  try {
+    const image = await new Promise<HTMLImageElement | null>((resolve) => {
+      const element = new Image()
+      element.onload = () => resolve(element)
+      element.onerror = () => resolve(null)
+      element.src = objectUrl
+    })
+    if (!image) return null
+
+    const canvas = document.createElement('canvas')
+    canvas.width = APPLE_TOUCH_ICON_SIZE
+    canvas.height = APPLE_TOUCH_ICON_SIZE
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+
+    const gradient = ctx.createLinearGradient(0, 0, APPLE_TOUCH_ICON_SIZE, APPLE_TOUCH_ICON_SIZE)
+    gradient.addColorStop(0, APPLE_TOUCH_ICON_GRADIENT[0])
+    gradient.addColorStop(1, APPLE_TOUCH_ICON_GRADIENT[1])
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, APPLE_TOUCH_ICON_SIZE, APPLE_TOUCH_ICON_SIZE)
+
+    const naturalWidth = image.naturalWidth || image.width || 0
+    const naturalHeight = image.naturalHeight || image.height || 0
+    const fullBleed = measureOpaqueCoverage(image) >= APPLE_TOUCH_ICON_FULL_BLEED_RATIO
+    // 满版图用 cover 铺满（自带圆角/底板的图透明角直接透出渐变底，不会出现内层方块）；
+    // 孤立的透明图标用 contain 内缩到内容框。
+    // 没有内嵌尺寸的 SVG 在部分浏览器里 naturalWidth 为 0：按内容框铺满，
+    // 仍然保证结果是不透明正方形，不至于画出一张空白图。
+    const box = APPLE_TOUCH_ICON_SIZE * APPLE_TOUCH_ICON_CONTENT_RATIO
+    const scale = naturalWidth > 0 && naturalHeight > 0
+      ? (fullBleed
+        ? Math.max(APPLE_TOUCH_ICON_SIZE / naturalWidth, APPLE_TOUCH_ICON_SIZE / naturalHeight)
+        : Math.min(box / naturalWidth, box / naturalHeight))
+      : 1
+    const drawWidth = naturalWidth > 0 ? naturalWidth * scale : box
+    const drawHeight = naturalHeight > 0 ? naturalHeight * scale : box
+    ctx.drawImage(
+      image,
+      (APPLE_TOUCH_ICON_SIZE - drawWidth) / 2,
+      (APPLE_TOUCH_ICON_SIZE - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    )
+
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 const uploadBrandingIconDirectly = async (fileOrBlob: File | Blob, filename = 'icon.png') => {
   brandingIconUploading.value = true
   try {
-    const form = new FormData()
     const uploadFile = fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], filename, { type: fileOrBlob.type })
+    const form = new FormData()
     form.append('file', uploadFile)
+    // 桌面图标（Apple touch icon）另存一份：iOS 只抓 /apple-touch-icon.png，
+    // 且必须是满版不透明的 180×180，不能直接复用带透明底的 favicon。
+    const appleTouchBlob = await buildAppleTouchIconBlob(uploadFile)
+    if (appleTouchBlob) {
+      form.append('apple_touch_icon', new File([appleTouchBlob], 'apple-touch-icon.png', { type: 'image/png' }))
+    }
     const res = await axios.post('/api/portal/system/branding/icon', form)
     brandingConfig.value.icon_url = res.data.icon_url
-    showToast('图标上传成功', 'success')
+    if (appleTouchBlob) {
+      showToast('图标上传成功（iPhone 桌面图标需重新添加到主屏幕才会更新）', 'success')
+    } else {
+      showToast('图标上传成功，但桌面图标合成失败，iPhone 桌面将沿用默认图标', 'warning')
+    }
   } catch (err: any) {
     showToast(err.response?.data?.detail || '上传失败', 'error')
   } finally {
@@ -1470,6 +1675,11 @@ const fetchConfigs = async () => {
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
               item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
+            }
+            if (item.key === 'sandbox_idle_time') {
+              // 库里的描述只说「超过该时长自动关闭」，没提被会话引用时阈值会放宽，导致管理员在
+              // 沙箱实例面板看到「60 分钟后空闲回收」而配置写 15，误以为配置没生效。这里补上口径。
+              item.description = `${item.description || ''} 注意：仍被会话持有引用（进程受管）的沙箱，空闲阈值按 4 倍放宽（如设 15 分钟则实际约 60 分钟回收），引用释放后回到该值；沙箱实例面板会标出当前生效的倍数。`.trim()
             }
         })
     }
@@ -4927,7 +5137,7 @@ onUnmounted(() => {
                   />
                 </div>
               </div>
-              <p class="text-xs text-gray-400 mt-1">用于登录页、侧栏左上角与浏览器标签图标（PNG/JPEG/WebP/SVG，最大 512KB）</p>
+              <p class="text-xs text-gray-400 mt-1">用于登录页、侧栏左上角、浏览器标签与 iPhone 桌面图标（PNG/JPEG/WebP/SVG，最大 512KB）；桌面图标会上传时自动生成满版不透明版本，但 iPhone 上需要先删除旧图标再重新「添加到主屏幕」才会更新</p>
             </div>
 
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-2 border-t border-gray-100">
@@ -5168,6 +5378,20 @@ onUnmounted(() => {
                         <p class="text-[11px] text-gray-500 truncate max-w-md">{{ getGroupSubtitle(String(category)) }}</p>
                      </div>
                      <span class="ml-auto shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500" :title="`共 ${totalConfigCountFor(String(category))} 项配置`">{{ totalConfigCountFor(String(category)) }} 项</span>
+                     <button
+                       v-if="String(category) === 'sandbox' && canSave && sandboxManageBackend"
+                       type="button"
+                       class="ml-3 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-white px-3 py-1 text-xs font-medium text-primary shadow-sm transition-colors hover:bg-primary/5"
+                       @click="openSandboxInstancesModal"
+                     >
+                       <ServerStackIcon v-if="sandboxManageBackend === 'k8s'" class="h-3.5 w-3.5" />
+                       <CubeIcon v-else class="h-3.5 w-3.5" />
+                       <span>{{ sandboxManageBackend === 'k8s' ? '管理 K8s Pod' : '管理 Docker 容器' }}</span>
+                       <span
+                         v-if="sandboxInstancesSummary.backend === sandboxManageBackend && sandboxInstancesSummary.available"
+                         class="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums text-primary"
+                       >{{ sandboxInstancesSummary.summary.all }}</span>
+                     </button>
                      <button
                        v-if="String(category) === 'email' && canSave"
                        type="button"
@@ -5542,6 +5766,54 @@ onUnmounted(() => {
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                 切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、k8s、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
                              </p>
+
+                             <!-- Docker / K8s 沙箱实例运行态概览与管理弹层入口（与保存配置同权） -->
+                             <div
+                               v-if="canSave && (item.value === 'docker' || item.value === 'k8s')"
+                               class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 border-l-[3px] bg-gray-50/70 px-3.5 py-2.5"
+                               :class="(sandboxInstancesSummary.backend === item.value && (sandboxInstancesSummary.summary.orphan + sandboxInstancesSummary.summary.zombie) > 0) ? 'border-l-amber-500' : 'border-l-primary'"
+                             >
+                               <div class="min-w-0 space-y-1">
+                                 <div class="flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-800">
+                                   <span>{{ item.value === 'k8s' ? 'Kubernetes 沙箱 Pod 运行态' : 'Docker 沙箱容器运行态' }}</span>
+                                   <span
+                                     v-if="sandboxInstancesSummary.backend === item.value && sandboxInstancesSummary.scopeLabel"
+                                     class="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
+                                   >{{ sandboxInstancesSummary.scopeLabel }}</span>
+                                 </div>
+                                 <div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-gray-600">
+                                   <template v-if="sandboxInstancesSummaryLoading && sandboxInstancesSummary.backend !== item.value">
+                                     <span class="text-gray-400">正在拉取实时实例数量…</span>
+                                   </template>
+                                   <template v-else-if="sandboxInstancesSummary.backend === item.value && sandboxInstancesSummary.available">
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                                       受管运行 <strong class="tabular-nums text-gray-900">{{ sandboxInstancesSummary.summary.managed }}</strong>
+                                     </span>
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                       孤儿残留 <strong class="tabular-nums" :class="sandboxInstancesSummary.summary.orphan > 0 ? 'text-amber-600' : 'text-gray-900'">{{ sandboxInstancesSummary.summary.orphan }}</strong>
+                                     </span>
+                                     <span class="inline-flex items-center gap-1.5">
+                                       <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                                       僵死异常 <strong class="tabular-nums" :class="sandboxInstancesSummary.summary.zombie > 0 ? 'text-rose-600' : 'text-gray-900'">{{ sandboxInstancesSummary.summary.zombie }}</strong>
+                                     </span>
+                                   </template>
+                                   <template v-else>
+                                     <span class="text-gray-500">可查看全部运行中/孤儿/僵死沙箱，支持日志排查、手动 Kill 与重置</span>
+                                   </template>
+                                 </div>
+                               </div>
+                               <button
+                                 type="button"
+                                 class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-primary-dark"
+                                 @click="openSandboxInstancesModal"
+                               >
+                                 <ServerStackIcon v-if="item.value === 'k8s'" class="h-3.5 w-3.5" />
+                                 <CubeIcon v-else class="h-3.5 w-3.5" />
+                                 <span>{{ item.value === 'k8s' ? '查看与管理沙箱 Pod' : '查看与管理沙箱容器' }}</span>
+                               </button>
+                             </div>
 
                              <div v-if="item.value === 'k8s'" class="mt-3 text-xs bg-sky-50/70 p-3.5 rounded-xl border border-sky-100 leading-relaxed space-y-3">
                                  <div class="space-y-1">
@@ -6715,6 +6987,8 @@ onUnmounted(() => {
                                     { label: '64k (推荐)', value: '65536' },
                                     { label: '128k', value: '131072' },
                                     { label: '256k', value: '262144' },
+                                    { label: '512k', value: '524288' },
+                                    { label: '1m', value: '1048576' },
                                   ]"
                                   :key="preset.value"
                                   type="button"
@@ -8162,6 +8436,16 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <SandboxInstancesModal
+      v-if="sandboxManageBackend"
+      :show="sandboxInstancesModalOpen"
+      :backend="sandboxManageBackend"
+      :can-manage="canSave"
+      :orphan-reconcile-enabled="sandboxOrphanReconcileEnabled"
+      @close="sandboxInstancesModalOpen = false"
+      @summary-change="handleSandboxSummaryChange"
+    />
 
     <ChatTour
       ref="sysTourRef"

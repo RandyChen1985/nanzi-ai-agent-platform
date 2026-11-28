@@ -392,6 +392,74 @@ async def test_ensure_endpoint_forwards_scope_for_k8s(monkeypatch):
     assert captured["allowed_global_skills"] == []
 
 
+@pytest.mark.asyncio
+async def test_stop_docker_workspace_force_deletes_containers_and_uses_list_filters(monkeypatch):
+    """★ 手动停止 Docker 沙箱必须 delete(force=True) 而非只 stop()，且标签扫描 filters 为数组。"""
+    import json
+    from unittest.mock import AsyncMock
+    from aiodocker.utils import httpize
+    from app.services.ai.runtime.agentscope import workspace as ws
+
+    deleted_names: list[str] = []
+    seen_filters: list[dict | None] = []
+
+    class _FakeContainer:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.id = name
+            self._container = {
+                "Names": [f"/{name}"],
+                "Labels": {
+                    "agentscope.workspace": "true",
+                    "agentscope.workspace.id": name.removeprefix("as_ws_"),
+                },
+                "Created": 1_700_000_000,
+            }
+
+        async def delete(self, force: bool = False) -> None:
+            assert force is True
+            deleted_names.append(self.name)
+
+    c1 = _FakeContainer("as_ws_alice__1-aaaaaaaaaaaa")
+
+    class _FakeContainers:
+        async def list(self, all: bool = True, filters: dict | None = None):
+            seen_filters.append(filters)
+            encoded = httpize({"all": all, "filters": filters})
+            assert json.loads(encoded["filters"]) == {"label": ["agentscope.workspace=true"]}
+            return [c1]
+
+        async def get(self, name: str):
+            if name == c1.name:
+                return c1
+            exc = RuntimeError("not found")
+            exc.status = 404  # type: ignore[attr-defined]
+            raise exc
+
+    class _FakeDocker:
+        def __init__(self) -> None:
+            self.containers = _FakeContainers()
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="docker"),
+    )
+    monkeypatch.setattr("aiodocker.Docker", _FakeDocker)
+
+    result = await ws.stop_docker_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-123",
+    )
+
+    assert result["status"] == "stopped"
+    assert deleted_names == ["as_ws_alice__1-aaaaaaaaaaaa"]
+    assert seen_filters == [{"label": ["agentscope.workspace=true"]}]
+
+
 class _FakeResult:
     def __init__(self, value):
         self._value = value

@@ -1,0 +1,2447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="prototype-kind" content="交互原型" />
+  <title>安全沙箱 · Docker/K8s 容器与 Pod 运维管理弹层</title>
+  <style>
+    :root {
+      --bg-page: #f4f6fa;
+      --bg-card: #ffffff;
+      --bg-subtle: #f8fafc;
+      --bg-muted: #f1f5f9;
+      --border: #e2e8f0;
+      --border-soft: #eef2f6;
+      --text-main: #0f172a;
+      --text-body: #334155;
+      --text-muted: #64748b;
+      --text-faint: #94a3b8;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-soft: rgba(37, 99, 235, 0.08);
+      --primary-border: rgba(37, 99, 235, 0.24);
+      --emerald: #059669;
+      --emerald-bg: #ecfdf5;
+      --emerald-border: #a7f3d0;
+      --amber: #d97706;
+      --amber-bg: #fffbeb;
+      --amber-border: #fde68a;
+      --rose: #dc2626;
+      --rose-hover: #b91c1c;
+      --rose-bg: #fef2f2;
+      --rose-border: #fecaca;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+      --shadow-xl: 0 24px 60px rgba(15, 23, 42, 0.22);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg-page);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select {
+      font-family: inherit;
+      font-size: inherit;
+    }
+
+    /* 原型顶部演示控制条 */
+    .proto-bar {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 9px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .proto-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .proto-badge {
+      background: #1e293b;
+      color: #93c5fd;
+      border: 1px solid #334155;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+    .proto-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .proto-seg {
+      display: inline-flex;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .proto-seg button {
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .proto-seg button.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    .proto-seg button:hover:not(.active) {
+      color: #fff;
+    }
+    .proto-open-btn {
+      border: 1px solid #3b82f6;
+      background: rgba(37, 99, 235, 0.2);
+      color: #bfdbfe;
+      padding: 4px 11px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .proto-open-btn:hover {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    /* 模拟「系统配置与诊断 → 参数配置 → 安全沙箱」页面 */
+    .page-shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 22px 24px 48px;
+    }
+    .page-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 14px;
+      color: var(--text-main);
+    }
+    .top-tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .tab-strip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .tab-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: default;
+    }
+    .tab-pill.active {
+      background: #fff;
+      color: var(--primary);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border-soft);
+    }
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .side-nav {
+      background: #fff;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
+      padding: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+    .side-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border-radius: 10px;
+      color: var(--text-body);
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .side-item.active {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
+    }
+    .side-count {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--bg-muted);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .side-item.active .side-count {
+      background: rgba(255, 255, 255, 0.22);
+      color: #fff;
+    }
+
+    /* 右侧主卡片 */
+    .save-bar {
+      background: #fff;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-md);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow-sm);
+    }
+    .save-bar span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 13px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text-body);
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--bg-subtle);
+      border-color: #cbd5e1;
+      color: var(--text-main);
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+      color: #fff;
+    }
+    .btn-soft-primary {
+      background: var(--primary-soft);
+      border-color: var(--primary-border);
+      color: var(--primary);
+    }
+    .btn-soft-primary:hover:not(:disabled) {
+      background: rgba(37, 99, 235, 0.14);
+      border-color: var(--primary);
+      color: var(--primary-hover);
+    }
+    .btn-danger {
+      background: var(--rose);
+      border-color: var(--rose);
+      color: #fff;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: var(--rose-hover);
+      border-color: var(--rose-hover);
+      color: #fff;
+    }
+    .btn-soft-danger {
+      background: var(--rose-bg);
+      border-color: var(--rose-border);
+      color: var(--rose);
+    }
+    .btn-soft-danger:hover:not(:disabled) {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: var(--rose-hover);
+    }
+    .btn-sm {
+      padding: 4px 9px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+    .btn-xs {
+      padding: 3px 7px;
+      font-size: 11px;
+      border-radius: 6px;
+    }
+
+    .config-card {
+      background: #fff;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .config-card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .card-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .card-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--primary-soft);
+      border: 1px solid var(--primary-border);
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0;
+    }
+    .card-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 1px 0 0;
+    }
+    .card-header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .count-tag {
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-muted);
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 500;
+    }
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .dot-emerald { background: var(--emerald); }
+    .dot-amber { background: var(--amber); }
+    .dot-rose { background: var(--rose); }
+    .dot-slate { background: #94a3b8; }
+
+    /* 参数行 */
+    .config-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 24px;
+      padding: 20px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .config-row:last-child { border-bottom: none; }
+    .config-key {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .config-desc {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .policy-select-box {
+      position: relative;
+      background: var(--bg-muted);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 36px 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+    }
+    .policy-select-box:hover {
+      border-color: #94a3b8;
+    }
+    .policy-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .policy-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .policy-chevron {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+    }
+    .policy-menu {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 6px);
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-md);
+      z-index: 30;
+      overflow: hidden;
+      display: none;
+    }
+    .policy-menu.open { display: block; }
+    .policy-option {
+      width: 100%;
+      text-align: left;
+      background: #fff;
+      border: none;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .policy-option:last-child { border-bottom: none; }
+    .policy-option:hover, .policy-option.selected {
+      background: var(--primary-soft);
+    }
+
+    /* 方案核心亮点：sandbox_policy 下方的紧凑运行态概览条（仅 docker/k8s 显示） */
+    .runtime-entry-strip {
+      margin-top: 12px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 10px;
+      padding: 11px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .runtime-entry-strip.has-alert {
+      border-left-color: var(--amber);
+    }
+    .runtime-entry-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .runtime-entry-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .runtime-entry-stats {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--text-body);
+    }
+    .stat-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .stat-inline strong {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+
+    /* 开关行 */
+    .switch-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .switch-track {
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--primary);
+      position: relative;
+      flex-shrink: 0;
+    }
+    .switch-track.off { background: #cbd5e1; }
+    .switch-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: #fff;
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    .switch-track.off .switch-thumb {
+      right: auto;
+      left: 2px;
+    }
+
+    /* ========== 弹层 Modal ========== */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(15, 23, 42, 0.48);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-backdrop.open {
+      display: flex;
+    }
+    .modal-panel {
+      position: relative;
+      width: min(1160px, 95vw);
+      height: min(86vh, 800px);
+      background: #fff;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-xl);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* 弹层头部 */
+    .modal-header {
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .modal-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .env-chip {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      border: 1px solid var(--primary-border);
+      font-family: var(--font-mono);
+    }
+    .modal-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .modal-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .icon-btn:hover {
+      background: var(--bg-muted);
+      color: var(--text-main);
+    }
+
+    /* 一体化 KPI 条（遵循去 AI 味规范：白底 divide-x） */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-subtle);
+      flex-shrink: 0;
+    }
+    .kpi-cell {
+      padding: 12px 18px;
+      border-right: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s;
+      text-align: left;
+      background: transparent;
+      border-top: none;
+      border-bottom: none;
+      border-left: none;
+      position: relative;
+    }
+    .kpi-cell:last-child { border-right: none; }
+    .kpi-cell:hover { background: #fff; }
+    .kpi-cell.active {
+      background: #fff;
+    }
+    .kpi-cell.active::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      background: var(--primary);
+    }
+    .kpi-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .kpi-value {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+      color: var(--text-main);
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .kpi-note {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+
+    /* 工具栏 */
+    .modal-toolbar {
+      padding: 12px 22px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .search-wrap {
+      position: relative;
+      width: 260px;
+    }
+    .search-wrap svg {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-faint);
+      pointer-events: none;
+    }
+    .search-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px 0 32px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text-main);
+      background: #fff;
+      outline: none;
+    }
+    .search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .filter-pills {
+      display: inline-flex;
+      background: var(--bg-muted);
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .filter-pills button {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .filter-pills button.active {
+      background: #fff;
+      color: var(--text-main);
+      box-shadow: var(--shadow-sm);
+    }
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* 批量选择提示条 */
+    .batch-bar {
+      display: none;
+      padding: 8px 22px;
+      background: #eff6ff;
+      border-bottom: 1px solid #bfdbfe;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: #1e40af;
+      flex-shrink: 0;
+    }
+    .batch-bar.open { display: flex; }
+
+    /* 表格滚动容器 */
+    .table-wrap {
+      flex: 1;
+      overflow: auto;
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12px;
+    }
+    thead {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: var(--bg-subtle);
+    }
+    th {
+      padding: 10px 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      font-size: 11px;
+    }
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      vertical-align: middle;
+      color: var(--text-body);
+    }
+    tbody tr:hover {
+      background: #f8fafc;
+    }
+    tbody tr.selected {
+      background: #eff6ff;
+    }
+    .mono {
+      font-family: var(--font-mono);
+    }
+    .user-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .user-name {
+      font-weight: 600;
+      color: var(--text-main);
+      font-size: 13px;
+    }
+    .token-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .name-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-width: 270px;
+    }
+    .instance-name {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .instance-name span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .copy-mini {
+      border: none;
+      background: transparent;
+      color: var(--text-faint);
+      cursor: pointer;
+      padding: 2px;
+      border-radius: 4px;
+      display: inline-flex;
+      flex-shrink: 0;
+    }
+    .copy-mini:hover {
+      background: var(--bg-muted);
+      color: var(--primary);
+    }
+    .instance-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* 状态与归属徽标 */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .badge-emerald {
+      background: var(--emerald-bg);
+      color: var(--emerald);
+      border-color: var(--emerald-border);
+    }
+    .badge-amber {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border-color: var(--amber-border);
+    }
+    .badge-rose {
+      background: var(--rose-bg);
+      color: var(--rose);
+      border-color: var(--rose-border);
+    }
+    .badge-blue {
+      background: var(--primary-soft);
+      color: var(--primary);
+      border-color: var(--primary-border);
+    }
+    .badge-slate {
+      background: var(--bg-muted);
+      color: var(--text-muted);
+      border-color: var(--border);
+    }
+    .status-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .age-warn {
+      color: var(--amber);
+      font-weight: 600;
+    }
+    .age-danger {
+      color: var(--rose);
+      font-weight: 600;
+    }
+    .resource-cell {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-body);
+      white-space: nowrap;
+    }
+    .resource-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .row-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    /* 弹层底部栏 */
+    .modal-footer {
+      padding: 10px 22px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    /* 弹层内部右侧滑出：详情与日志抽屉 */
+    .detail-drawer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(500px, 92%);
+      background: #fff;
+      border-left: 1px solid var(--border);
+      box-shadow: -16px 0 40px rgba(15, 23, 42, 0.14);
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+    }
+    .detail-drawer.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .drawer-body {
+      flex: 1;
+      overflow: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .kv-grid {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      gap: 8px 12px;
+      font-size: 12px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .kv-k { color: var(--text-muted); }
+    .kv-v { color: var(--text-main); word-break: break-all; }
+    .log-box {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.65;
+      max-height: 280px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .drawer-footer {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--bg-subtle);
+    }
+
+    /* 二次确认弹窗 */
+    .confirm-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 140;
+      background: rgba(15, 23, 42, 0.52);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .confirm-backdrop.open { display: flex; }
+    .confirm-box {
+      width: min(440px, 94vw);
+      background: #fff;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-xl);
+      overflow: hidden;
+    }
+    .confirm-body {
+      padding: 20px;
+    }
+    .confirm-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: var(--text-main);
+    }
+    .confirm-desc {
+      font-size: 13px;
+      color: var(--text-body);
+      margin: 0;
+      line-height: 1.6;
+    }
+    .confirm-warn {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      color: #92400e;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .confirm-footer {
+      padding: 12px 20px;
+      background: var(--bg-subtle);
+      border-top: 1px solid var(--border-soft);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    /* Toast */
+    .toast-stack {
+      position: fixed;
+      top: 58px;
+      right: 20px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: #0f172a;
+      color: #fff;
+      padding: 9px 14px;
+      border-radius: 9px;
+      font-size: 12px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: fadeSlide 0.18s ease;
+    }
+    .toast.success { border-left: 3px solid var(--emerald); }
+    .toast.info { border-left: 3px solid var(--primary); }
+    .toast.warn { border-left: 3px solid var(--amber); }
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .empty-state {
+      padding: 56px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .empty-state h4 {
+      margin: 8px 0 4px;
+      font-size: 14px;
+      color: var(--text-main);
+    }
+
+    @media (max-width: 900px) {
+      .workspace-grid { grid-template-columns: 1fr; }
+      .config-row { grid-template-columns: 1fr; gap: 12px; }
+      .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <!-- 顶部原型演示切换条 -->
+  <div class="proto-bar">
+    <div class="proto-bar-left">
+      <span class="proto-badge">交互原型</span>
+      <span>安全沙箱 · Docker / K8s 容器与 Pod 运维管理弹层（点击任意按钮可真实交互）</span>
+    </div>
+    <div class="proto-controls">
+      <span style="color:#94a3b8;">切换策略预览：</span>
+      <div class="proto-seg" id="protoPolicySeg">
+        <button type="button" data-policy="docker" class="active">Docker 模式</button>
+        <button type="button" data-policy="k8s">K8s 模式</button>
+        <button type="button" data-policy="local">Local（隐藏入口）</button>
+      </div>
+      <button type="button" class="proto-open-btn" id="protoOpenModalBtn">直接打开管理弹层</button>
+    </div>
+  </div>
+
+  <!-- 宿主页面：系统配置与诊断 → 参数配置 → 安全沙箱 -->
+  <div class="page-shell">
+    <h1 class="page-title">系统配置与诊断</h1>
+
+    <div class="top-tabs">
+      <div class="tab-strip">
+        <span class="tab-pill">模型管理</span>
+        <span class="tab-pill">工具管理</span>
+        <span class="tab-pill active">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          参数配置
+        </span>
+        <span class="tab-pill">品牌个性化</span>
+        <span class="tab-pill">系统诊断</span>
+        <span class="tab-pill">日志管理</span>
+        <span class="tab-pill">链路追踪</span>
+      </div>
+    </div>
+
+    <div class="workspace-grid">
+      <!-- 左侧分组 -->
+      <div class="side-nav">
+        <div class="side-item"><span>智能体</span><span class="side-count">17</span></div>
+        <div class="side-item"><span>元数据 &amp; RAG</span><span class="side-count">6</span></div>
+        <div class="side-item"><span>智能报表</span><span class="side-count">10</span></div>
+        <div class="side-item"><span>知识库</span><span class="side-count">12</span></div>
+        <div class="side-item active"><span>安全沙箱</span><span class="side-count">36</span></div>
+        <div class="side-item"><span>其他参数</span><span class="side-count">6</span></div>
+      </div>
+
+      <!-- 右侧参数区 -->
+      <div>
+        <div class="save-bar">
+          <span>参数修改后请及时保存生效</span>
+          <button type="button" class="btn btn-sm" disabled>保存变更 (⌘S)</button>
+        </div>
+
+        <div class="config-card">
+          <!-- 卡片头（入口 1：右上角「管理沙箱容器 / Pod」） -->
+          <div class="config-card-header">
+            <div class="card-header-left">
+              <div class="card-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+              </div>
+              <div>
+                <h2 class="card-title">安全沙箱</h2>
+                <p class="card-sub">Docker / K8s 沙箱执行环境</p>
+              </div>
+            </div>
+            <div class="card-header-right">
+              <button type="button" class="btn btn-soft-primary btn-sm" id="headerManageBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 6.5h.01M6 17.5h.01"/></svg>
+                <span id="headerManageBtnText">管理 Docker 容器</span>
+                <span class="badge badge-blue" id="headerManageCount" style="padding:1px 6px;font-size:11px;">12</span>
+              </button>
+              <span class="count-tag">36 项</span>
+            </div>
+          </div>
+
+          <!-- sandbox_policy 参数行 -->
+          <div class="config-row">
+            <div>
+              <div class="config-key">sandbox_policy</div>
+              <p class="config-desc">
+                安全沙箱执行策略。local 表示宿主机扩展进程内直接执行；docker 表示在自动构建的 Docker 容器内执行；k8s 表示在 Kubernetes 集群内动态拉起独立 Pod 执行；e2b 与 ssh 用于远程云端/主机执行。
+              </p>
+            </div>
+            <div>
+              <div style="position:relative;">
+                <div class="policy-select-box" id="policySelectTrigger">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" style="flex-shrink:0;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                  <div>
+                    <div class="policy-label" id="policyLabel">docker（Docker 容器）</div>
+                    <div class="policy-sub" id="policyDesc">在自动构建的 Docker 容器内执行，工作区按用户隔离</div>
+                  </div>
+                  <svg class="policy-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+
+                <div class="policy-menu" id="policyMenu">
+                  <button type="button" class="policy-option" data-policy="docker">
+                    <div>
+                      <div class="policy-label" style="font-size:13px;">docker（Docker 容器）</div>
+                      <div class="policy-sub">在自动构建的 Docker 容器内执行，工作区按用户隔离</div>
+                    </div>
+                  </button>
+                  <button type="button" class="policy-option" data-policy="k8s">
+                    <div>
+                      <div class="policy-label" style="font-size:13px;">k8s（Kubernetes Pod）</div>
+                      <div class="policy-sub">在 Kubernetes 集群内按用户动态拉起独立沙箱 Pod（云原生生产推荐）</div>
+                    </div>
+                  </button>
+                  <button type="button" class="policy-option" data-policy="local">
+                    <div>
+                      <div class="policy-label" style="font-size:13px;">local（本地宿主机执行）</div>
+                      <div class="policy-sub">在平台当前进程宿主机内直接执行，无容器实例</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <p class="config-desc" style="margin-top:8px;">
+                切换策略后，沙箱 Bash / 文件工具在对应环境内执行。仅当策略为 <strong>docker</strong> 或 <strong>k8s</strong> 时展示下方沙箱实例运行态与运维管理入口。
+              </p>
+
+              <!-- 入口 2：sandbox_policy 正下方的运行态概览条 -->
+              <div class="runtime-entry-strip has-alert" id="runtimeEntryStrip">
+                <div class="runtime-entry-meta">
+                  <div class="runtime-entry-title">
+                    <span id="stripTitle">当前 Docker 沙箱实例概览</span>
+                    <span class="env-chip" id="stripEnvChip">unix:///var/run/docker.sock</span>
+                  </div>
+                  <div class="runtime-entry-stats" id="stripStats"></div>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" id="stripManageBtn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+                  <span id="stripBtnText">查看与管理沙箱容器</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 下方示意配置行 -->
+          <div class="config-row">
+            <div>
+              <div class="config-key">sandbox_auto_warm</div>
+              <p class="config-desc">沙箱自动预热开关（docker/k8s 均生效）。开启时，在打开或新建会话时静默预热沙箱。</p>
+            </div>
+            <div class="switch-row">
+              <div class="switch-track off"><div class="switch-thumb"></div></div>
+              <span style="font-size:12px;color:var(--text-muted);">已关闭（禁用自动预热）</span>
+            </div>
+          </div>
+
+          <div class="config-row">
+            <div>
+              <div class="config-key">sandbox_idle_time</div>
+              <p class="config-desc">沙箱空闲自动回收时长（分钟，docker/k8s 共用）。默认 15 分钟。</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="text" value="15" readonly style="width:76px;height:34px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:600;color:var(--text-main);background:#fff;" />
+              <span style="font-size:12px;color:var(--text-muted);">分钟（会话仍持有引用时放宽至 4 倍 = 60 分钟）</span>
+            </div>
+          </div>
+
+          <div class="config-row">
+            <div>
+              <div class="config-key">sandbox_orphan_reconcile</div>
+              <p class="config-desc">沙箱孤儿对账开关（docker/k8s 均生效）。单副本保持开启；多副本需关闭（僵死终态仍自动清理）。</p>
+            </div>
+            <div class="switch-row">
+              <div class="switch-track"><div class="switch-thumb"></div></div>
+              <span style="font-size:12px;color:var(--primary);font-weight:600;">已开启（每 10 分钟对账清理 &gt;30 分钟孤儿）</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 沙箱实例管理弹层 ========== -->
+  <div class="modal-backdrop" id="sandboxModal" role="dialog" aria-modal="true" aria-labelledby="modalTitleText">
+    <div class="modal-panel">
+      <!-- 弹层头部 -->
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="card-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title" id="modalTitleText">
+              <span id="modalHeading">Docker 沙箱容器管理</span>
+              <span class="env-chip" id="modalScopeChip">label: agentscope.workspace=true</span>
+            </h3>
+            <div class="modal-sub">
+              <span id="modalBackendDesc">宿主机 Docker Daemon 实时视图（仅展示带平台标签的沙箱容器）</span>
+              <span>·</span>
+              <span id="lastRefreshedText">最后刷新：刚刚</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none;margin-right:4px;">
+            <input type="checkbox" id="autoRefreshToggle" />
+            <span>15s 自动刷新</span>
+          </label>
+          <button type="button" class="btn btn-sm" id="refreshBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            刷新
+          </button>
+          <button type="button" class="icon-btn" id="closeModalBtn" title="关闭 (ESC)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 一体化 KPI 统计栏（点击可联动筛选） -->
+      <div class="kpi-strip" id="kpiStrip">
+        <button type="button" class="kpi-cell active" data-filter="all">
+          <div class="kpi-label">全部沙箱实例</div>
+          <div class="kpi-value"><span id="kpiAll">0</span><span class="kpi-note" id="kpiAllNote">总计</span></div>
+        </button>
+        <button type="button" class="kpi-cell" data-filter="managed">
+          <div class="kpi-label"><span class="dot dot-emerald"></span>进程受管 · 运行中</div>
+          <div class="kpi-value" style="color:var(--emerald);"><span id="kpiManaged">0</span><span class="kpi-note">本进程注册表内</span></div>
+        </button>
+        <button type="button" class="kpi-cell" data-filter="orphan">
+          <div class="kpi-label"><span class="dot dot-amber"></span>孤儿残留 · 运行中</div>
+          <div class="kpi-value" style="color:var(--amber);"><span id="kpiOrphan">0</span><span class="kpi-note">脱离注册表</span></div>
+        </button>
+        <button type="button" class="kpi-cell" data-filter="zombie">
+          <div class="kpi-label"><span class="dot dot-rose"></span>僵死 / 异常终态</div>
+          <div class="kpi-value" style="color:var(--rose);"><span id="kpiZombie">0</span><span class="kpi-note" id="kpiZombieNote">Exited / Dead / OOM</span></div>
+        </button>
+      </div>
+
+      <!-- 筛选与一键清理工具条 -->
+      <div class="modal-toolbar">
+        <div class="toolbar-left">
+          <div class="search-wrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="search-input" id="searchInput" placeholder="搜索用户名、容器/Pod 名、ID 或技能令牌..." />
+          </div>
+          <div class="filter-pills" id="filterPills">
+            <button type="button" data-filter="all" class="active">全部</button>
+            <button type="button" data-filter="managed">受管运行</button>
+            <button type="button" data-filter="orphan">孤儿残留</button>
+            <button type="button" data-filter="zombie">僵死异常</button>
+          </div>
+        </div>
+        <div class="toolbar-right">
+          <button type="button" class="btn btn-soft-danger btn-sm" id="cleanupStaleBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            <span id="cleanupStaleText">一键清理孤儿/僵死</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 批量选择操作条 -->
+      <div class="batch-bar" id="batchBar">
+        <span>已勾选 <strong id="selectedCount">0</strong> 台沙箱实例（仅删除容器/Pod，用户工作区挂载目录不受影响）</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="btn btn-sm" id="batchRestartBtn">批量重启</button>
+          <button type="button" class="btn btn-danger btn-sm" id="batchKillBtn">批量 Kill 销毁</button>
+          <button type="button" class="btn btn-sm" id="clearSelectBtn">取消选择</button>
+        </div>
+      </div>
+
+      <!-- 实例表格 -->
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px;"><input type="checkbox" id="selectAllCheckbox" /></th>
+              <th style="width:170px;">归属用户 / 技能令牌</th>
+              <th><span id="colInstanceHeader">容器名 / ID / 镜像</span></th>
+              <th style="width:160px;">状态 &amp; 托管判据</th>
+              <th style="width:150px;">存活时长 / 回收倒计时</th>
+              <th style="width:130px;">资源占用</th>
+              <th style="width:190px;text-align:right;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="sandboxTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- 底部说明 -->
+      <div class="modal-footer">
+        <span id="footerSummary">显示 0 / 0 条 · 安全边界：Kill 或重启只销毁沙箱运行壳，宿主 / PVC 用户工作区文件完整保留</span>
+        <span>需要权限：<code class="mono" style="background:#e2e8f0;padding:1px 5px;border-radius:4px;color:#334155;">element:system:config_save</code></span>
+      </div>
+
+      <!-- 右侧二级抽屉：容器/Pod 详情与实时日志 -->
+      <div class="detail-drawer" id="detailDrawer">
+        <div class="drawer-header">
+          <div>
+            <div style="font-size:14px;font-weight:700;" id="drawerTitle">沙箱详情</div>
+            <div style="font-size:11px;color:var(--text-muted);" class="mono" id="drawerSubtitle"></div>
+          </div>
+          <button type="button" class="icon-btn" id="closeDrawerBtn" title="关闭详情">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="drawer-body" id="drawerBody"></div>
+        <div class="drawer-footer">
+          <button type="button" class="btn btn-sm" id="drawerRestartBtn">重启沙箱</button>
+          <button type="button" class="btn btn-danger btn-sm" id="drawerKillBtn">强制 Kill 销毁</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 二次确认弹窗 -->
+  <div class="confirm-backdrop" id="confirmModal">
+    <div class="confirm-box">
+      <div class="confirm-body">
+        <h4 class="confirm-title" id="confirmTitle">确认操作</h4>
+        <p class="confirm-desc" id="confirmDesc"></p>
+        <div class="confirm-warn" id="confirmWarn" style="display:none;"></div>
+      </div>
+      <div class="confirm-footer">
+        <button type="button" class="btn btn-sm" id="confirmCancelBtn">取消</button>
+        <button type="button" class="btn btn-danger btn-sm" id="confirmOkBtn">确认执行</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 容器 -->
+  <div class="toast-stack" id="toastStack"></div>
+
+  <script>
+    // ====== 真实感 Mock 数据（Docker 对应 yunshu-test2 真实命名；K8s 对应集群 Pod） ======
+    const INITIAL_DATA = {
+      docker: [
+        {
+          id: "d10a63cf646f",
+          name: "as_ws_demo2__8-df0e571b2ef5",
+          userKey: "demo2__8",
+          skillToken: "df0e571b2ef5",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 18 minutes",
+          category: "managed", // managed | orphan | zombie
+          ageText: "18 分钟",
+          ageSeverity: "normal",
+          idleText: "11 分钟后空闲回收",
+          cpu: "1.4%",
+          mem: "186 MiB / 2 GiB",
+          pids: "14 / 512",
+          initEnabled: true,
+          mount: "/app/data/agent_workspaces/demo2__8 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-28 20:21:10",
+          logs: "[20:21:11] tini (PID 1) started: sleep infinity\n[20:21:12] agentscope gateway listening on 127.0.0.1:8765\n[20:21:13] MCP server 'sandbox' connected (bash/read/write/glob)\n[20:34:05] POST /mcp/sandbox/bash -> exit_code=0 (412ms)"
+        },
+        {
+          id: "2de12ba89766",
+          name: "as_ws_admin__1-2013c9aed160",
+          userKey: "admin__1",
+          skillToken: "2013c9aed160",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 6 minutes",
+          category: "managed",
+          ageText: "6 分钟",
+          ageSeverity: "normal",
+          idleText: "执行中（心跳保活）",
+          cpu: "12.8%",
+          mem: "412 MiB / 2 GiB",
+          pids: "23 / 512",
+          initEnabled: true,
+          mount: "/app/data/agent_workspaces/admin__1 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-28 20:33:04",
+          logs: "[20:33:05] tini (PID 1) started: sleep infinity\n[20:33:06] agentscope gateway ready\n[20:37:50] Running python3 /workspace/sessions/conv_918/analyze.py ..."
+        },
+        {
+          id: "d1669ce631a6",
+          name: "as_ws_howard_huang__68-3947d49cab03",
+          userKey: "howard_huang__68",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 2 days",
+          category: "orphan",
+          ageText: "2 天 4 小时",
+          ageSeverity: "warn",
+          idleText: "脱离进程注册表（待对账）",
+          cpu: "0.0%",
+          mem: "94 MiB / 2 GiB",
+          pids: "6 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/howard_huang__68 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-26 16:12:41",
+          logs: "[Nov 26 16:12:42] gateway started\n[Nov 26 16:28:11] last bash call finished (exit_code=0)\n# 平台重启后该容器脱离本进程注册表，持续空占内存"
+        },
+        {
+          id: "471b6f956e2c",
+          name: "as_ws_lsc__38-3947d49cab03",
+          userKey: "lsc__38",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 2 days",
+          category: "orphan",
+          ageText: "2 天 7 小时",
+          ageSeverity: "warn",
+          idleText: "脱离进程注册表（待对账）",
+          cpu: "0.0%",
+          mem: "88 MiB / 2 GiB",
+          pids: "5 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/lsc__38 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-26 13:05:19",
+          logs: "[Nov 26 13:05:20] gateway started\n# 无最近活动记录"
+        },
+        {
+          id: "ece4b9b6158a",
+          name: "as_ws_demo2__8-20d256d3fd94",
+          userKey: "demo2__8",
+          skillToken: "20d256d3fd94",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 2 days",
+          category: "orphan",
+          ageText: "2 天 9 小时",
+          ageSeverity: "warn",
+          idleText: "旧技能集残留（待对账）",
+          cpu: "0.0%",
+          mem: "102 MiB / 2 GiB",
+          pids: "7 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/demo2__8 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-26 11:08:30",
+          logs: "[Nov 26 11:08:32] gateway started\n# 技能白名单变更后生成的历史容器"
+        },
+        {
+          id: "7b3663a357a6",
+          name: "as_ws_ckf__12-3947d49cab03",
+          userKey: "ckf__12",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 4 days",
+          category: "orphan",
+          ageText: "4 天 2 小时",
+          ageSeverity: "warn",
+          idleText: "脱离进程注册表（待对账）",
+          cpu: "0.0%",
+          mem: "91 MiB / 2 GiB",
+          pids: "5 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/ckf__12 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-24 18:10:02",
+          logs: "[Nov 24 18:10:04] gateway started"
+        },
+        {
+          id: "58ae54fc2354",
+          name: "as_ws_junchao__10-3947d49cab03",
+          userKey: "junchao__10",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 2 weeks",
+          category: "orphan",
+          ageText: "14 天 6 小时",
+          ageSeverity: "danger",
+          idleText: "长期孤儿残留",
+          cpu: "0.0%",
+          mem: "118 MiB / 2 GiB",
+          pids: "9 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/junchao__10 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-14 14:22:18",
+          logs: "[Nov 14 14:22:20] gateway started\n# 历史残留两周的孤儿沙箱"
+        },
+        {
+          id: "95d50a08205b",
+          name: "as_ws_kai827363969__53-3947d49cab03",
+          userKey: "kai827363969__53",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "running",
+          stateDetail: "Up 2 weeks",
+          category: "orphan",
+          ageText: "15 天 1 小时",
+          ageSeverity: "danger",
+          idleText: "长期孤儿残留",
+          cpu: "0.0%",
+          mem: "105 MiB / 2 GiB",
+          pids: "6 / 512",
+          initEnabled: false,
+          mount: "/app/data/agent_workspaces/kai827363969__53 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-13 19:40:00",
+          logs: "[Nov 13 19:40:02] gateway started"
+        },
+        {
+          id: "fa90773bf501",
+          name: "as_ws_Zz123__67-3947d49cab03",
+          userKey: "Zz123__67",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "exited",
+          stateDetail: "Exited (137) OOMKilled",
+          category: "zombie",
+          ageText: "2 天 1 小时",
+          ageSeverity: "danger",
+          idleText: "已终止（可立即清理）",
+          cpu: "—",
+          mem: "0 MiB (OOM)",
+          pids: "0",
+          initEnabled: true,
+          mount: "/app/data/agent_workspaces/Zz123__67 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-26 19:15:12",
+          logs: "[Nov 26 19:18:44] pandas.read_excel('/workspace/uploads/large_dump.xlsx')\n[Nov 26 19:19:02] Memory cgroup out of memory: Killed process (python3)\n[Nov 26 19:19:02] Container exited with code 137 (OOMKilled)"
+        },
+        {
+          id: "c165291d8da9",
+          name: "as_ws_ct918__17-3947d49cab03",
+          userKey: "ct918__17",
+          skillToken: "3947d49cab03",
+          image: "agentscope-workspace:087addbdf34b",
+          runtimeState: "dead",
+          stateDetail: "Dead (mount error)",
+          category: "zombie",
+          ageText: "19 小时",
+          ageSeverity: "danger",
+          idleText: "异常终态（可立即清理）",
+          cpu: "—",
+          mem: "—",
+          pids: "—",
+          initEnabled: true,
+          mount: "/app/data/agent_workspaces/ct918__17 → /workspace",
+          nodeOrHost: "yunshu-test2 (local daemon)",
+          createdAt: "2026-11-28 01:12:00",
+          logs: "[01:12:01] container failed during removal/start -> state=Dead"
+        }
+      ],
+      k8s: [
+        {
+          id: "uid-9f3a2c81",
+          name: "as-ws-admin--1-2013c9aed160",
+          userKey: "admin__1",
+          skillToken: "2013c9aed160",
+          image: "nanzi-sandbox-k8s:1.0.4",
+          runtimeState: "Running",
+          stateDetail: "Running (1/1 Ready)",
+          category: "managed",
+          ageText: "12 分钟",
+          ageSeverity: "normal",
+          idleText: "9 分钟后空闲回收",
+          cpu: "45m / 1000m",
+          mem: "248 Mi / 1 Gi",
+          pids: "PVC: 共享卷",
+          initEnabled: true,
+          mount: "PVC nanzi-ai-agent-data (subPath: agent_workspaces/admin__1)",
+          nodeOrHost: "node-worker-02 · 10.244.2.38",
+          createdAt: "2026-11-28 20:27:10",
+          logs: "[20:27:12] Pod scheduled on node-worker-02\n[20:27:14] Mounted shared PVC nanzi-ai-agent-data\n[20:27:16] FastMCP sandbox gateway listening on :8765"
+        },
+        {
+          id: "uid-4b7d1e20",
+          name: "as-ws-demo2--8-df0e571b2ef5",
+          userKey: "demo2__8",
+          skillToken: "df0e571b2ef5",
+          image: "nanzi-sandbox-k8s:1.0.4",
+          runtimeState: "Running",
+          stateDetail: "Running (1/1 Ready)",
+          category: "managed",
+          ageText: "4 分钟",
+          ageSeverity: "normal",
+          idleText: "执行中（心跳保活）",
+          cpu: "210m / 1000m",
+          mem: "390 Mi / 1 Gi",
+          pids: "PVC: 共享卷",
+          initEnabled: true,
+          mount: "PVC nanzi-ai-agent-data (subPath: agent_workspaces/demo2__8)",
+          nodeOrHost: "node-worker-01 · 10.244.1.74",
+          createdAt: "2026-11-28 20:35:05",
+          logs: "[20:35:07] Pod ready (2.1s cold start with prebuilt image)\n[20:36:40] Executing bash tool: uv run report_builder.py"
+        },
+        {
+          id: "uid-7c1e9a45",
+          name: "as-ws-howard-huang--68-3947d49cab03",
+          userKey: "howard_huang__68",
+          skillToken: "3947d49cab03",
+          image: "nanzi-sandbox-k8s:1.0.4",
+          runtimeState: "Running",
+          stateDetail: "Running (1/1 Ready)",
+          category: "orphan",
+          ageText: "3 天 5 小时",
+          ageSeverity: "warn",
+          idleText: "脱离进程注册表（待对账）",
+          cpu: "2m / 1000m",
+          mem: "112 Mi / 1 Gi",
+          pids: "PVC: 共享卷",
+          initEnabled: true,
+          mount: "PVC nanzi-ai-agent-data (subPath: agent_workspaces/howard_huang__68)",
+          nodeOrHost: "node-worker-03 · 10.244.3.19",
+          createdAt: "2026-11-25 15:10:00",
+          logs: "[Nov 25 15:10:04] Pod started\n# 平台 Deployment 滚动更新后脱离新副本缓存"
+        },
+        {
+          id: "uid-e052b19a",
+          name: "as-ws-zz123--67-3947d49cab03",
+          userKey: "Zz123__67",
+          skillToken: "3947d49cab03",
+          image: "nanzi-sandbox-k8s:1.0.4",
+          runtimeState: "Failed",
+          stateDetail: "Failed (Evicted · DiskPressure)",
+          category: "zombie",
+          ageText: "8 小时",
+          ageSeverity: "danger",
+          idleText: "已驱逐终态（可立即清理）",
+          cpu: "—",
+          mem: "—",
+          pids: "PVC: 共享卷",
+          initEnabled: true,
+          mount: "PVC nanzi-ai-agent-data (subPath: agent_workspaces/Zz123__67)",
+          nodeOrHost: "node-worker-02 (Evicted)",
+          createdAt: "2026-11-28 12:14:22",
+          logs: "Status: Failed\nReason: Evicted\nMessage: The node was low on resource: ephemeral-storage."
+        },
+        {
+          id: "uid-a319c6f0",
+          name: "as-ws-ct918--17-legacy",
+          userKey: "ct918__17",
+          skillToken: "历史无令牌",
+          image: "nanzi-sandbox-k8s:bad-tag",
+          runtimeState: "Pending",
+          stateDetail: "Pending (ImagePullBackOff · 22m)",
+          category: "zombie",
+          ageText: "22 分钟",
+          ageSeverity: "danger",
+          idleText: "Pending 超时卡死（>10m）",
+          cpu: "—",
+          mem: "—",
+          pids: "PVC: 独立卷",
+          initEnabled: true,
+          mount: "Isolated PVC as-ws-ct918--17-legacy",
+          nodeOrHost: "node-worker-01 (ImagePullBackOff)",
+          createdAt: "2026-11-28 20:17:02",
+          logs: "Warning  Failed     Pulling image 'nanzi-sandbox-k8s:bad-tag'\nWarning  Failed     ErrImagePull: rpc error: manifest unknown"
+        }
+      ]
+    };
+
+    // ====== 状态 ======
+    let currentPolicy = "docker";
+    const dataByPolicy = {
+      docker: JSON.parse(JSON.stringify(INITIAL_DATA.docker)),
+      k8s: JSON.parse(JSON.stringify(INITIAL_DATA.k8s))
+    };
+    let activeFilter = "all";
+    let searchKeyword = "";
+    const selectedIds = new Set();
+    let activeDetailId = null;
+    let pendingConfirmAction = null;
+    let autoRefreshTimer = null;
+
+    // ====== DOM 引用 ======
+    const protoPolicySeg = document.getElementById("protoPolicySeg");
+    const protoOpenModalBtn = document.getElementById("protoOpenModalBtn");
+    const policySelectTrigger = document.getElementById("policySelectTrigger");
+    const policyMenu = document.getElementById("policyMenu");
+    const policyLabel = document.getElementById("policyLabel");
+    const policyDesc = document.getElementById("policyDesc");
+    const headerManageBtn = document.getElementById("headerManageBtn");
+    const headerManageBtnText = document.getElementById("headerManageBtnText");
+    const headerManageCount = document.getElementById("headerManageCount");
+    const runtimeEntryStrip = document.getElementById("runtimeEntryStrip");
+    const stripTitle = document.getElementById("stripTitle");
+    const stripEnvChip = document.getElementById("stripEnvChip");
+    const stripStats = document.getElementById("stripStats");
+    const stripManageBtn = document.getElementById("stripManageBtn");
+    const stripBtnText = document.getElementById("stripBtnText");
+
+    const sandboxModal = document.getElementById("sandboxModal");
+    const modalHeading = document.getElementById("modalHeading");
+    const modalScopeChip = document.getElementById("modalScopeChip");
+    const modalBackendDesc = document.getElementById("modalBackendDesc");
+    const lastRefreshedText = document.getElementById("lastRefreshedText");
+    const colInstanceHeader = document.getElementById("colInstanceHeader");
+    const kpiAll = document.getElementById("kpiAll");
+    const kpiManaged = document.getElementById("kpiManaged");
+    const kpiOrphan = document.getElementById("kpiOrphan");
+    const kpiZombie = document.getElementById("kpiZombie");
+    const kpiZombieNote = document.getElementById("kpiZombieNote");
+    const cleanupStaleBtn = document.getElementById("cleanupStaleBtn");
+    const cleanupStaleText = document.getElementById("cleanupStaleText");
+    const searchInput = document.getElementById("searchInput");
+    const selectAllCheckbox = document.getElementById("selectAllCheckbox");
+    const batchBar = document.getElementById("batchBar");
+    const selectedCount = document.getElementById("selectedCount");
+    const tableBody = document.getElementById("sandboxTableBody");
+    const footerSummary = document.getElementById("footerSummary");
+
+    const detailDrawer = document.getElementById("detailDrawer");
+    const drawerTitle = document.getElementById("drawerTitle");
+    const drawerSubtitle = document.getElementById("drawerSubtitle");
+    const drawerBody = document.getElementById("drawerBody");
+
+    const confirmModal = document.getElementById("confirmModal");
+    const confirmTitle = document.getElementById("confirmTitle");
+    const confirmDesc = document.getElementById("confirmDesc");
+    const confirmWarn = document.getElementById("confirmWarn");
+    const confirmOkBtn = document.getElementById("confirmOkBtn");
+
+    function showToast(text, type = "info") {
+      const el = document.createElement("div");
+      el.className = `toast ${type}`;
+      el.textContent = text;
+      document.getElementById("toastStack").appendChild(el);
+      setTimeout(() => { el.remove(); }, 2800);
+    }
+
+    function getList() {
+      return dataByPolicy[currentPolicy] || [];
+    }
+
+    function computeStats(items) {
+      return {
+        all: items.length,
+        managed: items.filter(x => x.category === "managed").length,
+        orphan: items.filter(x => x.category === "orphan").length,
+        zombie: items.filter(x => x.category === "zombie").length
+      };
+    }
+
+    function renderHostPage() {
+      // 更新策略文案
+      const meta = {
+        docker: {
+          label: "docker（Docker 容器）",
+          desc: "在自动构建的 Docker 容器内执行，工作区按用户隔离",
+          btn: "管理 Docker 容器",
+          stripTitle: "当前 Docker 沙箱实例概览",
+          stripEnv: "unix:///var/run/docker.sock",
+          stripBtn: "查看与管理沙箱容器"
+        },
+        k8s: {
+          label: "k8s（Kubernetes Pod）",
+          desc: "在 Kubernetes 集群内按用户动态拉起独立沙箱 Pod（云原生生产推荐）",
+          btn: "管理 K8s Pod",
+          stripTitle: "当前 Kubernetes 沙箱 Pod 概览",
+          stripEnv: "namespace: nanzi-ai-agent",
+          stripBtn: "查看与管理沙箱 Pod"
+        },
+        local: {
+          label: "local（本地宿主机执行）",
+          desc: "在平台当前进程宿主机内直接执行，无容器实例",
+          btn: "",
+          stripTitle: "",
+          stripEnv: "",
+          stripBtn: ""
+        }
+      }[currentPolicy];
+
+      policyLabel.textContent = meta.label;
+      policyDesc.textContent = meta.desc;
+
+      // 同步顶部原型切换按钮 & 下拉选中态
+      protoPolicySeg.querySelectorAll("button").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.policy === currentPolicy);
+      });
+      policyMenu.querySelectorAll(".policy-option").forEach(btn => {
+        btn.classList.toggle("selected", btn.dataset.policy === currentPolicy);
+      });
+
+      const showEntry = currentPolicy === "docker" || currentPolicy === "k8s";
+      headerManageBtn.style.display = showEntry ? "inline-flex" : "none";
+      runtimeEntryStrip.style.display = showEntry ? "flex" : "none";
+      protoOpenModalBtn.disabled = !showEntry;
+
+      if (!showEntry) {
+        closeModal();
+        return;
+      }
+
+      const stats = computeStats(getList());
+      headerManageBtnText.textContent = meta.btn;
+      headerManageCount.textContent = String(stats.all);
+      stripTitle.textContent = meta.stripTitle;
+      stripEnvChip.textContent = meta.stripEnv;
+      stripBtnText.textContent = meta.stripBtn;
+      runtimeEntryStrip.classList.toggle("has-alert", stats.orphan + stats.zombie > 0);
+
+      stripStats.innerHTML = `
+        <span class="stat-inline"><span class="dot dot-emerald"></span>受管运行 <strong>${stats.managed}</strong></span>
+        <span class="stat-inline"><span class="dot dot-amber"></span>孤儿残留 <strong style="color:${stats.orphan ? 'var(--amber)' : 'inherit'}">${stats.orphan}</strong></span>
+        <span class="stat-inline"><span class="dot dot-rose"></span>僵死异常 <strong style="color:${stats.zombie ? 'var(--rose)' : 'inherit'}">${stats.zombie}</strong></span>
+      `;
+    }
+
+    function renderModal() {
+      if (currentPolicy === "local") return;
+      const isK8s = currentPolicy === "k8s";
+      const items = getList();
+      const stats = computeStats(items);
+
+      modalHeading.textContent = isK8s ? "Kubernetes 沙箱 Pod 管理" : "Docker 沙箱容器管理";
+      modalScopeChip.textContent = isK8s
+        ? "ns: nanzi-ai-agent · agentscope.workspace=true"
+        : "label: agentscope.workspace=true";
+      modalBackendDesc.textContent = isK8s
+        ? "Kubernetes 集群实时视图（仅展示带平台标签的沙箱 Pod，绝不涉及平台主服务 Pod）"
+        : "宿主机 Docker Daemon 实时视图（仅展示带平台标签的沙箱容器，绝不涉及平台主服务容器）";
+      colInstanceHeader.textContent = isK8s ? "Pod 名称 / UID / 镜像与节点" : "容器名 / ID / 镜像";
+      kpiZombieNote.textContent = isK8s ? "Failed / Evicted / Pending 超时" : "Exited / Dead / OOMKilled";
+
+      kpiAll.textContent = String(stats.all);
+      kpiManaged.textContent = String(stats.managed);
+      kpiOrphan.textContent = String(stats.orphan);
+      kpiZombie.textContent = String(stats.zombie);
+
+      const staleCount = stats.orphan + stats.zombie;
+      cleanupStaleBtn.disabled = staleCount === 0;
+      cleanupStaleText.textContent = staleCount > 0
+        ? `一键清理孤儿/僵死 (${staleCount})`
+        : "无孤儿/僵死需清理";
+
+      // 同步筛选高亮
+      document.querySelectorAll("#kpiStrip .kpi-cell").forEach(el => {
+        el.classList.toggle("active", el.dataset.filter === activeFilter);
+      });
+      document.querySelectorAll("#filterPills button").forEach(el => {
+        el.classList.toggle("active", el.dataset.filter === activeFilter);
+      });
+
+      const q = searchKeyword.trim().toLowerCase();
+      const filtered = items.filter(item => {
+        if (activeFilter !== "all" && item.category !== activeFilter) return false;
+        if (!q) return true;
+        return (
+          item.userKey.toLowerCase().includes(q) ||
+          item.name.toLowerCase().includes(q) ||
+          item.id.toLowerCase().includes(q) ||
+          item.skillToken.toLowerCase().includes(q) ||
+          item.stateDetail.toLowerCase().includes(q)
+        );
+      });
+
+      // 清理已不存在的勾选项
+      const existingIdSet = new Set(items.map(i => i.id));
+      Array.from(selectedIds).forEach(id => {
+        if (!existingIdSet.has(id)) selectedIds.delete(id);
+      });
+
+      const visibleSelected = filtered.filter(i => selectedIds.has(i.id)).length;
+      selectAllCheckbox.checked = filtered.length > 0 && visibleSelected === filtered.length;
+      selectAllCheckbox.indeterminate = visibleSelected > 0 && visibleSelected < filtered.length;
+
+      batchBar.classList.toggle("open", selectedIds.size > 0);
+      selectedCount.textContent = String(selectedIds.size);
+
+      footerSummary.textContent = `显示 ${filtered.length} / ${items.length} 条 · 安全边界：Kill 或重启只销毁沙箱运行壳，宿主 / PVC 用户工作区文件完整保留`;
+
+      if (filtered.length === 0) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <h4>当前筛选条件下没有沙箱实例</h4>
+                <div>可切换上方状态分组，或点击右上角「刷新」重新拉取实时状态。</div>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tableBody.innerHTML = filtered.map(item => {
+        const isChecked = selectedIds.has(item.id);
+        const stateBadge = item.category === "zombie"
+          ? `<span class="badge badge-rose"><span class="dot dot-rose"></span>${escapeHtml(item.stateDetail)}</span>`
+          : `<span class="badge badge-emerald"><span class="dot dot-emerald"></span>${escapeHtml(item.stateDetail)}</span>`;
+
+        const ownerBadge = item.category === "managed"
+          ? `<span class="badge badge-blue">进程受管</span>`
+          : item.category === "orphan"
+            ? `<span class="badge badge-amber">孤儿 · 脱离注册表</span>`
+            : `<span class="badge badge-slate">僵死终态</span>`;
+
+        const ageClass = item.ageSeverity === "danger"
+          ? "age-danger"
+          : item.ageSeverity === "warn" ? "age-warn" : "";
+
+        return `
+          <tr class="${isChecked ? "selected" : ""}">
+            <td>
+              <input type="checkbox" class="row-check" data-id="${escapeHtml(item.id)}" ${isChecked ? "checked" : ""} />
+            </td>
+            <td>
+              <div class="user-cell">
+                <span class="user-name">${escapeHtml(item.userKey)}</span>
+                <span class="token-tag">令牌: ${escapeHtml(item.skillToken)}</span>
+              </div>
+            </td>
+            <td>
+              <div class="name-cell">
+                <div class="instance-name">
+                  <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                  <button type="button" class="copy-mini" data-copy="${escapeHtml(item.name)}" title="复制名称">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+                <div class="instance-sub">${escapeHtml(item.id)} · ${escapeHtml(item.image)}</div>
+              </div>
+            </td>
+            <td>
+              <div class="status-stack">
+                ${stateBadge}
+                ${ownerBadge}
+              </div>
+            </td>
+            <td>
+              <div class="${ageClass}">${escapeHtml(item.ageText)}</div>
+              <div class="resource-sub">${escapeHtml(item.idleText)}</div>
+            </td>
+            <td>
+              <div class="resource-cell">${escapeHtml(item.mem)}</div>
+              <div class="resource-sub">CPU ${escapeHtml(item.cpu)} · ${escapeHtml(item.pids)}</div>
+            </td>
+            <td>
+              <div class="row-actions">
+                <button type="button" class="btn btn-xs" data-action="detail" data-id="${escapeHtml(item.id)}">日志/详情</button>
+                <button type="button" class="btn btn-xs" data-action="restart" data-id="${escapeHtml(item.id)}">重启</button>
+                <button type="button" class="btn btn-soft-danger btn-xs" data-action="kill" data-id="${escapeHtml(item.id)}">Kill</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function openModal() {
+      if (currentPolicy === "local") return;
+      sandboxModal.classList.add("open");
+      renderModal();
+    }
+
+    function closeModal() {
+      sandboxModal.classList.remove("open");
+      closeDrawer();
+    }
+
+    function openDrawer(id) {
+      const item = getList().find(x => x.id === id);
+      if (!item) return;
+      activeDetailId = id;
+      const isK8s = currentPolicy === "k8s";
+      drawerTitle.textContent = `${item.userKey} · ${isK8s ? "Pod" : "容器"}详情`;
+      drawerSubtitle.textContent = `${item.name} (${item.id})`;
+      drawerBody.innerHTML = `
+        <div class="kv-grid">
+          <div class="kv-k">运行状态</div><div class="kv-v">${escapeHtml(item.stateDetail)}</div>
+          <div class="kv-k">托管判据</div><div class="kv-v">${item.category === "managed" ? "进程受管（活跃注册表内）" : item.category === "orphan" ? "孤儿残留（不在当前进程注册表）" : "僵死异常终态"}</div>
+          <div class="kv-k">归属用户</div><div class="kv-v mono">${escapeHtml(item.userKey)}</div>
+          <div class="kv-k">技能集合令牌</div><div class="kv-v mono">${escapeHtml(item.skillToken)}</div>
+          <div class="kv-k">沙箱镜像</div><div class="kv-v mono">${escapeHtml(item.image)}</div>
+          <div class="kv-k">${isK8s ? "所在节点 / IP" : "宿主机 / Init"}</div><div class="kv-v mono">${escapeHtml(item.nodeOrHost)}${!isK8s ? (item.initEnabled ? " · tini Init=True" : " · 旧容器 Init=False") : ""}</div>
+          <div class="kv-k">工作区挂载</div><div class="kv-v mono">${escapeHtml(item.mount)}</div>
+          <div class="kv-k">创建时间</div><div class="kv-v mono">${escapeHtml(item.createdAt)}（已存活 ${escapeHtml(item.ageText)}）</div>
+        </div>
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <strong style="font-size:12px;">最近日志（tail 100）</strong>
+            <button type="button" class="btn btn-xs" id="copyLogBtn">复制日志</button>
+          </div>
+          <div class="log-box">${escapeHtml(item.logs)}</div>
+        </div>
+      `;
+      document.getElementById("copyLogBtn").onclick = () => {
+        showToast("已复制沙箱日志到剪贴板", "info");
+      };
+      detailDrawer.classList.add("open");
+    }
+
+    function closeDrawer() {
+      detailDrawer.classList.remove("open");
+      activeDetailId = null;
+    }
+
+    function openConfirm({ title, desc, warn, okLabel, okDanger = true, onConfirm }) {
+      confirmTitle.textContent = title;
+      confirmDesc.textContent = desc;
+      if (warn) {
+        confirmWarn.textContent = warn;
+        confirmWarn.style.display = "block";
+      } else {
+        confirmWarn.style.display = "none";
+      }
+      confirmOkBtn.textContent = okLabel || "确认执行";
+      confirmOkBtn.className = okDanger ? "btn btn-danger btn-sm" : "btn btn-primary btn-sm";
+      pendingConfirmAction = onConfirm;
+      confirmModal.classList.add("open");
+    }
+
+    function closeConfirm() {
+      confirmModal.classList.remove("open");
+      pendingConfirmAction = null;
+    }
+
+    function killItems(ids, label) {
+      const idSet = new Set(ids);
+      dataByPolicy[currentPolicy] = getList().filter(x => !idSet.has(x.id));
+      ids.forEach(id => selectedIds.delete(id));
+      if (activeDetailId && idSet.has(activeDetailId)) closeDrawer();
+      renderHostPage();
+      renderModal();
+      showToast(label, "success");
+    }
+
+    function restartItems(ids, label) {
+      const idSet = new Set(ids);
+      const isK8s = currentPolicy === "k8s";
+      dataByPolicy[currentPolicy] = getList().map(item => {
+        if (!idSet.has(item.id)) return item;
+        return {
+          ...item,
+          id: (isK8s ? "uid-" : "") + Math.random().toString(16).slice(2, 10),
+          runtimeState: isK8s ? "Running" : "running",
+          stateDetail: isK8s ? "Running (1/1 Ready)" : "Up 2 seconds",
+          category: "managed",
+          ageText: "刚刚重启",
+          ageSeverity: "normal",
+          idleText: "15 分钟后空闲回收",
+          cpu: isK8s ? "15m / 1000m" : "0.6%",
+          mem: isK8s ? "132 Mi / 1 Gi" : "116 MiB / 2 GiB",
+          pids: isK8s ? "PVC: 共享卷" : "8 / 512",
+          initEnabled: true,
+          createdAt: "2026-11-28 20:40:00",
+          logs: `[20:40:00] 管理员触发重建成功\n[20:40:01] tini/gateway 已重新就绪`
+        };
+      });
+      ids.forEach(id => selectedIds.delete(id));
+      if (activeDetailId && idSet.has(activeDetailId)) closeDrawer();
+      renderHostPage();
+      renderModal();
+      showToast(label, "success");
+    }
+
+    function switchPolicy(nextPolicy) {
+      currentPolicy = nextPolicy;
+      activeFilter = "all";
+      searchKeyword = "";
+      searchInput.value = "";
+      selectedIds.clear();
+      policyMenu.classList.remove("open");
+      renderHostPage();
+      if (sandboxModal.classList.contains("open") && currentPolicy !== "local") {
+        renderModal();
+      }
+    }
+
+    // ====== 事件绑定 ======
+    protoPolicySeg.addEventListener("click", e => {
+      const btn = e.target.closest("button[data-policy]");
+      if (btn) switchPolicy(btn.dataset.policy);
+    });
+    protoOpenModalBtn.addEventListener("click", openModal);
+
+    policySelectTrigger.addEventListener("click", () => {
+      policyMenu.classList.toggle("open");
+    });
+    policyMenu.addEventListener("click", e => {
+      const opt = e.target.closest(".policy-option");
+      if (opt) switchPolicy(opt.dataset.policy);
+    });
+    document.addEventListener("click", e => {
+      if (!policySelectTrigger.contains(e.target) && !policyMenu.contains(e.target)) {
+        policyMenu.classList.remove("open");
+      }
+    });
+
+    headerManageBtn.addEventListener("click", openModal);
+    stripManageBtn.addEventListener("click", openModal);
+    document.getElementById("closeModalBtn").addEventListener("click", closeModal);
+    sandboxModal.addEventListener("click", e => {
+      if (e.target === sandboxModal) closeModal();
+    });
+
+    document.getElementById("kpiStrip").addEventListener("click", e => {
+      const cell = e.target.closest(".kpi-cell");
+      if (!cell) return;
+      activeFilter = cell.dataset.filter;
+      renderModal();
+    });
+    document.getElementById("filterPills").addEventListener("click", e => {
+      const btn = e.target.closest("button[data-filter]");
+      if (!btn) return;
+      activeFilter = btn.dataset.filter;
+      renderModal();
+    });
+
+    searchInput.addEventListener("input", e => {
+      searchKeyword = e.target.value;
+      renderModal();
+    });
+
+    selectAllCheckbox.addEventListener("change", () => {
+      const q = searchKeyword.trim().toLowerCase();
+      const filtered = getList().filter(item => {
+        if (activeFilter !== "all" && item.category !== activeFilter) return false;
+        if (!q) return true;
+        return (
+          item.userKey.toLowerCase().includes(q) ||
+          item.name.toLowerCase().includes(q) ||
+          item.id.toLowerCase().includes(q) ||
+          item.skillToken.toLowerCase().includes(q)
+        );
+      });
+      if (selectAllCheckbox.checked) {
+        filtered.forEach(i => selectedIds.add(i.id));
+      } else {
+        filtered.forEach(i => selectedIds.delete(i.id));
+      }
+      renderModal();
+    });
+
+    tableBody.addEventListener("change", e => {
+      const chk = e.target.closest(".row-check");
+      if (!chk) return;
+      if (chk.checked) selectedIds.add(chk.dataset.id);
+      else selectedIds.delete(chk.dataset.id);
+      renderModal();
+    });
+
+    tableBody.addEventListener("click", e => {
+      const copyBtn = e.target.closest(".copy-mini");
+      if (copyBtn) {
+        showToast(`已复制：${copyBtn.dataset.copy}`, "info");
+        return;
+      }
+      const actionBtn = e.target.closest("button[data-action]");
+      if (!actionBtn) return;
+      const id = actionBtn.dataset.id;
+      const action = actionBtn.dataset.action;
+      const item = getList().find(x => x.id === id);
+      if (!item) return;
+
+      if (action === "detail") {
+        openDrawer(id);
+      } else if (action === "kill") {
+        openConfirm({
+          title: `强制 Kill 并销毁沙箱`,
+          desc: `将销毁 ${item.userKey} 的沙箱 ${item.name}，并同步清理进程内缓存与孤儿技能目录。宿主机/PVC 中的用户工作区文件不会被删除。`,
+          warn: item.category === "managed"
+            ? "注意：该沙箱目前处于「进程受管 · 运行中」，强制销毁会中断该用户正在执行的 Bash/脚本命令，下次使用时会自动拉起新沙箱。"
+            : "",
+          okLabel: "确认 Kill 销毁",
+          okDanger: true,
+          onConfirm: () => killItems([item.id], `已销毁沙箱 ${item.name}`)
+        });
+      } else if (action === "restart") {
+        openConfirm({
+          title: `重启沙箱实例`,
+          desc: `将销毁旧实例 ${item.name} 并重新拉起一台干净的沙箱实例（保留用户工作区挂载目录，清空容器临时可写层）。`,
+          warn: item.category === "managed"
+            ? "该用户当前沙箱内正在运行的进程将被中断。"
+            : "该实例此前处于孤儿/异常态，重启后会重新纳管并恢复为健康运行态。",
+          okLabel: "确认重启",
+          okDanger: false,
+          onConfirm: () => restartItems([item.id], `已重启沙箱 ${item.name}`)
+        });
+      }
+    });
+
+    document.getElementById("closeDrawerBtn").addEventListener("click", closeDrawer);
+    document.getElementById("drawerKillBtn").addEventListener("click", () => {
+      if (!activeDetailId) return;
+      const item = getList().find(x => x.id === activeDetailId);
+      if (!item) return;
+      openConfirm({
+        title: "强制 Kill 并销毁沙箱",
+        desc: `确认销毁 ${item.name}？用户工作区挂载目录不受影响。`,
+        warn: item.category === "managed" ? "该沙箱正在受管运行中，强制销毁将中断当前运行命令。" : "",
+        okLabel: "确认 Kill 销毁",
+        onConfirm: () => killItems([item.id], `已销毁沙箱 ${item.name}`)
+      });
+    });
+    document.getElementById("drawerRestartBtn").addEventListener("click", () => {
+      if (!activeDetailId) return;
+      const item = getList().find(x => x.id === activeDetailId);
+      if (!item) return;
+      openConfirm({
+        title: "重启沙箱实例",
+        desc: `确认销毁并重启 ${item.name}？`,
+        okLabel: "确认重启",
+        okDanger: false,
+        onConfirm: () => restartItems([item.id], `已重启沙箱 ${item.name}`)
+      });
+    });
+
+    cleanupStaleBtn.addEventListener("click", () => {
+      const stale = getList().filter(x => x.category === "orphan" || x.category === "zombie");
+      if (!stale.length) return;
+      const orphanCount = stale.filter(x => x.category === "orphan").length;
+      const zombieCount = stale.filter(x => x.category === "zombie").length;
+      openConfirm({
+        title: `一键清理 ${stale.length} 台孤儿/僵死沙箱`,
+        desc: `本次将清理 ${orphanCount} 台脱离注册表的孤儿实例 + ${zombieCount} 台僵死/异常终态实例，并回收对应孤儿技能目录。所有「进程受管 · 运行中」的活跃沙箱不会被触碰。`,
+        warn: "若当前为多副本部署且已关闭 sandbox_orphan_reconcile，请先确认孤儿实例并非由其它平台副本正在使用；僵死终态实例在任意部署下均可安全清理。",
+        okLabel: `确认清理 ${stale.length} 台`,
+        okDanger: true,
+        onConfirm: () => killItems(stale.map(x => x.id), `已完成一键清理，共回收 ${stale.length} 台沙箱`)
+      });
+    });
+
+    document.getElementById("batchKillBtn").addEventListener("click", () => {
+      const ids = Array.from(selectedIds);
+      if (!ids.length) return;
+      const managedHit = getList().filter(x => selectedIds.has(x.id) && x.category === "managed").length;
+      openConfirm({
+        title: `批量 Kill 销毁 ${ids.length} 台沙箱`,
+        desc: `确认强制销毁已勾选的 ${ids.length} 台沙箱实例？用户工作区文件完整保留。`,
+        warn: managedHit > 0 ? `注意：所选项中包含 ${managedHit} 台「进程受管 · 运行中」沙箱，销毁将中断正在执行的任务。` : "",
+        okLabel: `批量销毁 (${ids.length})`,
+        okDanger: true,
+        onConfirm: () => killItems(ids, `已批量销毁 ${ids.length} 台沙箱`)
+      });
+    });
+
+    document.getElementById("batchRestartBtn").addEventListener("click", () => {
+      const ids = Array.from(selectedIds);
+      if (!ids.length) return;
+      openConfirm({
+        title: `批量重启 ${ids.length} 台沙箱`,
+        desc: `将销毁并重新拉起已勾选的 ${ids.length} 台沙箱实例。`,
+        okLabel: `批量重启 (${ids.length})`,
+        okDanger: false,
+        onConfirm: () => restartItems(ids, `已批量重启 ${ids.length} 台沙箱`)
+      });
+    });
+
+    document.getElementById("clearSelectBtn").addEventListener("click", () => {
+      selectedIds.clear();
+      renderModal();
+    });
+
+    document.getElementById("refreshBtn").addEventListener("click", () => {
+      const now = new Date();
+      lastRefreshedText.textContent = `最后刷新：${now.toTimeString().slice(0, 8)}`;
+      renderHostPage();
+      renderModal();
+      showToast("已刷新实时沙箱列表", "info");
+    });
+
+    document.getElementById("autoRefreshToggle").addEventListener("change", e => {
+      if (e.target.checked) {
+        autoRefreshTimer = setInterval(() => {
+          const now = new Date();
+          lastRefreshedText.textContent = `最后刷新：${now.toTimeString().slice(0, 8)}（自动）`;
+        }, 15000);
+        showToast("已开启 15 秒自动刷新", "info");
+      } else if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+        showToast("已关闭自动刷新", "info");
+      }
+    });
+
+    document.getElementById("confirmCancelBtn").addEventListener("click", closeConfirm);
+    confirmOkBtn.addEventListener("click", () => {
+      const fn = pendingConfirmAction;
+      closeConfirm();
+      if (fn) fn();
+    });
+    confirmModal.addEventListener("click", e => {
+      if (e.target === confirmModal) closeConfirm();
+    });
+
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        if (confirmModal.classList.contains("open")) closeConfirm();
+        else if (detailDrawer.classList.contains("open")) closeDrawer();
+        else if (sandboxModal.classList.contains("open")) closeModal();
+      }
+    });
+
+    // 初始化渲染（默认打开弹层方便直接评审，关闭即可看安全沙箱入口）
+    renderHostPage();
+    openModal();
+  </script>
+</body>
+</html>

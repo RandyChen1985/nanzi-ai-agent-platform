@@ -31,12 +31,19 @@ def test_observability_init_is_imported_lazily():
 
 
 def test_observability_init_is_wrapped_for_degradation():
-    """初始化必须被 try/except 包住，任何异常都不能阻断启动。"""
+    """初始化必须被降级兜底包住，任何异常/超时都不能阻断启动。
+
+    兜底形式从「裸 try/except」升级为 ``run_startup_step``：裸 try/except 只兜得住
+    抛出的异常，兜不住「卡住」——冷启动时若读配置的库不响应，协程会永远停在 await
+    上，服务既不报错也起不来。``run_startup_step`` 同时提供 deadline 与异常降级。
+    """
     source = inspect.getsource(main.lifespan)
-    init_index = source.index("init_observability")
-    surrounding = source[max(0, init_index - 400) : init_index + 400]
-    assert "try:" in surrounding
-    assert "except Exception" in surrounding
+    step_index = source.index("async def _init_observability_step")
+    tail = source[step_index : step_index + 700]
+    assert "init_observability" in tail
+    # 必须真的交给 run_startup_step（自带 wait_for + 异常降级），不能裸 await
+    assert "run_startup_step(" in tail
+    assert "await run_startup_step(" in tail
 
 
 def test_shutdown_runs_before_database_close():

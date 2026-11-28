@@ -56,6 +56,8 @@ install_cancellation_log_filters()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    import asyncio  # 启动链上的 deadline 与后台任务都要用，统一提到函数开头
+
     install_cancellation_log_filters()
     # 知识库图片原图曾放在 data/uploads/knowledge_images 下，而 data/uploads 整个
     # 挂在 /static/uploads 上（无鉴权）。现在目录已经挪到 data/knowledge_images，
@@ -100,31 +102,54 @@ async def lifespan(app: FastAPI):
     # Initialize Global HTTP Client
     from app.core.http_client import GlobalHttpClient
     await GlobalHttpClient.get_client()
-    
+
+    # 往下的启动步骤都是「旁路」：读配置、预热缓存、初始化追踪、装载调度器。
+    # 它们原先只有 try/except——能兜住抛出的异常，兜不住「卡住」：目标库不可达、
+    # 表被元数据锁挡住、对端连上却不回包时，协程会永远停在 await 上，日志停在上一条、
+    # 端口不监听，而且一条报错都没有。这里统一加 deadline，超时即记 ERROR 并降级继续。
+    from app.core.startup_guard import run_startup_step
+
     # Platform timezone cache (before scheduler)
-    try:
+    async def _refresh_platform_timezone_on_startup() -> None:
         from app.services.platform_timezone import refresh_platform_timezone
         from app.services.ai.time_anchor import get_default_timezone
 
         await refresh_platform_timezone()
         get_default_timezone.cache_clear()
-    except Exception as exc:
-        logging.warning("Failed to refresh platform timezone on startup: %s", exc)
+
+    await run_startup_step(
+        "平台时区缓存刷新",
+        _refresh_platform_timezone_on_startup,
+        timeout=10,
+    )
 
     # 预热提示词品牌名缓存，并同步 API 文档品牌（未启用品牌个性化时回落到默认品牌）
-    try:
-        brand_name = await BrandingSettingsService.refresh_prompt_brand_name()
+    # 读的是 Redis + system_configs：读不到就保留启动时的默认标题，不阻断启动。
+    brand_name = await run_startup_step(
+        "提示词品牌名预热",
+        BrandingSettingsService.refresh_prompt_brand_name,
+        timeout=10,
+    )
+    if brand_name:
         app.title = brand_name
         app.description = _API_DESCRIPTION_TEMPLATE.replace("{platform_brand_name}", brand_name)
         app.openapi_schema = None
-    except Exception as exc:
-        logging.warning("Failed to refresh prompt branding on startup: %s", exc)
 
     # Start Task Scheduler
+    # 两层兜底，缺一不可：
+    # 1. jobstore 走同步 pymysql，且 SQL 在事件循环里执行——同步段由驱动自身的
+    #    connect/read 超时兜住（见 scheduler_service._build_jobstore_url）；
+    # 2. start() 里还有若干 async 读库（时区配置、reload_tasks、订阅装载），
+    #    这里给整体一个 deadline，超时就丢弃半初始化的调度器。
     from app.services.ai.scheduler_service import scheduler_service
     if settings.TASK_SCHEDULER_ENABLED:
         try:
-            await scheduler_service.start()
+            await asyncio.wait_for(scheduler_service.start(), timeout=120)
+        except asyncio.TimeoutError:
+            logging.error(
+                "启动任务调度器超时（120s），已丢弃半初始化的调度器，服务将以无调度器状态运行"
+            )
+            await scheduler_service.stop()
         except Exception as exc:
             # 调度器装载失败不应连带整个 API 服务起不来：先保证服务可用，
             # 用户还能登录修正导致失败的配置；装载循环本身已做逐条隔离。
@@ -133,7 +158,6 @@ async def lifespan(app: FastAPI):
         logging.info("TASK_SCHEDULER_ENABLED 已关闭，当前节点不启动任务调度器")
 
     # local 元数据模式：启动时后台 ensure 索引 + 全量同步（不 DROP）
-    import asyncio
     from app.services.ai.local_vector_rebuild import maybe_rebuild_local_vectors_on_startup
     from app.services.ai.memory_index_service import maybe_ensure_memory_index_on_startup
     from app.services.ai.runtime.agentscope.workspace import (
@@ -149,26 +173,42 @@ async def lifespan(app: FastAPI):
     start_k8s_workspace_reaper()
     # 启动时跳过自动全量同步本地向量（避免服务启动时大量调用 Embedding 接口与重度扫库），改由管理台按需手动触发
     # asyncio.create_task(maybe_rebuild_local_vectors_on_startup())
-    # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
-    asyncio.create_task(maybe_ensure_memory_index_on_startup())
+    # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）。
+    # 后台任务同样带 deadline：Redis 不响应时只丢一条告警，不会挂着一个永远跑不完的协程。
+    asyncio.create_task(
+        run_startup_step(
+            "记忆摘要索引预热",
+            maybe_ensure_memory_index_on_startup,
+            timeout=60,
+        ),
+        name="startup-memory-index",
+    )
 
     # LLM 链路追踪（Langfuse）：配置来自数据库，冷启动读不到时由后台刷新协程在
     # 读到有效配置后自动补建 client。任何异常都只降级，绝不阻塞启动。
-    try:
+    async def _init_observability_step() -> None:
         from app.services.ai.observability.manager import init_observability
 
         await init_observability()
-    except Exception as exc:
-        logging.warning("Failed to initialize Langfuse observability: %s", exc)
+
+    await run_startup_step(
+        "LLM 链路追踪初始化",
+        _init_observability_step,
+        timeout=20,
+    )
 
     # 对外访问地址（系统配置 app_public_url → 环境变量 APP_PUBLIC_URL）在启动时
     # 落到 MCP 的 Host/Origin 白名单：FastMCP 在导入期已构造并挂载，只能原地刷新。
-    try:
+    async def _refresh_mcp_public_url_step() -> None:
         from app.services.mcp.public_url import refresh_mcp_public_url
 
         await refresh_mcp_public_url()
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("Failed to apply app_public_url to MCP: %s", exc)
+
+    await run_startup_step(
+        "MCP 对外地址白名单刷新",
+        _refresh_mcp_public_url_step,
+        timeout=10,
+    )
 
     # Mounted Starlette 子应用不会自动执行自己的 lifespan；显式托管
     # FastMCP 的 session manager，否则首次请求会报 Task group 未初始化。
@@ -643,6 +683,47 @@ for _public_dir in ("docs", "skills", "branding"):
 
 branding_dir = os.path.join(base_dir, "data", "branding")
 app.mount("/branding", StaticFiles(directory=branding_dir), name="branding")
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def serve_apple_touch_icon():
+    """iOS「添加到主屏幕」的桌面图标：品牌自定义时返回上传的合成图，否则回退内置默认图。
+
+    ``index.html`` 里这个路径是硬编码的，iOS 只在用户点「添加到主屏幕」那一刻抓一次，
+    不会跟随前端对 ``link[rel="icon"]`` 的运行时改写——所以必须由后端带头做分流，
+    否则管理员换了品牌 Logo 之后，新添加到桌面的图标仍是平台默认的那个。
+
+    自定义图只在「品牌已启用 + ``icon_url`` 指向上传文件 + 合成图确实存在」三者同时成立时
+    才返回：``icon_url`` 被手填成外链时无法保证满版不透明，宁可回退默认图，也不要把一张
+    带透明黑角的图送到桌面上。
+    """
+    from app.services.branding_settings_service import (
+        APPLE_TOUCH_ICON_FILENAME,
+        BrandingSettingsService,
+    )
+
+    default_icon = os.path.join(frontend_dist, "apple-touch-icon.png")
+    custom_icon = os.path.join(branding_dir, APPLE_TOUCH_ICON_FILENAME)
+
+    enabled = False
+    icon_url = ""
+    try:
+        raw = await BrandingSettingsService.get_raw_settings()
+        enabled = bool(raw.get("enabled"))
+        icon_url = str(raw.get("icon_url") or "")
+    except Exception:  # 配置读取异常按默认图标兜底，不要 500 让 iOS 什么都抓不到
+        enabled = False
+
+    target = BrandingSettingsService.resolve_apple_touch_icon_path(
+        enabled=enabled,
+        icon_url=icon_url,
+        custom_icon_path=custom_icon,
+        default_icon_path=default_icon,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Not Found")
+    # no-cache 只做强制回源校验：桌面图标由 iOS 缓存，改图后仍需重新「添加到主屏幕」。
+    return FileResponse(target, media_type="image/png", headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 @app.get("/{full_path:path}")

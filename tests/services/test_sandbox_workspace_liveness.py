@@ -322,3 +322,116 @@ async def test_reaper_widens_threshold_for_held_workspace() -> None:
         await ws.reap_idle_docker_workspaces(idle_seconds=30, now=widened) == 1
     )
     assert workspace.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state_payload",
+    [
+        {"Running": False, "Status": "exited"},
+        {"Running": True, "OOMKilled": True},
+        {"Running": True, "Dead": True},
+        {"Running": True, "Paused": True},
+    ],
+)
+async def test_docker_probe_treats_non_running_or_zombie_state_as_dead(state_payload) -> None:
+    """★ 容器未被 rm 但已 Exited/OOMKilled/Dead/Paused：show() 返回 200 也必须判死。"""
+
+    class _ZombieContainer:
+        async def show(self) -> dict[str, Any]:
+            return {"State": state_payload}
+
+    workspace = _FakeWorkspace()
+    workspace._container = _ZombieContainer()  # type: ignore[assignment]
+    assert await ws._docker_workspace_container_alive(workspace) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pod_info", "expected"),
+    [
+        ({"available": True, "found": False, "phase": None, "deleting": False}, False),
+        ({"available": True, "found": True, "phase": "Running", "deleting": True}, False),
+        ({"available": True, "found": True, "phase": "Failed", "deleting": False}, False),
+        ({"available": True, "found": True, "phase": "Succeeded", "deleting": False}, False),
+        ({"available": True, "found": True, "phase": "Unknown", "deleting": False}, False),
+        ({"available": True, "found": True, "phase": "Running", "deleting": False}, True),
+        ({"available": True, "found": True, "phase": "Pending", "deleting": False}, True),
+        ({"available": False, "found": None, "phase": None, "deleting": False}, True),
+    ],
+)
+async def test_k8s_pod_liveness_probe_matrix(monkeypatch, pod_info, expected) -> None:
+    """★ K8s 存活探测：404 / Terminating / 终态判死；集群不可达保守判活。"""
+    from app.services.ai.runtime.agentscope import k8s_workspace as kws
+
+    async def fake_read(*, namespace: str, pod_name: str) -> dict[str, Any]:
+        assert namespace == "nanzi-ai-agent"
+        assert pod_name == "as-ws-alice"
+        return pod_info
+
+    monkeypatch.setattr(kws, "read_k8s_sandbox_pod", fake_read)
+    workspace = types.SimpleNamespace(
+        is_alive=True, _namespace="nanzi-ai-agent", _pod_name="as-ws-alice"
+    )
+    assert await ws._k8s_workspace_pod_alive(workspace) is expected
+
+
+@pytest.mark.asyncio
+async def test_acquire_k8s_rebuilds_when_pod_disappeared_or_failed(monkeypatch) -> None:
+    """★ K8s Pod 被驱逐或删除后，缓存命中超过 TTL 必须逐出并就地重建。"""
+    from app.services.ai.runtime.agentscope import k8s_workspace as kws
+
+    cache_key = ws._k8s_workspace_cache_key("/tmp/ws-root", "alice", ["/skills/a"])
+    dead = types.SimpleNamespace(
+        is_alive=True,
+        _namespace="nanzi-ai-agent",
+        _pod_name="as-ws-alice-dead",
+        closed=False,
+    )
+
+    async def _close_dead() -> None:
+        dead.closed = True
+        dead.is_alive = False
+
+    dead.close = _close_dead
+    ws._k8s_workspace_cache[cache_key] = dead
+    ws._k8s_workspace_refcounts[cache_key] = 1
+    ws._k8s_workspace_verified_at[cache_key] = 0.0  # 超过 TTL
+    ws._workspace_cache["/tmp/ws-root/alice/c1::all::k8s"] = (dead, None)
+    ws._workspace_sandbox_refs["/tmp/ws-root/alice/c1::all::k8s"] = cache_key
+
+    probe_calls = 0
+
+    async def fake_read(*, namespace: str, pod_name: str) -> dict[str, Any]:
+        nonlocal probe_calls
+        probe_calls += 1
+        return {"available": True, "found": True, "phase": "Failed", "deleting": False}
+
+    fresh = types.SimpleNamespace(
+        is_alive=True,
+        _namespace="nanzi-ai-agent",
+        _pod_name="as-ws-alice-fresh",
+    )
+
+    async def fake_policy(_skill_paths, **kwargs):
+        return fresh
+
+    monkeypatch.setattr(kws, "read_k8s_sandbox_pod", fake_read)
+    monkeypatch.setattr(ws, "_policy_k8s_workspace", fake_policy)
+
+    workspace, returned_key = await ws._acquire_k8s_workspace(
+        root="/tmp/ws-root", user_key="alice", skill_paths=["/skills/a"]
+    )
+    assert returned_key == cache_key
+    assert workspace is fresh
+    assert dead.closed is True
+    assert probe_calls == 1
+    assert "/tmp/ws-root/alice/c1::all::k8s" not in ws._workspace_cache
+    assert ws._k8s_sandbox_confirmed_alive(cache_key) is True
+
+    # TTL 内再次命中不应重复发起集群探测
+    workspace2, _ = await ws._acquire_k8s_workspace(
+        root="/tmp/ws-root", user_key="alice", skill_paths=["/skills/a"]
+    )
+    assert workspace2 is fresh
+    assert probe_calls == 1

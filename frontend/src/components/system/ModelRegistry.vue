@@ -169,8 +169,9 @@ const providerCatalog = [
 ]
 const supportedProviders = new Set(Object.keys(providerDefaultBaseUrls).concat(['azure', 'other']))
 const supportedTypes = new Set(['llm', 'embedding', 'multimodal'])
-const contextSizePresets = [32768, 65536, 131072, 262144]
-const outputTokenPresets = [8192, 16384, 32768, 65536]
+// 输入上下文与输出上限共用同一组快捷值：两列按钮集合、档位、顺序完全一致，
+// 视觉上左右对齐；最高覆盖到 1M（1048576）以适配长上下文模型。
+const tokenSizePresets = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
 const lastProvider = ref<string>('openai')
 const selectedProvider = computed(() =>
     providerCatalog.find((item) => item.value === String(modelForm.value.provider)) || providerCatalog[0]!
@@ -212,6 +213,8 @@ const clearModelFilters = () => {
 
 const formatTokenSize = (value?: number | null) => {
     if (!value) return ''
+    // 先判 M：1048576 同样是 1024 的整数倍，先走 K 分支会显示成 1024K
+    if (value >= 1048576 && value % 1048576 === 0) return `${value / 1048576}M`
     if (value >= 1024 && value % 1024 === 0) return `${value / 1024}K`
     return String(value)
 }
@@ -1070,7 +1073,7 @@ onBeforeUnmount(() => {
                                             <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
                                             <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
                                             <div class="token-preset-row">
-                                                <button v-for="size in contextSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
+                                                <button v-for="size in tokenSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
                                             </div>
                                             <p class="text-xs text-gray-500 mt-1">用于上下文压缩；留空使用运行时默认值</p>
                                         </div>
@@ -1078,7 +1081,7 @@ onBeforeUnmount(() => {
                                             <label class="block text-sm font-medium text-gray-700">输出上限（可选）</label>
                                             <input v-model.number="modelForm.max_output_tokens" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
                                             <div class="token-preset-row">
-                                                <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
+                                                <button v-for="size in tokenSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
                                             </div>
                                             <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
                                         </div>
@@ -1381,18 +1384,25 @@ onBeforeUnmount(() => {
 }
 
 .token-preset-row {
-  display: flex;
-  flex-wrap: wrap;
+  /* 固定 4 列栅格：输入上下文与输出上限两列档位完全一致，逐行对齐；
+     8 档分两行，窄弹窗（max-w-xl）下也不会挤压换行。 */
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.25rem;
   margin-top: 0.4rem;
 }
 
 .token-preset-button {
   border: 1px solid transparent;
-  border-radius: 9999px;
-  padding: 0.15rem 0.45rem;
-  color: rgb(51 65 85);
-  font-size: 0.75rem;
+  border-radius: 0.375rem;
+  padding: 0.1rem 0.2rem;
+  color: rgb(71 85 105);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .token-preset-button:hover,
