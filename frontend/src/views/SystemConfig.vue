@@ -6715,6 +6715,8 @@ onUnmounted(() => {
                                     { label: '64k (推荐)', value: '65536' },
                                     { label: '128k', value: '131072' },
                                     { label: '256k', value: '262144' },
+                                    { label: '512k', value: '524288' },
+                                    { label: '1m', value: '1048576' },
                                   ]"
                                   :key="preset.value"
                                   type="button"
